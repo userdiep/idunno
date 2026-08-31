@@ -25,6 +25,7 @@ body{
 input[type=number]::-webkit-outer-spin-button,
 input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
 input[type=number]{-moz-appearance:textfield;}
+.stepper-input::placeholder{font-size:11px;opacity:0.7;}
 button{font-family:inherit;cursor:pointer;}
 select,input{font-family:inherit;}
 a{color:#F0A62E;}
@@ -125,7 +126,7 @@ var SEED_EXERCISES = [
    d'ENTRETIEN, correct seulement si l'objectif était de préserver le muscle
    pendant un cut) — trop bas pour un vrai stimulus de croissance. La cible
    recomp est plutôt ~8-12 séries/semaine/muscle (volume de croissance
-   modéré-haut, voir Programme > Pourquoi ce choix pour la source).
+   modéré-haut — sources RP Strength / volume-landmarks, voir commit history).
 
    MAIS entre-temps il s'avère que quasiment tous les exercices sont faits
    bras/jambe par bras (voir `unilateral:true` dans SEED_EXERCISES) — sur un
@@ -631,7 +632,7 @@ function Stepper(props) {
     h("button", {onClick:function(){onChange(Math.max(min, round((value||0)-step)));}, "aria-label":"Diminuer",
       style:{padding:"0 10px",display:"flex",alignItems:"center",justifyContent:"center",background:C.shroudDeep,color:C.taupe,border:"none"}},
       h(Icon,{name:"minus",size:14})),
-    h("input", {type:"number", inputMode:"decimal", value: value==null?"":value, placeholder:props.placeholder||"",
+    h("input", {type:"number", className:"stepper-input", inputMode:"decimal", value: value==null?"":value, placeholder:props.placeholder||"",
       onChange:function(e){ onChange(e.target.value===""?null:parseFloat(e.target.value)); },
       style:{width: wide?66:52, background:C.shroud, color:C.bone, fontFamily:sansBody, fontSize:18, fontWeight:600,
         fontVariantNumeric:"tabular-nums", border:"none", textAlign:"center", outline:"none"}}),
