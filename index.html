@@ -25,7 +25,8 @@ body{
 input[type=number]::-webkit-outer-spin-button,
 input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
 input[type=number]{-moz-appearance:textfield;}
-.stepper-input::placeholder{font-size:11px;opacity:0.7;}
+.stepper-input{-webkit-text-size-adjust:100%;text-size-adjust:100%;}
+.stepper-input::placeholder{font-size:9px;opacity:0.6;-webkit-text-size-adjust:100%;text-size-adjust:100%;}
 button{font-family:inherit;cursor:pointer;}
 select,input{font-family:inherit;}
 a{color:#F0A62E;}
@@ -1368,13 +1369,30 @@ function AnalyseTab(props){
       lines.push("");
     });
     setExportMsg("saving");
+    var text = lines.join("\n");
     var dl = await getDownloadsCap();
-    if (!dl) { setExportMsg("Le téléchargement n'est pas proposé dans cette vue."); return; }
+    if (dl) {
+      try {
+        await dl.save({ filename: "carnet-entrainement.txt", data: text });
+        setExportMsg("Téléchargé.");
+      } catch (e) {
+        setExportMsg(e && e.code === "declined" ? null : "Le téléchargement a échoué — réessaie.");
+      }
+      return;
+    }
+    // Hors de claude.ai (ex. l'app installée depuis GitHub Pages), il n'y a
+    // pas de capacité "downloads" — on retombe sur un téléchargement natif
+    // du navigateur (Blob + lien programmatique), qui marche partout.
     try {
-      await dl.save({ filename: "carnet-entrainement.txt", data: lines.join("\n") });
-      setExportMsg("Téléchargé.");
+      var blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url; a.download = "carnet-entrainement.txt";
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
+      setExportMsg("Téléchargé — envoie ce fichier à Claude dans une conversation si tu veux qu'il analyse ton historique.");
     } catch (e) {
-      setExportMsg(e && e.code === "declined" ? null : "Le téléchargement a échoué — réessaie.");
+      setExportMsg("Le téléchargement a échoué — réessaie.");
     }
   }
 
@@ -1452,7 +1470,7 @@ function AnalyseTab(props){
     h(Section,{title:"Sortir les données"},
       h("button",{onClick:exportText, style:{width:"100%",padding:"12px 0",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",gap:8,color:C.pin,border:"1px solid "+C.pin,background:"transparent",fontFamily:sansCond,fontSize:15,fontWeight:600}},
         h(Icon,{name:"download",size:16}), "Télécharger le carnet en texte"),
-      exportMsg && exportMsg!=="saving" ? h("p",{style:{fontSize:12.5,color: exportMsg==="Téléchargé."?C.green:C.rust, marginTop:8}}, exportMsg) : null,
+      exportMsg && exportMsg!=="saving" ? h("p",{style:{fontSize:12.5,color: exportMsg.indexOf("Téléchargé")===0?C.green:C.rust, marginTop:8}}, exportMsg) : null,
       h("p",{style:{fontSize:12.5,color:C.taupe,marginTop:8,lineHeight:1.55}}, "Toutes les 6–8 semaines, exporte ce fichier et fais-le relire."))
   );
 }
