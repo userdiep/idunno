@@ -7,11 +7,11 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Fitness Park">
+<meta name="apple-mobile-web-app-title" content="Sunglo sport">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
-<title>Carnet Fitness Park</title>
+<title>Sunglo sport</title>
 <style>
 :root{ color-scheme: dark; }
 *{box-sizing:border-box;}
@@ -469,16 +469,25 @@ function computeNutrition(profile) {
   var bmr = (!profile.useBmrFormula && profile.bmrMeasured)
     ? profile.bmrMeasured
     : (profile.heightCm && profile.age && profile.sex ? mifflinBMR(profile.weightKg, profile.heightCm, profile.age, profile.sex) : null);
-  if (!bmr) return null;
-  var tdee = bmr * profile.activityMultiplier;
-  var target = tdee - profile.deficitKcal;
-  var proteinG = Math.round(profile.weightKg * profile.proteinPerKg);
+  var tdee = bmr ? bmr * profile.activityMultiplier : null;
+  var target, proteinG;
+  if (profile.manualTarget) {
+    // Cible fixe fournie directement (ex. par un coach/diététicien) plutôt
+    // que dérivée du calcul BMR/TDEE/déficit — celui-ci reste affiché à
+    // titre indicatif quand dispo, mais ne pilote plus la cible.
+    target = profile.manualTargetKcal;
+    proteinG = profile.manualProteinG;
+  } else {
+    if (!bmr) return null;
+    target = tdee - profile.deficitKcal;
+    proteinG = Math.round(profile.weightKg * profile.proteinPerKg);
+  }
   var proteinKcal = proteinG * 4;
   var fatG = Math.round(target * 0.25 / 9);
   var fatKcal = fatG * 9;
   var carbKcal = Math.max(0, target - proteinKcal - fatKcal);
   var carbG = Math.round(carbKcal / 4);
-  return { bmr: Math.round(bmr), tdee: Math.round(tdee), target: Math.round(target), proteinG: proteinG, fatG: fatG, carbG: carbG };
+  return { bmr: bmr?Math.round(bmr):null, tdee: tdee?Math.round(tdee):null, target: Math.round(target), proteinG: proteinG, fatG: fatG, carbG: carbG };
 }
 
 /* ============================================================
@@ -517,6 +526,7 @@ function seedState() {
       weightKg: 85.1, heightCm: null, age: 31, sex: null,
       bmrMeasured: 1860, useBmrFormula: false,
       activityMultiplier: 1.55, deficitKcal: 350, proteinPerKg: 2.0,
+      manualTarget: true, manualTargetKcal: 2250, manualProteinG: 175,
       wheyLabel: "HSN Whey Protein Isolate (scoop 30 g)", wheyKcal: 116, wheyProtein: 27.9,
     },
   };
@@ -568,14 +578,29 @@ function withLatestProgram(state) {
     _justMigrated: true,
   });
 }
+/* One-time, version-independent fill-in for profile fields added after a
+   user's state already existed (currently: the fixed-target nutrition
+   fields). Only sets a field when it's missing — never touches a value the
+   user already has, so this is safe to run on every load. */
+function withNutritionDefaults(state) {
+  if (!state || !state.profile) return state;
+  if (state.profile.manualTarget !== undefined) return state;
+  return Object.assign({}, state, {
+    profile: Object.assign(
+      { manualTarget: true, manualTargetKcal: 2250, manualProteinG: 175 },
+      state.profile
+    ),
+    _justMigrated: true,
+  });
+}
 async function loadInitialState() {
   try {
     var res = await fetch("data/state.json", { cache: "no-store" });
-    if (res.ok) { var j = await res.json(); if (j && j.v) return withLatestProgram(j); }
+    if (res.ok) { var j = await res.json(); if (j && j.v) return withNutritionDefaults(withLatestProgram(j)); }
   } catch (e) {}
   try {
     var raw = localStorage.getItem(LS_KEY);
-    if (raw) { var parsed = JSON.parse(raw); if (parsed && parsed.v) return withLatestProgram(parsed); }
+    if (raw) { var parsed = JSON.parse(raw); if (parsed && parsed.v) return withNutritionDefaults(withLatestProgram(parsed)); }
   } catch (e) {}
   return seedState();
 }
@@ -606,7 +631,7 @@ function Stepper(props) {
     h("button", {onClick:function(){onChange(Math.max(min, round((value||0)-step)));}, "aria-label":"Diminuer",
       style:{padding:"0 10px",display:"flex",alignItems:"center",justifyContent:"center",background:C.shroudDeep,color:C.taupe,border:"none"}},
       h(Icon,{name:"minus",size:14})),
-    h("input", {type:"number", inputMode:"decimal", value: value==null?"":value,
+    h("input", {type:"number", inputMode:"decimal", value: value==null?"":value, placeholder:props.placeholder||"",
       onChange:function(e){ onChange(e.target.value===""?null:parseFloat(e.target.value)); },
       style:{width: wide?66:52, background:C.shroud, color:C.bone, fontFamily:sansBody, fontSize:18, fontWeight:600,
         fontVariantNumeric:"tabular-nums", border:"none", textAlign:"center", outline:"none"}}),
@@ -898,25 +923,25 @@ function SeanceTab(props) {
               return h("div",{key:si, style:{padding:"10px 12px",borderTop:"1px solid "+C.shroudDeep}},
                 h("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:8}},
                   h("span",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,width:30}}, "S"+(si+1)),
-                  h(Stepper,{value:s.weight, onChange:function(v){updateSet(idx,si,"weight",v);}, step: ex?ex.inc:2.5, suffix:"kg", wide:true}),
-                  h(Stepper,{value:s.reps, onChange:function(v){updateSet(idx,si,"reps",v);}, step:1, suffix:"rep"}),
+                  h(Stepper,{value:s.weight, onChange:function(v){updateSet(idx,si,"weight",v);}, step: ex?ex.inc:2.5, suffix:"kg", placeholder:"kg", wide:true}),
+                  h(Stepper,{value:s.reps, onChange:function(v){updateSet(idx,si,"reps",v);}, step:1, suffix:"rep", placeholder:"répét"}),
                   ex && ex.unilateral ? h(SideToggle,{value:s.weakSide, onChange:function(v){updateSet(idx,si,"weakSide",v);}}) : null,
                   h("button",{onClick:function(){removeFreeformSet(idx,si);}, title:"Supprimer cette série",
                     style:{padding:6,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent"}}, h(Icon,{name:"x",size:14}))),
                 h("div",{style:{display:"flex",alignItems:"center",gap:8,paddingLeft:38}},
-                  h("span",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe}}, "reps en réserve"),
+                  h("span",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe}}, "Difficulté"),
                   h(RirPicker,{value:s.rir, onChange:function(v){updateSet(idx,si,"rir",v);}})));
             }),
             h("div",{style:{padding:"10px 12px",borderTop: entry.sets.length ? "1px solid "+C.shroudDeep : "none"}},
               h("button",{onClick:function(){addFreeformSet(idx);}, style:{width:"100%",padding:"8px 0",borderRadius:6,color:C.bone,fontFamily:sansCond,fontSize:13.5,fontWeight:600,border:"1px dashed "+C.taupeDim,background:"transparent"}}, "+ Série"))
           ));
       }),
-      h("div",{style:{padding:"12px",display:"flex",gap:8,borderRadius:10,border:"1px solid "+C.taupeDim,marginBottom:16}},
+      h("div",{style:{padding:"12px",display:"flex",flexDirection:"column",gap:8,borderRadius:10,border:"1px solid "+C.taupeDim,marginBottom:16}},
         h("select",{value:freePick, onChange:function(e){setFreePick(e.target.value);},
-          style:{flex:1,padding:"8px",borderRadius:6,background:C.shroudDeep,color:C.bone,border:"1px solid "+C.taupeDim,fontFamily:sansBody,fontSize:14}},
+          style:{width:"100%",padding:"8px",borderRadius:6,background:C.shroudDeep,color:C.bone,border:"1px solid "+C.taupeDim,fontFamily:sansBody,fontSize:14}},
           h("option",{value:""}, "Ajouter une machine…"),
           available.map(function(e){ return h("option",{key:e.id,value:e.id}, e.name+" — "+e.muscle); })),
-        h("button",{onClick:addFreeformExercise, style:{padding:"0 16px",borderRadius:6,background:C.pin,color:C.shroudDeep,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Ajouter")),
+        h("button",{onClick:addFreeformExercise, style:{width:"100%",padding:"10px 0",borderRadius:6,background:C.pin,color:C.shroudDeep,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Ajouter")),
       h("button",{onClick:finishSession, style:{width:"100%",marginTop:8,padding:"14px 0",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:C.green,color:C.shroudDeep,fontFamily:sansCond,fontSize:16,fontWeight:700,border:"none"}},
         h(Icon,{name:"check",size:18}), "Enregistrer la séance"),
       h("p",{style:{fontSize:12.5,color:C.taupe,marginTop:8,lineHeight:1.5}}, "Les séries vides ou les exercices sans série sont ignorés à l'enregistrement. Cette séance est suivie dans l'historique et alimente la progression de charge de chaque machine, exactement comme une séance normale.")
@@ -953,13 +978,13 @@ function SeanceTab(props) {
             return h("div",{key:si, style:{padding:"10px 12px",borderTop:"1px solid "+C.shroudDeep}},
               h("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:8}},
                 h("span",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,width:30}}, "S"+(si+1)),
-                h(Stepper,{value:s.weight, onChange:function(v){updateSet(idx,si,"weight",v);}, step: ex?ex.inc:2.5, suffix:"kg", wide:true}),
-                h(Stepper,{value:s.reps, onChange:function(v){updateSet(idx,si,"reps",v);}, step:1, suffix:"rep"}),
+                h(Stepper,{value:s.weight, onChange:function(v){updateSet(idx,si,"weight",v);}, step: ex?ex.inc:2.5, suffix:"kg", placeholder:"kg", wide:true}),
+                h(Stepper,{value:s.reps, onChange:function(v){updateSet(idx,si,"reps",v);}, step:1, suffix:"rep", placeholder:"répét"}),
                 ex && ex.unilateral ? h(SideToggle,{value:s.weakSide, onChange:function(v){updateSet(idx,si,"weakSide",v);}}) : null,
                 h("button",{onClick:function(){fillDown(idx,si);}, title:"Recopier sur les séries suivantes",
                   style:{padding:6,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent"}}, h(Icon,{name:"chevronDown",size:14}))),
               h("div",{style:{display:"flex",alignItems:"center",gap:8,paddingLeft:38}},
-                h("span",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe}}, "reps en réserve"),
+                h("span",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe}}, "Difficulté"),
                 h(RirPicker,{value:s.rir, onChange:function(v){updateSet(idx,si,"rir",v);}})));
           })
         ));
@@ -1058,13 +1083,25 @@ function ProgrammeTab(props){
           ACTIVITY_LEVELS.map(function(a){ return h("option",{key:a.k,value:a.k}, a.label+" — "+a.desc); }))),
       h("p",{style:{fontSize:12,color:C.taupe,lineHeight:1.5,marginBottom:12}},
         "Avec 3–4 séances/semaine + 12 000 pas les jours de bloc opératoire (2–3×/semaine), “Modérément actif” est un point de départ raisonnable — ajuste-le selon ce que ton poids fait réellement sur 2–3 semaines."),
-      h(Slider,{label:"Déficit calorique", min:0, max:600, step:25, value:profile.deficitKcal, display:profile.deficitKcal+" kcal/j",
-        onChange:function(v){setProfile(Object.assign({},profile,{deficitKcal:v}));}}),
-      h(Slider,{label:"Protéines cible", min:1.6, max:2.4, step:0.1, value:profile.proteinPerKg, display:profile.proteinPerKg.toFixed(1)+" g/kg",
-        onChange:function(v){setProfile(Object.assign({},profile,{proteinPerKg:v}));}}),
+      h("div",{style:{padding:"10px 12px",borderRadius:8,background:C.shroudDeep,border:"1px solid "+C.taupeDim,marginBottom:14}},
+        h("label",{style:{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.bone}},
+          h("input",{type:"checkbox", checked:!!profile.manualTarget, onChange:function(e){setProfile(Object.assign({},profile,{manualTarget:e.target.checked}));}}),
+          "Cible fixe (ex. donnée par un coach ou une diététicienne) plutôt que calculée")),
+      profile.manualTarget ? h("div",{style:{display:"flex",flexDirection:"column",gap:10,marginBottom:4}},
+        h("div",{style:{display:"flex",gap:8,alignItems:"center"}},
+          h("span",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,width:110}}, "Cible / jour"),
+          h(Stepper,{value:profile.manualTargetKcal, step:25, min:0, suffix:"kcal", onChange:function(v){setProfile(Object.assign({},profile,{manualTargetKcal:v}));}})),
+        h("div",{style:{display:"flex",gap:8,alignItems:"center"}},
+          h("span",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,width:110}}, "Protéines"),
+          h(Stepper,{value:profile.manualProteinG, step:5, min:0, suffix:"g", onChange:function(v){setProfile(Object.assign({},profile,{manualProteinG:v}));}})))
+        : h("div",{style:{display:"flex",flexDirection:"column",gap:0}},
+          h(Slider,{label:"Déficit calorique", min:0, max:600, step:25, value:profile.deficitKcal, display:profile.deficitKcal+" kcal/j",
+            onChange:function(v){setProfile(Object.assign({},profile,{deficitKcal:v}));}}),
+          h(Slider,{label:"Protéines cible", min:1.6, max:2.4, step:0.1, value:profile.proteinPerKg, display:profile.proteinPerKg.toFixed(1)+" g/kg",
+            onChange:function(v){setProfile(Object.assign({},profile,{proteinPerKg:v}));}})),
       nut ? h("div",{style:{display:"flex",flexWrap:"wrap",gap:8,marginTop:14}},
-        h(StatCard,{label:"BMR", value:nut.bmr+" kcal"}),
-        h(StatCard,{label:"Maintenance (TDEE)", value:nut.tdee+" kcal"}),
+        h(StatCard,{label:"BMR", value:nut.bmr!=null?nut.bmr+" kcal":"—"}),
+        h(StatCard,{label:"Maintenance (TDEE)", value:nut.tdee!=null?nut.tdee+" kcal":"—"}),
         h(StatCard,{label:"Cible / jour", value:nut.target+" kcal", color:C.pin}),
         h(StatCard,{label:"Protéines", value:nut.proteinG+" g", color:C.green}),
         h(StatCard,{label:"Lipides", value:nut.fatG+" g"}),
@@ -1074,7 +1111,7 @@ function ProgrammeTab(props){
     h(Section, {title:"Repères pratiques"},
       h("div",{style:{fontSize:13.5,color:C.taupe,lineHeight:1.65,display:"flex",flexDirection:"column",gap:10}},
         h("p",{style:{margin:0}}, h("strong",{style:{color:C.bone}},"Un mois d'entraînement, c'est le meilleur moment : "),
-          "les débutants sont le profil qui recompose le plus facilement — prendre du muscle et perdre du gras en même temps, sans viser un déficit agressif. Un déficit modéré (250–500 kcal/j, le curseur ci-dessus) protège le muscle pendant que l'entraînement donne un vrai stimulus."),
+          "les débutants sont le profil qui recompose le plus facilement — prendre du muscle et perdre du gras en même temps, sans viser un déficit agressif. Un déficit modéré (250–500 kcal/j sous ta maintenance, calculée ou fixée ci-dessus) protège le muscle pendant que l'entraînement donne un vrai stimulus."),
         h("p",{style:{margin:0}}, h("strong",{style:{color:C.bone}},"Pas de perte de graisse ciblée — ni sur le ventre, ni sur le visage : "),
           "il n'existe pas de moyen de perdre la graisse du ventre ou du visage spécifiquement — la perte de gras est globale et l'ordre où ça part dépend surtout de la génétique. Ce qui fait le plus la différence sur le visage : moins de sodium et d'alcool, un sommeil correct et une bonne hydratation, en plus du déficit global — pas d'exercice miracle."),
         h("p",{style:{margin:0}}, h("strong",{style:{color:C.bone}},"Abdos visibles = pourcentage de gras, pas volume d'abdos : "),
@@ -1540,7 +1577,7 @@ function App(props){
 
   return h("div",{style:{background:C.shroudDeep, fontFamily:sansBody, color:C.bone, minHeight:"100vh"}},
     h("header",{style:{padding:"16px 16px 12px", display:"flex",alignItems:"baseline",justifyContent:"space-between",borderBottom:"1px solid "+C.taupeDim}},
-      h("h1",{style:{fontFamily:sansCond,fontSize:21,fontWeight:700,margin:0}}, "Carnet Fitness Park"),
+      h("h1",{style:{fontFamily:sansCond,fontSize:21,fontWeight:700,margin:0}}, "Sunglo sport"),
       h("div",{style:{display:"flex",alignItems:"center",gap:12}},
         h(SyncDot,{status:syncStatus}),
         h("span",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe}}, state.sessions.filter(function(s){return s.done;}).length+" séances"))),

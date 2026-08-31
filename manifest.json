@@ -1,6 +1,6 @@
 {
-  "name": "Carnet Fitness Park",
-  "short_name": "Fitness Park",
+  "name": "Sunglo sport",
+  "short_name": "Sunglo sport",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
