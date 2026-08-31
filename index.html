@@ -1033,27 +1033,6 @@ function ProgrammeTab(props){
               d.items.length>4 ? h("div",{style:{fontSize:11,color:C.taupe}}, "+ "+(d.items.length-4)+" autres") : null));
         }))
     ),
-    h(Section, {title:"Pourquoi ce choix"},
-      h("div",{style:{fontSize:13.5,color:C.taupe,lineHeight:1.65,display:"flex",flexDirection:"column",gap:10}},
-        h("p",{style:{margin:0}}, h("strong",{style:{color:C.bone}},"Machines uniquement pour l'instant : "),
-          "c'est le bon point de départ pour un débutant — trajectoire guidée, moins de risque technique, et ça permet de charger fort en confiance dès le premier mois. Les onglets Machines te laissent ajouter des poulies puis des poids libres plus tard sans casser ce qui existe : l'app recase automatiquement le volume."),
-        h("p",{style:{margin:0}}, h("strong",{style:{color:C.bone}},"8–12 reps en général, RIR 1–2 : "),
-          "assez lourd pour stimuler le muscle, assez de marge pour progresser séance après séance sans t'épuiser."),
-        h("p",{style:{margin:0}}, h("strong",{style:{color:C.bone}},"Objectif = recomposition (prise de muscle ET perte de gras en même temps), pas juste perte de gras : "),
-          "important à corriger : le volume avait été redescendu à ~5-9 séries/semaine/muscle en pensant que l'objectif était de perdre du gras tout en préservant juste le muscle. Ce n'est pas le cas — tu veux vraiment développer du muscle en même temps. Pour ça, la littérature vise plutôt ~8-12 séries/semaine/muscle (volume de croissance modéré-haut), pas un simple volume d'entretien."),
-        h("p",{style:{margin:0}}, h("strong",{style:{color:C.bone}},"Pourquoi le volume n'est pas encore remonté à cette cible — phase 1 en cours : "),
-          "il s'avère que tu fais quasiment tous les exercices bras/jambe par bras (voir plus bas), et sur une machine bilatérale ça double le temps réel de chaque exercice. Viser ~8-12 séries/semaine/muscle ET garder le bras par bras partout ferait dépasser 95-134 min par séance selon le jour — trop long. Le plan choisi : Phase 1 (maintenant) garde le volume actuel (~5-9 séries/semaine/muscle) le temps de récolter assez de données par côté (l'onglet Analyse te préviendra s'il y a un vrai écart gauche/droite sur un exercice). Phase 2 (à la prochaine révision programmée, ~mi-octobre) : pour chaque exercice où les deux côtés sont proches, on repasse à deux mains et on remonte alors le volume vers ~8-12 séries/semaine/muscle — un exercice bilatéral à volume plus élevé reste largement sous 90 minutes. Pour un exercice où un vrai déséquilibre ressort, on garde le travail par côté plus longtemps avant de repasser à deux mains."),
-        h("p",{style:{margin:0}}, h("strong",{style:{color:C.bone}},"Sous 90 minutes (objectif à moyen terme) : "),
-          "chaque séance vise normalement à rester sous "+SESSION_CAP_MIN+" min réelles (temps de série + repos + changement de machine + marge). Pendant la phase 1 (bras/jambe par bras), compte plutôt 75-100 min selon le jour — l'estimation sous chaque jour peut donc apparaître en rouge, c'est attendu et temporaire, pas une erreur. Ça redescendra sous 90 min en phase 2."),
-        h("p",{style:{margin:0}}, h("strong",{style:{color:C.bone}},"Suivi gauche/droite en un tap, optionnel : "),
-          "sur les presses, tirages et machines de jambes principales, tu fais déjà le côté faible en premier puis tu égalises l'autre — donc loguer un poids séparé par côté ne dirait jamais rien (il est identique par construction), et ça doublait pour rien le nombre de séries à remplir. À la place, chaque série a un petit bouton optionnel G+ / Égal / D+ pour noter lequel a semblé plus dur ce jour-là. Si un côté ressort sur au moins 60% des séries signalées récemment, l'onglet Analyse te le signale."),
-        h("p",{style:{margin:0}}, h("strong",{style:{color:C.bone}},"Bas du dos ajouté : "),
-          "la machine lombaires/fessiers de ta salle a été ajoutée à Bas A et Bas B — c'était le seul groupe musculaire à zéro dans le programme. Renomme-la dans Machines une fois que tu as vérifié le nom exact."),
-        h("p",{style:{margin:0}}, h("strong",{style:{color:C.bone}},"Rééquilibrage du volume par muscle : "),
-          "en gardant 4 séries sur les gros mouvements (presses, tirages, jambes) et 3 partout ailleurs, épaules, deltoïdes postérieurs, biceps, triceps, mollets, fessiers, adducteurs et lombaires tombaient à ~4,8 séries/semaine — sous le minimum utile, alors que quadriceps/ischios/pectoraux/dos/abdos tournaient à 6,4-8. Ce n'était pas un problème de gauche/droite ni de haut/bas (ces ratios étaient déjà bons), juste trop de séries concentrées sur les gros mouvements. Ces 8 muscles passent donc à 4 séries — réparties entre Haut A et Haut B pour ne pas surcharger un seul jour — ce qui les remonte à 5,6-6,4 séries/semaine, avec repos raccourci sur ces séries d'isolation pour limiter l'impact sur la durée (petits muscles, récupération plus rapide). Les séances Haut A/B passent à ~104-107 min le temps de la phase 1."),
-        h("p",{style:{margin:0}}, h("strong",{style:{color:C.bone}},"Quadriceps/ischios ne sont pas \"trop hauts\" — c'est le reste qui est encore bas : "),
-          "à 8 séries/semaine, quadriceps et ischio-jambiers sont pile au minimum recommandé pour la croissance (RP Strength : MEV quadriceps ≈ 8, ischios ≈ 6 — source en bas de page). Ce n'est donc pas un déséquilibre à corriger en baissant les jambes. Le vrai trou : dos (6,4 vs minimum ≈ 10), épaules/deltoïdes post./biceps (5,6 vs minimum ≈ 8) restent sous leur propre seuil. Combler entièrement le dos demanderait un 3e exercice — le Tirage Horizontal (x-row) est déjà dans tes machines mais n'est pas encore utilisé dans le programme, comme les jambes utilisent 3 machines pour atteindre leur minimum. Décision pour l'instant : on attend la phase 2 (bilatéral, ~12 oct.) pour ajouter ce tirage horizontal et remonter dos/épaules/deltoïdes post./biceps à leur minimum sans pousser les séances vers 118-120 min.")
-      )),
     h(Section, {title:"Nutrition — calculateur personnel"},
       h("p",{style:{fontSize:13,color:C.taupe,lineHeight:1.6,marginBottom:12}},
         "Basé sur ta dernière mesure Boditrax. Ajuste les champs si ton poids ou ton activité changent — les cibles se recalculent tout de suite."),
@@ -1108,33 +1087,6 @@ function ProgrammeTab(props){
         h(StatCard,{label:"Glucides", value:nut.carbG+" g"})
       ) : h("div",{style:{fontSize:13,color:C.rust,marginTop:10}}, "Renseigne taille + sexe (ou coche la mesure Boditrax) pour calculer tes cibles.")
     ),
-    h(Section, {title:"Repères pratiques"},
-      h("div",{style:{fontSize:13.5,color:C.taupe,lineHeight:1.65,display:"flex",flexDirection:"column",gap:10}},
-        h("p",{style:{margin:0}}, h("strong",{style:{color:C.bone}},"Un mois d'entraînement, c'est le meilleur moment : "),
-          "les débutants sont le profil qui recompose le plus facilement — prendre du muscle et perdre du gras en même temps, sans viser un déficit agressif. Un déficit modéré (250–500 kcal/j sous ta maintenance, calculée ou fixée ci-dessus) protège le muscle pendant que l'entraînement donne un vrai stimulus."),
-        h("p",{style:{margin:0}}, h("strong",{style:{color:C.bone}},"Pas de perte de graisse ciblée — ni sur le ventre, ni sur le visage : "),
-          "il n'existe pas de moyen de perdre la graisse du ventre ou du visage spécifiquement — la perte de gras est globale et l'ordre où ça part dépend surtout de la génétique. Ce qui fait le plus la différence sur le visage : moins de sodium et d'alcool, un sommeil correct et une bonne hydratation, en plus du déficit global — pas d'exercice miracle."),
-        h("p",{style:{margin:0}}, h("strong",{style:{color:C.bone}},"Abdos visibles = pourcentage de gras, pas volume d'abdos : "),
-          "les abdos sont déjà là dessous ; les rendre visibles est une question de faire descendre la couche de gras qui les recouvre, pas de faire plus de séries d'abdominaux. Le repère généralement cité pour qu'ils se voient chez un homme est environ 10–14% de masse grasse (très variable selon la morphologie et où chacun stocke son gras) — d'où seulement 3 séries d'abdos par jour de jambes/haut dans ce programme : c'est le déficit calorique qui fait le travail, le volume d'abdos ne fait presque aucune différence sur leur visibilité."),
-        h("p",{style:{margin:0}}, h("strong",{style:{color:C.bone}},"Emploi du temps erratique : "),
-          "profite des jours à 12 000 pas — cette marche compte vraiment dans ta dépense totale. Les jours de repos, une marche légère suffit ; pas besoin de t'entraîner pour “rattraper”."),
-        h("p",{style:{margin:0}}, h("strong",{style:{color:C.bone}},"Protéines réparties : "),
-          "vise 3–4 prises dans la journée plutôt que tout en un repas — plus facile avec des horaires de garde imprévisibles (œufs, skyr/fromage blanc, viande/poisson/tofu, whey en dépannage).")
-      ),
-      h("div",{style:{marginTop:16,paddingTop:12,borderTop:"1px solid "+C.taupeDim,display:"flex",flexDirection:"column",gap:4}},
-        h("span",{style:{fontFamily:sansCond,fontSize:11,color:C.taupe,textTransform:"uppercase",letterSpacing:"0.04em"}}, "Sources"),
-        h("a",{href:"https://link.springer.com/article/10.1186/s12970-017-0177-8", target:"_blank", rel:"noopener", style:{fontSize:12}}, "ISSN Position Stand — Protein and Exercise (Jäger et al., 2017)"),
-        h("a",{href:"https://pubmed.ncbi.nlm.nih.gov/27433992/", target:"_blank", rel:"noopener", style:{fontSize:12}}, "Schoenfeld et al. — volume hebdomadaire et hypertrophie (méta-analyse, 2017)"),
-        h("a",{href:"https://journals.lww.com/nsca-scj/fulltext/2020/10000/body_recomposition__can_trained_individuals_build.3.aspx", target:"_blank", rel:"noopener", style:{fontSize:12}}, "NSCA — Body Recomposition (Barakat et al., 2020)"),
-        h("a",{href:"https://www.inchcalculator.com/mifflin-st-jeor-calculator/", target:"_blank", rel:"noopener", style:{fontSize:12}}, "Mifflin–St Jeor — équation et multiplicateurs d'activité"),
-        h("a",{href:"https://rpstrength.com/expert-advice/training-volume-landmarks-muscle-growth", target:"_blank", rel:"noopener", style:{fontSize:12}}, "RP Strength — Concept des repères de volume (MEV/MAV/MRV/volume de maintenance)"),
-        h("a",{href:"https://volume-landmarks-rp-rals.vercel.app/", target:"_blank", rel:"noopener", style:{fontSize:12}}, "Repères MEV/MAV/MRV par muscle (quadriceps ≈8, ischios ≈6, dos ≈10, épaules/deltoïdes post. ≈8, biceps ≈8, triceps ≈6 séries/semaine) — outil tiers basé sur la méthode RP, pas une page officielle RP Strength"),
-        h("a",{href:"https://www.bodyspec.com/blog/post/body_recomposition_workout_plan_an_8week_guide", target:"_blank", rel:"noopener", style:{fontSize:12}}, "BodySpec — Volume d'entraînement pour la recomposition corporelle (~8-12 séries/semaine/muscle)"),
-        h("a",{href:"https://paragontrainingmethods.com/how-to-train-weaker-limbs/", target:"_blank", rel:"noopener", style:{fontSize:12}}, "Paragon Training Methods — Corriger un déséquilibre gauche/droite (méthode côté faible d'abord)"),
-        h("a",{href:"https://www.healthline.com/health/body-fat-percentage-for-abs", target:"_blank", rel:"noopener", style:{fontSize:12}}, "Healthline — Pourcentage de masse grasse pour des abdos visibles")
-      ),
-      h("p",{style:{fontSize:11.5,color:C.taupeDim,marginTop:10,lineHeight:1.5}}, "Ceci n'est pas un avis médical. Le BMR d'une balance à impédance a une marge d'erreur normale de quelques %. Si un souci de santé, une grossesse ou un trouble alimentaire entre en jeu, ces repères génériques ne remplacent pas un avis professionnel.")
-    )
   );
 }
 
