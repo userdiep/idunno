@@ -3,11 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#171C21">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Sunglo sport">
+<meta name="theme-color" content="#171C21">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -36,10 +35,10 @@ a{color:#F0A62E;}
 @media (prefers-reduced-motion: reduce){ *{animation:none !important; transition:none !important;} }
 @keyframes spin{ to{ transform:rotate(360deg); } }
 @keyframes rise{ from{ opacity:0; transform:translateY(4px);} to{opacity:1; transform:translateY(0);} }
+@keyframes restPulse{ 0%,100%{opacity:1;} 50%{opacity:0.55;} }
 </style>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Semi+Condensed:wght@500;600;700;800&display=swap">
-</head>
-<body>
+
 <div id="root"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
@@ -89,36 +88,47 @@ var PUSHPULL = {
    arm/leg movements (none yet in the seed, all current machines
    are bilateral seated units).
    ============================================================ */
+/* order: 1 = polyarticulaire (plusieurs articulations, ex. développé, tirage,
+   presse à cuisses), 2 = semi-isolation (une seule articulation mais un
+   muscle biarticulaire ou beaucoup de synergistes recrutés — ischios,
+   mollets, fessiers, lombaires, oiseau/deltoïde arrière), 3 = isolation
+   (une seule articulation, un seul muscle ciblé). Sert à trier l'ordre des
+   exercices dans une séance : la littérature (ACSM position stand ; NSCA)
+   recommande de faire les polyarticulaires en premier, pendant que tu es
+   frais, et les isolations en dernier — voir sources dans la conversation.
+   Le découpage en 3 paliers (plutôt que juste poly/isolation) est une
+   convention pratique, pas une catégorie validée par la littérature en
+   tant que telle — seule la règle poly-avant-isolation l'est vraiment. */
 var SEED_EXERCISES = [
-  { id: "tg-chest-press", name: "Chest Press", brand: "Technogym", muscle: "Pectoraux", kind: "machine", inc: 2.5, unilateral:true },
-  { id: "tg-wide-chest", name: "Wide Chest Press", brand: "Technogym", muscle: "Pectoraux", kind: "machine", inc: 2.5, unilateral:true },
-  { id: "lf-dev-tronc", name: "Développé du Tronc", brand: "Life Fitness", muscle: "Pectoraux", kind: "machine", inc: 2.5, unilateral:true },
-  { id: "tg-pectoral", name: "Pectoral (butterfly)", brand: "Technogym", muscle: "Pectoraux", kind: "machine", inc: 2.5, unilateral:true },
-  { id: "lf-pectoraux", name: "Pectoraux (butterfly)", brand: "Life Fitness", muscle: "Pectoraux", kind: "machine", inc: 2.5, unilateral:true },
-  { id: "tg-upper-back", name: "Upper Back", brand: "Technogym", muscle: "Dos", kind: "machine", inc: 2.5, unilateral:true },
-  { id: "x-pulldown", name: "Tirage Vertical (à vérifier)", brand: "?", muscle: "Dos", kind: "machine", inc: 2.5, unilateral:true },
-  { id: "x-assisted", name: "Traction Assistée (à vérifier)", brand: "?", muscle: "Dos", kind: "machine", inc: 2.5, unilateral:true },
-  { id: "x-row", name: "Tirage Horizontal (à vérifier)", brand: "?", muscle: "Dos", kind: "machine", inc: 2.5, unilateral:true },
-  { id: "tg-reverse-fly", name: "Reverse Fly", brand: "Technogym", muscle: "Deltoïdes post.", kind: "machine", inc: 2.5, unilateral:true },
-  { id: "lf-delt-arriere", name: "Deltoïde Arrière", brand: "Life Fitness", muscle: "Deltoïdes post.", kind: "machine", inc: 2.5, unilateral:true },
-  { id: "tg-shoulder-press", name: "Shoulder Press", brand: "Technogym", muscle: "Épaules", kind: "machine", inc: 2.5, unilateral:true },
-  { id: "lf-dev-epaules", name: "Développé des Épaules", brand: "Life Fitness", muscle: "Épaules", kind: "machine", inc: 2.5, unilateral:true },
-  { id: "lf-elev-laterale", name: "Élévation Latérale", brand: "Life Fitness", muscle: "Épaules", kind: "machine", inc: 2.5, unilateral:true },
-  { id: "lf-biceps", name: "Flexion des Biceps", brand: "Life Fitness", muscle: "Biceps", kind: "machine", inc: 2.5, unilateral:true },
-  { id: "lf-triceps", name: "Extension des Triceps", brand: "Life Fitness", muscle: "Triceps", kind: "machine", inc: 2.5, unilateral:true },
-  { id: "tg-leg-press", name: "Leg Press", brand: "Technogym", muscle: "Quadriceps", kind: "machine", inc: 5, unilateral:true },
-  { id: "tg-leg-ext", name: "Leg Extension", brand: "Technogym", muscle: "Quadriceps", kind: "machine", inc: 2.5, unilateral:true },
-  { id: "lf-ext-jambes", name: "Extension des Jambes Assis", brand: "Life Fitness", muscle: "Quadriceps", kind: "machine", inc: 2.5, unilateral:true },
-  { id: "lf-flex-jambes", name: "Flexion des Jambes (allongé)", brand: "Life Fitness", muscle: "Ischio-jambiers", kind: "machine", inc: 2.5, unilateral:true },
-  { id: "lf-ischio-assis", name: "Ischio-Jambiers Assis", brand: "Life Fitness", muscle: "Ischio-jambiers", kind: "machine", inc: 2.5, unilateral:true },
-  { id: "hs-ischio-debout", name: "MTS Ischio-Jambier Debout", brand: "Hammer Strength", muscle: "Ischio-jambiers", kind: "machine", inc: 2.5, unilateral:true },
-  { id: "lf-mollets", name: "Extension des Mollets", brand: "Life Fitness", muscle: "Mollets", kind: "machine", inc: 2.5, unilateral:false },
-  { id: "lf-fessiers", name: "Fessiers", brand: "Life Fitness", muscle: "Fessiers", kind: "machine", inc: 2.5, unilateral:false },
-  { id: "lf-abduction", name: "Abduction des Hanches", brand: "Life Fitness", muscle: "Fessiers", kind: "machine", inc: 2.5, unilateral:false },
-  { id: "lf-adduction", name: "Adduction des Hanches", brand: "Life Fitness", muscle: "Adducteurs", kind: "machine", inc: 2.5, unilateral:false },
-  { id: "x-lombaires", name: "Extension Lombaires / Fessiers (à vérifier)", brand: "?", muscle: "Lombaires", kind: "machine", inc: 2.5, unilateral:false },
-  { id: "hs-ab-crunch", name: "MTS Abdominal Crunch", brand: "Hammer Strength", muscle: "Abdominaux", kind: "machine", inc: 2.5, unilateral:false },
-  { id: "lf-rotation", name: "Rotation du Torse", brand: "Life Fitness", muscle: "Abdominaux", kind: "machine", inc: 2.5, unilateral:false },
+  { id: "tg-chest-press", name: "Chest Press", brand: "Technogym", muscle: "Pectoraux", kind: "machine", inc: 2.5, unilateral:true, order:1 },
+  { id: "tg-wide-chest", name: "Wide Chest Press", brand: "Technogym", muscle: "Pectoraux", kind: "machine", inc: 2.5, unilateral:true, order:1 },
+  { id: "lf-dev-tronc", name: "Développé du Tronc", brand: "Life Fitness", muscle: "Pectoraux", kind: "machine", inc: 2.5, unilateral:true, order:1 },
+  { id: "tg-pectoral", name: "Pectoral (butterfly)", brand: "Technogym", muscle: "Pectoraux", kind: "machine", inc: 2.5, unilateral:true, order:3 },
+  { id: "lf-pectoraux", name: "Pectoraux (butterfly)", brand: "Life Fitness", muscle: "Pectoraux", kind: "machine", inc: 2.5, unilateral:true, order:3 },
+  { id: "tg-upper-back", name: "Upper Back", brand: "Technogym", muscle: "Dos", kind: "machine", inc: 2.5, unilateral:true, order:1 },
+  { id: "x-pulldown", name: "Tirage Vertical (à vérifier)", brand: "?", muscle: "Dos", kind: "machine", inc: 2.5, unilateral:true, order:1 },
+  { id: "x-assisted", name: "Traction Assistée (à vérifier)", brand: "?", muscle: "Dos", kind: "machine", inc: 2.5, unilateral:true, order:1 },
+  { id: "x-row", name: "Tirage Horizontal (à vérifier)", brand: "?", muscle: "Dos", kind: "machine", inc: 2.5, unilateral:true, order:1 },
+  { id: "tg-reverse-fly", name: "Reverse Fly", brand: "Technogym", muscle: "Deltoïdes post.", kind: "machine", inc: 2.5, unilateral:true, order:2 },
+  { id: "lf-delt-arriere", name: "Deltoïde Arrière", brand: "Life Fitness", muscle: "Deltoïdes post.", kind: "machine", inc: 2.5, unilateral:true, order:2 },
+  { id: "tg-shoulder-press", name: "Shoulder Press", brand: "Technogym", muscle: "Épaules", kind: "machine", inc: 2.5, unilateral:true, order:1 },
+  { id: "lf-dev-epaules", name: "Développé des Épaules", brand: "Life Fitness", muscle: "Épaules", kind: "machine", inc: 2.5, unilateral:true, order:1 },
+  { id: "lf-elev-laterale", name: "Élévation Latérale", brand: "Life Fitness", muscle: "Épaules", kind: "machine", inc: 2.5, unilateral:true, order:3 },
+  { id: "lf-biceps", name: "Flexion des Biceps", brand: "Life Fitness", muscle: "Biceps", kind: "machine", inc: 2.5, unilateral:true, order:3 },
+  { id: "lf-triceps", name: "Extension des Triceps", brand: "Life Fitness", muscle: "Triceps", kind: "machine", inc: 2.5, unilateral:true, order:3 },
+  { id: "tg-leg-press", name: "Leg Press", brand: "Technogym", muscle: "Quadriceps", kind: "machine", inc: 5, unilateral:true, order:1 },
+  { id: "tg-leg-ext", name: "Leg Extension", brand: "Technogym", muscle: "Quadriceps", kind: "machine", inc: 2.5, unilateral:true, order:3 },
+  { id: "lf-ext-jambes", name: "Extension des Jambes Assis", brand: "Life Fitness", muscle: "Quadriceps", kind: "machine", inc: 2.5, unilateral:true, order:3 },
+  { id: "lf-flex-jambes", name: "Flexion des Jambes (allongé)", brand: "Life Fitness", muscle: "Ischio-jambiers", kind: "machine", inc: 2.5, unilateral:true, order:2 },
+  { id: "lf-ischio-assis", name: "Ischio-Jambiers Assis", brand: "Life Fitness", muscle: "Ischio-jambiers", kind: "machine", inc: 2.5, unilateral:true, order:2 },
+  { id: "hs-ischio-debout", name: "MTS Ischio-Jambier Debout", brand: "Hammer Strength", muscle: "Ischio-jambiers", kind: "machine", inc: 2.5, unilateral:true, order:2 },
+  { id: "lf-mollets", name: "Extension des Mollets", brand: "Life Fitness", muscle: "Mollets", kind: "machine", inc: 2.5, unilateral:false, order:2 },
+  { id: "lf-fessiers", name: "Fessiers", brand: "Life Fitness", muscle: "Fessiers", kind: "machine", inc: 2.5, unilateral:false, order:2 },
+  { id: "lf-abduction", name: "Abduction des Hanches", brand: "Life Fitness", muscle: "Fessiers", kind: "machine", inc: 2.5, unilateral:false, order:3 },
+  { id: "lf-adduction", name: "Adduction des Hanches", brand: "Life Fitness", muscle: "Adducteurs", kind: "machine", inc: 2.5, unilateral:false, order:3 },
+  { id: "x-lombaires", name: "Extension Lombaires / Fessiers (à vérifier)", brand: "?", muscle: "Lombaires", kind: "machine", inc: 2.5, unilateral:false, order:2 },
+  { id: "hs-ab-crunch", name: "MTS Abdominal Crunch", brand: "Hammer Strength", muscle: "Abdominaux", kind: "machine", inc: 2.5, unilateral:false, order:3 },
+  { id: "lf-rotation", name: "Rotation du Torse", brand: "Life Fitness", muscle: "Abdominaux", kind: "machine", inc: 2.5, unilateral:false, order:3 },
 ];
 
 /* v3 (2026-08-31) — objectif confirmé : RECOMPOSITION (prise de muscle ET
@@ -391,7 +401,34 @@ function pushPullBalance(vol){
   return sums;
 }
 
-/* Removing a machine: keep the volume by swapping in an equivalent for the same muscle. */
+/* Choisit la meilleure machine de remplacement parmi des candidats pour le
+   même muscle — au lieu de prendre juste la première de la liste (ordre
+   d'ajout au catalogue, qui n'a aucun rapport avec la qualité de l'exercice
+   pour l'objectif). Deux critères, dans cet ordre :
+   1) une machine CONFIRMÉE (brand !== "?") plutôt qu'une encore "à
+      vérifier" — remplacer par une machine dont on n'est même pas sûr
+      qu'elle existe à la salle ne sert à rien ;
+   2) le même palier polyarticulaire/semi-isolation/isolation (voir `order`
+      dans SEED_EXERCISES et exerciseOrderTier) que l'exercice remplacé, pour
+      ne pas casser l'ordre poly-avant-isolation de la séance (voir Séance >
+      petit badge numéroté sur chaque machine).
+   À égalité sur ces deux critères, l'ordre du catalogue tranche — ça reste
+   déterministe et prévisible. */
+function bestCandidate(candidates, referenceOrder) {
+  if (!candidates.length) return null;
+  var scored = candidates.map(function(e, i){
+    return { e: e, i: i, verified: e.brand !== "?" ? 1 : 0, sameTier: exerciseOrderTier(e) === referenceOrder ? 1 : 0 };
+  });
+  scored.sort(function(a, b){
+    if (a.verified !== b.verified) return b.verified - a.verified;
+    if (a.sameTier !== b.sameTier) return b.sameTier - a.sameTier;
+    return a.i - b.i;
+  });
+  return scored[0].e;
+}
+
+/* Removing a machine: keep the volume by swapping in the BEST equivalent for
+   the same muscle (see bestCandidate), not just the first one on the list. */
 function removeWithSubstitution(exId, exercises, program) {
   var gone = exercises.find(function(e){return e.id===exId;});
   var remaining = exercises.filter(function(e){return e.id!==exId;});
@@ -401,7 +438,8 @@ function removeWithSubstitution(exId, exercises, program) {
     day.items.forEach(function(it){
       if (it.ex !== exId) { items.push(it); return; }
       var taken = {}; day.items.forEach(function(x){taken[x.ex]=true;}); items.forEach(function(x){taken[x.ex]=true;});
-      var cand = remaining.find(function(e){ return e.muscle===gone.muscle && !taken[e.id]; });
+      var candidates = remaining.filter(function(e){ return e.muscle===gone.muscle && !taken[e.id]; });
+      var cand = bestCandidate(candidates, exerciseOrderTier(gone));
       if (cand) { items.push(Object.assign({}, it, {ex: cand.id})); report.push({day: day.label, to: cand.name, sets: it.sets}); }
       else { report.push({day: day.label, to: null, sets: it.sets}); }
     });
@@ -411,15 +449,16 @@ function removeWithSubstitution(exId, exercises, program) {
 }
 
 /* An exercise is stalled (same weight 4+ séances) and it's the only one blocking:
-   look for another machine already in the catalog, targeting the same muscle,
-   that isn't already used anywhere in the program — same idea as the unused
-   x-row machine found for Dos. Returns null if nothing suitable exists. */
+   look for the BEST other machine already in the catalog, targeting the same
+   muscle, that isn't already used anywhere in the program (see bestCandidate
+   for what "best" means here). Returns null if nothing suitable exists. */
 function suggestSwap(exId, exercises, program) {
   var ex = exercises.find(function(e){return e.id===exId;});
   if (!ex) return null;
   var usedIds = {};
   program.forEach(function(d){ d.items.forEach(function(it){ usedIds[it.ex]=true; }); });
-  return exercises.find(function(e){ return e.muscle===ex.muscle && e.id!==exId && !usedIds[e.id]; }) || null;
+  var candidates = exercises.filter(function(e){ return e.muscle===ex.muscle && e.id!==exId && !usedIds[e.id]; });
+  return bestCandidate(candidates, exerciseOrderTier(ex));
 }
 function applySwap(oldExId, newExId, program) {
   return program.map(function(d){
@@ -691,6 +730,29 @@ function StackPlate(props) {
       h("span",{style:{fontFamily:sansCond,fontSize:10,color:C.taupe}},"objectif"))
   );
 }
+var ORDER_TIER_LABEL = { 1:"Polyarticulaire — à faire en premier", 2:"Semi-isolation", 3:"Isolation — à faire en dernier" };
+function exerciseOrderTier(ex){ return (ex && ex.order) || 3; }
+/* Trie une liste d'items/entries de séance par palier d'exercice (1
+   polyarticulaire → 2 semi-isolation → 3 isolation), à égalité de palier
+   l'ordre d'origine est conservé (tri stable). getExId(item) doit renvoyer
+   l'id de l'exercice pour cet item. */
+function sortByExerciseOrder(list, getExId, exMap) {
+  return list.map(function(item, i){ return { item: item, i: i }; })
+    .sort(function(a, b){
+      var ta = exerciseOrderTier(exMap[getExId(a.item)]), tb = exerciseOrderTier(exMap[getExId(b.item)]);
+      return ta !== tb ? ta - tb : a.i - b.i;
+    })
+    .map(function(w){ return w.item; });
+}
+function sortedDayItems(day, exMap) { return sortByExerciseOrder(day.items, function(it){return it.ex;}, exMap); }
+function OrderBadge(props){
+  var order = props.order;
+  if (!order) return null;
+  return h("span",{title:"Ordre conseillé dans la séance : "+order+"/3 — "+(ORDER_TIER_LABEL[order]||""),
+    style:{display:"inline-flex",alignItems:"center",justifyContent:"center",width:19,height:19,borderRadius:"50%",
+      flexShrink:0,marginTop:1,background:C.shroud,border:"1px solid "+C.taupeDim,
+      fontFamily:sansCond,fontSize:11,fontWeight:700,color:C.pin}}, order);
+}
 function Section(props){
   return h("div",{style:{marginBottom:24}},
     h("div",{style:{display:"flex",alignItems:"baseline",justifyContent:"space-between",marginBottom:8}},
@@ -756,6 +818,66 @@ function SyncDot(props){
     h("span",{style:{fontFamily:sansCond,fontSize:10.5,color:C.taupe}}, status==="cloud"?"synchronisé":status==="saving"?"…":"local"));
 }
 
+/* Beep synthesized with Web Audio (no asset to host) + a short vibration —
+   fired once, exactly when the rest countdown crosses zero. */
+function restAlert() {
+  try {
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    if (Ctx) {
+      var ctx = new Ctx();
+      [0, 0.18].forEach(function(delay){
+        var o = ctx.createOscillator(), g = ctx.createGain();
+        o.type = "sine"; o.frequency.value = 880;
+        g.gain.setValueAtTime(0.0001, ctx.currentTime + delay);
+        g.gain.exponentialRampToValueAtTime(0.35, ctx.currentTime + delay + 0.015);
+        g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + delay + 0.16);
+        o.connect(g); g.connect(ctx.destination);
+        o.start(ctx.currentTime + delay); o.stop(ctx.currentTime + delay + 0.2);
+      });
+      setTimeout(function(){ ctx.close(); }, 700);
+    }
+  } catch (e) {}
+  if (navigator.vibrate) { try { navigator.vibrate([180, 90, 180]); } catch (e) {} }
+}
+
+/* Rest timer bar — pinned above the bottom nav so it stays visible the
+   whole time during a session, whatever tab is open. Ticks off wall-clock
+   time (endTime vs Date.now()) rather than counting down a stored number,
+   so it stays accurate even if the tab was backgrounded for a bit. Once it
+   hits zero it keeps counting up in red ("overtime") instead of vanishing,
+   so a glance always tells you both "done" and "by how much". */
+function RestTimerBar(props) {
+  var timer = props.timer, onAdjust = props.onAdjust, onDismiss = props.onDismiss;
+  var _t = useState(Date.now()), now = _t[0], setNow = _t[1];
+  var firedRef = useRef(null);
+  useEffect(function(){
+    var id = setInterval(function(){ setNow(Date.now()); }, 250);
+    return function(){ clearInterval(id); };
+  }, [timer.id]);
+  var remainingMs = timer.endTime - now;
+  var over = remainingMs <= 0;
+  useEffect(function(){
+    if (over && firedRef.current !== timer.id) { firedRef.current = timer.id; restAlert(); }
+  }, [over, timer.id]);
+  var totalSec = Math.round(Math.abs(remainingMs) / 1000);
+  var mm = Math.floor(totalSec / 60), ss = totalSec % 60;
+  var text = (over ? "+" : "") + mm + ":" + (ss < 10 ? "0" : "") + ss;
+  var pct = Math.max(0, Math.min(100, (remainingMs / (timer.duration * 1000)) * 100));
+  return h("div",{style:{background:C.shroud,borderTop:"1px solid "+C.taupeDim,padding:"8px 12px",overflow:"hidden"}},
+    h("div",{style:{height:3,borderRadius:2,background:C.shroudDeep,marginBottom:8,overflow:"hidden"}},
+      h("div",{style:{height:"100%",width:(over?100:pct)+"%",background:over?C.rust:C.pin,transition:"width .25s linear"}})),
+    h("div",{style:{display:"flex",alignItems:"center",gap:10}},
+      h("div",{style:{minWidth:0,flex:1}},
+        h("div",{style:{fontFamily:sansCond,fontSize:10.5,color:C.taupe,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}, "Repos — "+timer.label),
+        h("div",{style:{fontFamily:sansBody,fontSize:26,fontWeight:700,fontVariantNumeric:"tabular-nums",color: over?C.rust:C.bone, animation: over?"restPulse 1.2s ease-in-out infinite":"none"}}, text)),
+      h("button",{onClick:function(){onAdjust(-15);}, "aria-label":"Moins 15 secondes",
+        style:{padding:"8px 10px",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:13,fontWeight:600}}, "-15"),
+      h("button",{onClick:function(){onAdjust(15);}, "aria-label":"Plus 15 secondes",
+        style:{padding:"8px 10px",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:13,fontWeight:600}}, "+15"),
+      h("button",{onClick:onDismiss, "aria-label":"Arrêter le chrono",
+        style:{padding:8,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent"}}, h(Icon,{name:"x",size:15}))));
+}
+
 /* ============================================================
    SÉANCE
    ============================================================ */
@@ -776,7 +898,7 @@ function DeloadBanner(props){
 var FREEFORM_LABEL = "Séance libre";
 function SeanceTab(props) {
   var program=props.program, exercises=props.exercises||[], exMap=props.exMap, sessions=props.sessions, nextDayKey=props.nextDayKey,
-      active=props.active, setActive=props.setActive, finishSession=props.finishSession,
+      active=props.active, setActive=props.setActive, finishSession=props.finishSession, startRestTimer=props.startRestTimer,
       deloadForNextStart=props.deloadForNextStart, setDeloadForNextStart=props.setDeloadForNextStart,
       snoozeDeload=props.snoozeDeload, deloadSuggested=props.deloadSuggested, deloadReason=props.deloadReason;
   var _p = useState(false), pickerOpen=_p[0], setPickerOpen=_p[1];
@@ -790,7 +912,10 @@ function SeanceTab(props) {
   function addFreeformExercise() {
     if (!freePick) return;
     if (active.entries.some(function(e){return e.ex===freePick;})) { setFreePick(""); return; }
-    setActive(Object.assign({}, active, { entries: active.entries.concat([{ex:freePick, sets:[]}]) }));
+    /* Retrié après chaque ajout : polyarticulaire d'abord, isolation en
+       dernier, comme pour les séances de rotation (voir sortByExerciseOrder). */
+    var next = sortByExerciseOrder(active.entries.concat([{ex:freePick, sets:[]}]), function(e){return e.ex;}, exMap);
+    setActive(Object.assign({}, active, { entries: next }));
     setFreePick("");
   }
   function removeFreeformEntry(idx) {
@@ -823,7 +948,7 @@ function SeanceTab(props) {
 
   function start(dayKey, deload) {
     var d = program.find(function(x){return x.key===dayKey;});
-    var entries = d.items.map(function(it){
+    var entries = sortedDayItems(d, exMap).map(function(it){
       var p = prescribe(sessions, it, deload);
       var nSets = p.setsOverride || it.sets;
       /* One row per set, whether the exercise is unilateral or not — you do
@@ -866,13 +991,15 @@ function SeanceTab(props) {
           h("button",{onClick:startFreeform, style:{flexShrink:0,padding:"10px 16px",borderRadius:6,color:C.bone,fontFamily:sansCond,fontSize:14,fontWeight:600,border:"1px solid "+C.taupeDim,background:"transparent",whiteSpace:"nowrap"}}, "Démarrer"))),
       h(Section, {title:"Ce qui t'attend"},
         h("div",{style:{borderRadius:10,overflow:"hidden",border:"1px solid "+C.taupeDim}},
-          day.items.map(function(it,i){
+          sortedDayItems(day, exMap).map(function(it,i){
             var p = prescribe(sessions, it, deloadForNextStart);
             var ex = exMap[it.ex];
             return h("div",{key:i, style:{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,padding:"12px",background:C.shroudDeep,borderTop:i?"1px solid "+C.shroud:"none"}},
-              h("div",{style:{minWidth:0}},
-                h("div",{style:{fontSize:15,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}, ex?ex.name:"Machine supprimée"),
-                h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe}}, ex?ex.brand:"—")),
+              h("div",{style:{display:"flex",alignItems:"flex-start",gap:8,minWidth:0}},
+                h(OrderBadge,{order: ex?ex.order:null}),
+                h("div",{style:{minWidth:0}},
+                  h("div",{style:{fontSize:15,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}, ex?ex.name:"Machine supprimée"),
+                  h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe}}, ex?ex.brand:"—"))),
               h(StackPlate,{weight:p.weight, repMin:it.min, repMax:it.max, sets:p.setsOverride||it.sets, state:p.state}));
           })
         ))
@@ -884,6 +1011,18 @@ function SeanceTab(props) {
       if (i!==idx) return e;
       return Object.assign({}, e, { sets: e.sets.map(function(s,j){ return j!==si ? s : Object.assign({}, s, (function(){ var o={}; o[field]=val; return o; })()); }) });
     }) }));
+  }
+  /* Auto-starts the rest timer the moment a set goes from incomplete to
+     complete (both weight and reps filled in) — no extra tap needed. */
+  function updateSetAndMaybeRest(idx, si, field, val, restSeconds, label) {
+    var prevSet = active.entries[idx].sets[si];
+    var wasComplete = prevSet.weight!=null && prevSet.reps!=null;
+    updateSet(idx, si, field, val);
+    var newWeight = field==="weight" ? val : prevSet.weight;
+    var newReps = field==="reps" ? val : prevSet.reps;
+    if (!wasComplete && newWeight!=null && newReps!=null && startRestTimer) {
+      startRestTimer(restSeconds, label);
+    }
   }
   function fillDown(idx, si) {
     var entry = active.entries[idx]; var src = entry.sets[si];
@@ -913,9 +1052,11 @@ function SeanceTab(props) {
         var note = lastTimeNote(entry.ex);
         return h("div",{key:idx, style:{marginBottom:12,borderRadius:10,overflow:"hidden",border:"1px solid "+C.taupeDim}},
           h("div",{style:{padding:"12px",display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12,background:C.shroudDeep}},
-            h("div",{style:{minWidth:0}},
-              h("div",{style:{fontSize:16,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}, ex?ex.name:"Machine supprimée"),
-              h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe}}, ex?ex.brand:"—")),
+            h("div",{style:{display:"flex",alignItems:"flex-start",gap:8,minWidth:0}},
+              h(OrderBadge,{order: ex?ex.order:null}),
+              h("div",{style:{minWidth:0}},
+                h("div",{style:{fontSize:16,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}, ex?ex.name:"Machine supprimée"),
+                h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe}}, ex?ex.brand:"—"))),
             h("button",{onClick:function(){removeFreeformEntry(idx);}, title:"Retirer cet exercice",
               style:{padding:6,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",flexShrink:0}}, h(Icon,{name:"x",size:14}))),
           note ? h("div",{style:{padding:"8px 12px",background:C.shroudDeep,borderTop:"1px solid "+C.shroud}},
@@ -925,8 +1066,8 @@ function SeanceTab(props) {
               return h("div",{key:si, style:{padding:"10px 12px",borderTop:"1px solid "+C.shroudDeep}},
                 h("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:8}},
                   h("span",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,width:30}}, "S"+(si+1)),
-                  h(Stepper,{value:s.weight, onChange:function(v){updateSet(idx,si,"weight",v);}, step: ex?ex.inc:2.5, suffix:"kg", placeholder:"kg", wide:true}),
-                  h(Stepper,{value:s.reps, onChange:function(v){updateSet(idx,si,"reps",v);}, step:1, suffix:"rep", placeholder:"rep"}),
+                  h(Stepper,{value:s.weight, onChange:function(v){updateSetAndMaybeRest(idx,si,"weight",v,90,ex?ex.name:"Repos");}, step: ex?ex.inc:2.5, suffix:"kg", placeholder:"kg", wide:true}),
+                  h(Stepper,{value:s.reps, onChange:function(v){updateSetAndMaybeRest(idx,si,"reps",v,90,ex?ex.name:"Repos");}, step:1, suffix:"rep", placeholder:"rep"}),
                   ex && ex.unilateral ? h(SideToggle,{value:s.weakSide, onChange:function(v){updateSet(idx,si,"weakSide",v);}}) : null,
                   h("button",{onClick:function(){removeFreeformSet(idx,si);}, title:"Supprimer cette série",
                     style:{padding:6,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent"}}, h(Icon,{name:"x",size:14}))),
@@ -962,16 +1103,18 @@ function SeanceTab(props) {
     h("div",{style:{marginBottom:16,padding:"10px 12px",borderRadius:8,background:C.shroudDeep,border:"1px solid "+C.taupeDim,display:"flex",alignItems:"flex-start",gap:8}},
       h(Icon,{name:"gauge",size:15,color:C.pin}),
       h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.45}}, "\"Facile / Correct / Dur\" est optionnel — ça aide l'app à ajuster plus vite, mais elle progresse très bien avec juste le poids et les reps si tu préfères ne pas y penser.")),
-    dayActive.items.map(function(it, idx){
+    sortedDayItems(dayActive, exMap).map(function(it, idx){
       var p = prescribe(sessions, it, active.deload);
       var ex = exMap[it.ex];
       var entry = active.entries[idx];
       if (!entry) return null;
       return h("div",{key:idx, style:{marginBottom:12,borderRadius:10,overflow:"hidden",border:"1px solid "+C.taupeDim}},
         h("div",{style:{padding:"12px",display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12,background:C.shroudDeep}},
-          h("div",{style:{minWidth:0}},
-            h("div",{style:{fontSize:16,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}, ex?ex.name:"Machine supprimée"),
-            h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe}}, (ex?ex.brand:"—")+" · repos "+it.rest+"s")),
+          h("div",{style:{display:"flex",alignItems:"flex-start",gap:8,minWidth:0}},
+            h(OrderBadge,{order: ex?ex.order:null}),
+            h("div",{style:{minWidth:0}},
+              h("div",{style:{fontSize:16,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}, ex?ex.name:"Machine supprimée"),
+              h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe}}, (ex?ex.brand:"—")+" · repos "+it.rest+"s"))),
           h(StackPlate,{weight:p.weight, repMin:it.min, repMax:it.max, sets:p.setsOverride||it.sets, state:p.state})),
         h("div",{style:{padding:"8px 12px",background:C.shroudDeep,borderTop:"1px solid "+C.shroud}},
           h("div",{style:{fontSize:12.5,color:p.state==="up"?C.green:p.state==="down"?C.rust:p.state==="deload"?C.steel:C.taupe,lineHeight:1.45}}, p.note)),
@@ -980,8 +1123,8 @@ function SeanceTab(props) {
             return h("div",{key:si, style:{padding:"10px 12px",borderTop:"1px solid "+C.shroudDeep}},
               h("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:8}},
                 h("span",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,width:30}}, "S"+(si+1)),
-                h(Stepper,{value:s.weight, onChange:function(v){updateSet(idx,si,"weight",v);}, step: ex?ex.inc:2.5, suffix:"kg", placeholder:"kg", wide:true}),
-                h(Stepper,{value:s.reps, onChange:function(v){updateSet(idx,si,"reps",v);}, step:1, suffix:"rep", placeholder:"rep"}),
+                h(Stepper,{value:s.weight, onChange:function(v){updateSetAndMaybeRest(idx,si,"weight",v,it.rest,ex?ex.name:"Repos");}, step: ex?ex.inc:2.5, suffix:"kg", placeholder:"kg", wide:true}),
+                h(Stepper,{value:s.reps, onChange:function(v){updateSetAndMaybeRest(idx,si,"reps",v,it.rest,ex?ex.name:"Repos");}, step:1, suffix:"rep", placeholder:"rep"}),
                 ex && ex.unilateral ? h(SideToggle,{value:s.weakSide, onChange:function(v){updateSet(idx,si,"weakSide",v);}}) : null,
                 h("button",{onClick:function(){fillDown(idx,si);}, title:"Recopier sur les séries suivantes",
                   style:{padding:6,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent"}}, h(Icon,{name:"chevronDown",size:14}))),
@@ -1521,9 +1664,20 @@ function App(props){
     ? "Plusieurs exercices sont bloqués sur la même charge depuis 4 séances — signe classique qu'une semaine plus légère aiderait à repartir."
     : "Ça fait environ 6 tours complets du programme (~5-8 semaines selon ton rythme) — une décharge périodique aide à consolider les gains et prévenir la fatigue accumulée.";
 
+  var _rt = useState(null), restTimer=_rt[0], setRestTimer=_rt[1];
+  var restIdRef = useRef(0);
+  function startRestTimer(seconds, label){
+    restIdRef.current += 1;
+    setRestTimer({ id: restIdRef.current, endTime: Date.now() + seconds*1000, duration: seconds, label: label });
+  }
+  function adjustRestTimer(delta){
+    setRestTimer(function(rt){ return rt ? Object.assign({}, rt, {endTime: rt.endTime + delta*1000}) : rt; });
+  }
+  function stopRestTimer(){ setRestTimer(null); }
+
   function persistConfig(exercises, program){ setState({exercises:exercises, program:program}); }
   function persistSessions(sessions){ setState({sessions:sessions}); }
-  function setActive(active){ setState({active:active}); }
+  function setActive(active){ if (!active) setRestTimer(null); setState({active:active}); }
   function setDeloadForNextStart(v){ setState({deloadForNextStart:v}); }
   function snoozeDeload(){ setState(function(prev){ return Object.assign({},prev,{meta:{deloadSnoozeUntil: prev.sessions.filter(function(s){return s.done;}).length + 4}}); }); }
   function finishSession(){
@@ -1531,6 +1685,7 @@ function App(props){
     var cleaned = Object.assign({}, active, { done:true,
       entries: active.entries.map(function(e){ return Object.assign({}, e, {sets: e.sets.filter(function(s){return s.weight!=null && s.reps!=null;})}); }).filter(function(e){return e.sets.length>0;}) });
     if (cleaned.entries.length===0) { setActive(null); return; }
+    setRestTimer(null);
     setState({ sessions: state.sessions.concat([cleaned]), active: null });
   }
   function deleteSession(id){ setState({sessions: state.sessions.filter(function(s){return s.id!==id;})}); }
@@ -1552,19 +1707,21 @@ function App(props){
       h("div",{style:{display:"flex",alignItems:"center",gap:12}},
         h(SyncDot,{status:syncStatus}),
         h("span",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe}}, state.sessions.filter(function(s){return s.done;}).length+" séances"))),
-    h("main",{style:{padding:"16px",paddingBottom:88, maxWidth:640, margin:"0 auto"}},
+    h("main",{style:{padding:"16px",paddingBottom: restTimer?150:88, maxWidth:640, margin:"0 auto"}},
       tab==="seance" ? h(SeanceTab,{ program:state.program, exercises:state.exercises, exMap:exMap, sessions:state.sessions, nextDayKey:nextDayKey,
-        active:state.active, setActive:setActive, finishSession:finishSession,
+        active:state.active, setActive:setActive, finishSession:finishSession, startRestTimer:startRestTimer,
         deloadForNextStart:state.deloadForNextStart, setDeloadForNextStart:setDeloadForNextStart,
         snoozeDeload:snoozeDeload, deloadSuggested: !state.active && deloadSuggested, deloadReason:deloadReason }) : null,
       tab==="programme" ? h(ProgrammeTab,{ program:state.program, exercises:state.exercises, profile:state.profile, setProfile:setProfile }) : null,
       tab==="historique" ? h(HistoriqueTab,{ sessions:state.sessions, exMap:exMap, program:state.program, deleteSession:deleteSession }) : null,
       tab==="machines" ? h(MachinesTab,{ exercises:state.exercises, program:state.program, persistConfig:persistConfig, sessions:state.sessions }) : null,
       tab==="analyse" ? h(AnalyseTab,{ sessions:state.sessions, exercises:state.exercises, exMap:exMap, program:state.program, persistConfig:persistConfig, bodyLog:state.bodyLog, addBodyEntry:addBodyEntry }) : null),
-    h("nav",{style:{position:"fixed",bottom:0,left:0,right:0,display:"flex",background:C.shroudDeep,borderTop:"1px solid "+C.taupeDim}},
-      TABS.map(function(t){ return h("button",{key:t.k, onClick:function(){setTab(t.k);},
-        style:{flex:1,padding:"10px 0",display:"flex",flexDirection:"column",alignItems:"center",gap:3,background:"transparent",border:"none",color:tab===t.k?C.pin:C.taupe}},
-        h(Icon,{name:t.icon,size:19}), h("span",{style:{fontFamily:sansCond,fontSize:10.5,fontWeight:600}}, t.label)); }))
+    h("div",{style:{position:"fixed",bottom:0,left:0,right:0}},
+      restTimer ? h(RestTimerBar,{timer:restTimer, onAdjust:adjustRestTimer, onDismiss:stopRestTimer}) : null,
+      h("nav",{style:{display:"flex",background:C.shroudDeep,borderTop:"1px solid "+C.taupeDim}},
+        TABS.map(function(t){ return h("button",{key:t.k, onClick:function(){setTab(t.k);},
+          style:{flex:1,padding:"10px 0",display:"flex",flexDirection:"column",alignItems:"center",gap:3,background:"transparent",border:"none",color:tab===t.k?C.pin:C.taupe}},
+          h(Icon,{name:t.icon,size:19}), h("span",{style:{fontFamily:sansCond,fontSize:10.5,fontWeight:600}}, t.label)); })))
   );
 }
 
@@ -1591,9 +1748,9 @@ function App(props){
 
 
 <script>
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', function () {
-    navigator.serviceWorker.register('service-worker.js').catch(function(){});
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", function(){
+    navigator.serviceWorker.register("service-worker.js").catch(function(){});
   });
 }
 </script>
