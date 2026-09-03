@@ -252,6 +252,8 @@ function Icon(props){
     scale: [h("line",{key:1,x1:12,y1:3,x2:12,y2:8}), h("line",{key:2,x1:4,y1:6,x2:20,y2:6}),
       h("circle",{key:3,cx:5,cy:11,r:3}), h("circle",{key:4,cx:19,cy:11,r:3}), h("path",{key:5,d:"M9 21h6"}), h("line",{key:6,x1:12,y1:8,x2:12,y2:21})],
     flag: [h("path",{key:1,d:"M5 3v18"}), h("path",{key:2,d:"M5 4h13l-3 4 3 4H5"})],
+    gear: [h("circle",{key:1,cx:12,cy:12,r:3}),
+      h("path",{key:2,d:"M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"})],
   };
   return h("svg", common, kids[name] || null);
 }
@@ -506,13 +508,47 @@ function mifflinBMR(weightKg, heightCm, age, sex) {
   var s = sex === "F" ? -161 : 5;
   return 10*weightKg + 6.25*heightCm - 5*age + s;
 }
-function computeNutrition(profile) {
+/* Kcal burned per step, scaled by body weight — derived from the commonly-
+   cited reference point "~0.04 kcal/step for a ~70 kg adult at a normal
+   walking pace" (Omnicalculator's steps-to-calories tool, itself citing
+   Brooks et al. 2005 walking-energy-expenditure research) rather than a
+   fixed number, so it scales sensibly for a different bodyweight. It's a
+   simplification — real per-step cost also depends on pace and incline,
+   which this app doesn't ask for — so treat the steps-based nutrition mode
+   as a reasonable estimate, not a lab measurement. */
+var KCAL_PER_STEP_PER_KG = 0.04 / 70;
+/* Kcal/minute-per-kg coefficients for a general resistance-training session
+   (machines, moderate intensity, ~90s rest between sets) — from a metabolic-
+   cart study of 52 participants (via StrengthLog's calorie-burn calculator):
+   men ≈ 0.0713 kcal/min/kg, women ≈ 0.0637. When sex isn't set, this app
+   averages the two rather than guessing. */
+var TRAINING_KCAL_COEF = { M: 0.0713, F: 0.0637, DEFAULT: 0.0675 };
+/* profile.targetMode: "manual" (fixed target, e.g. from a coach) | "deficit"
+   (BMR × activity multiplier, minus a manual deficit slider — the original
+   calculator) | "steps" (BMR/DER + estimated kcal from daily steps + from
+   average training volume, see Options tab). avgSessionMinutes is only used
+   by "steps" mode and is derived from the actual program (estimateDayMinutes
+   averaged across days), passed in by the caller. */
+function computeNutrition(profile, avgSessionMinutes) {
   var bmr = (!profile.useBmrFormula && profile.bmrMeasured)
     ? profile.bmrMeasured
     : (profile.heightCm && profile.age && profile.sex ? mifflinBMR(profile.weightKg, profile.heightCm, profile.age, profile.sex) : null);
-  var tdee = bmr ? bmr * profile.activityMultiplier : null;
-  var target, proteinG;
-  if (profile.manualTarget) {
+  var mode = profile.targetMode || (profile.manualTarget ? "manual" : "deficit");
+  var target, proteinG, tdee, breakdown = null;
+
+  if (mode === "steps") {
+    if (!bmr) return null;
+    var stepsKcal = Math.round((profile.dailySteps||0) * profile.weightKg * KCAL_PER_STEP_PER_KG);
+    var avgSessions = ((profile.sessionsMin||0) + (profile.sessionsMax||0)) / 2;
+    var coef = profile.sex === "F" ? TRAINING_KCAL_COEF.F : profile.sex === "M" ? TRAINING_KCAL_COEF.M : TRAINING_KCAL_COEF.DEFAULT;
+    var trainingKcal = Math.round((avgSessionMinutes||0) * profile.weightKg * coef * avgSessions / 7);
+    tdee = bmr + stepsKcal + trainingKcal;
+    breakdown = { stepsKcal: stepsKcal, trainingKcal: trainingKcal, avgSessions: avgSessions, avgSessionMinutes: avgSessionMinutes||0 };
+  } else {
+    tdee = bmr ? bmr * profile.activityMultiplier : null;
+  }
+
+  if (mode === "manual") {
     // Cible fixe fournie directement (ex. par un coach/diététicien) plutôt
     // que dérivée du calcul BMR/TDEE/déficit — celui-ci reste affiché à
     // titre indicatif quand dispo, mais ne pilote plus la cible.
@@ -520,7 +556,7 @@ function computeNutrition(profile) {
     proteinG = profile.manualProteinG;
   } else {
     if (!bmr) return null;
-    target = tdee - profile.deficitKcal;
+    target = tdee - (profile.deficitKcal||0);
     proteinG = Math.round(profile.weightKg * profile.proteinPerKg);
   }
   var proteinKcal = proteinG * 4;
@@ -528,7 +564,7 @@ function computeNutrition(profile) {
   var fatKcal = fatG * 9;
   var carbKcal = Math.max(0, target - proteinKcal - fatKcal);
   var carbG = Math.round(carbKcal / 4);
-  return { bmr: bmr?Math.round(bmr):null, tdee: tdee?Math.round(tdee):null, target: Math.round(target), proteinG: proteinG, fatG: fatG, carbG: carbG };
+  return { bmr: bmr?Math.round(bmr):null, tdee: tdee?Math.round(tdee):null, target: Math.round(target), proteinG: proteinG, fatG: fatG, carbG: carbG, breakdown: breakdown };
 }
 
 /* ============================================================
@@ -568,6 +604,7 @@ function seedState() {
       bmrMeasured: 1860, useBmrFormula: false,
       activityMultiplier: 1.55, deficitKcal: 350, proteinPerKg: 2.0,
       manualTarget: true, manualTargetKcal: 2250, manualProteinG: 175,
+      targetMode: "manual", dailySteps: 8000, sessionsMin: 3, sessionsMax: 4, alertVolume: 1,
       wheyLabel: "HSN Whey Protein Isolate (scoop 30 g)", wheyKcal: 116, wheyProtein: 27.9,
     },
   };
@@ -634,14 +671,47 @@ function withNutritionDefaults(state) {
     _justMigrated: true,
   });
 }
+/* One-time, version-independent fill-in for the Options-tab fields (target
+   mode, daily steps, session-count range, rest-alert volume) — same
+   additive pattern as withNutritionDefaults: only sets a field when it's
+   missing, safe to run on every load, defaults targetMode from the older
+   manualTarget boolean so existing choices carry over untouched. */
+function withOptionsDefaults(state) {
+  if (!state || !state.profile) return state;
+  if (state.profile.targetMode !== undefined) return state;
+  return Object.assign({}, state, {
+    profile: Object.assign(
+      {
+        targetMode: state.profile.manualTarget ? "manual" : "deficit",
+        dailySteps: 8000, sessionsMin: 3, sessionsMax: 4, alertVolume: 1,
+      },
+      state.profile
+    ),
+    _justMigrated: true,
+  });
+}
+/* NOTE — no auto-migration here on purpose (tried one, reverted it): an
+   earlier version of this fix silently defaulted every exercise missing
+   `order` to 2 (semi-isolation). That sounded harmless but wasn't — anyone
+   who'd added several custom machines over time (via "Ajouter au matériel",
+   before the order-tier picker existed) had ALL of them flattened to the
+   same "2" in one shot, which reshuffled their position in the session
+   sequence instead of leaving already-working data alone. Silently
+   rewriting data nobody asked to change is worse than a missing badge.
+   The fix now touches only what the user explicitly sets: ManualAdd asks
+   for the tier on every new machine going forward, and the Machines tab
+   shows an "ordre non défini" hint + picker on any existing machine still
+   missing it, so each one gets corrected one at a time, on purpose, by the
+   person who actually knows what it should be — nothing changes on load. */
+function withAllMigrations(state) { return withOptionsDefaults(withNutritionDefaults(withLatestProgram(state))); }
 async function loadInitialState() {
   try {
     var res = await fetch("data/state.json", { cache: "no-store" });
-    if (res.ok) { var j = await res.json(); if (j && j.v) return withNutritionDefaults(withLatestProgram(j)); }
+    if (res.ok) { var j = await res.json(); if (j && j.v) return withAllMigrations(j); }
   } catch (e) {}
   try {
     var raw = localStorage.getItem(LS_KEY);
-    if (raw) { var parsed = JSON.parse(raw); if (parsed && parsed.v) return withNutritionDefaults(withLatestProgram(parsed)); }
+    if (raw) { var parsed = JSON.parse(raw); if (parsed && parsed.v) return withAllMigrations(parsed); }
   } catch (e) {}
   return seedState();
 }
@@ -745,13 +815,38 @@ function sortByExerciseOrder(list, getExId, exMap) {
     .map(function(w){ return w.item; });
 }
 function sortedDayItems(day, exMap) { return sortByExerciseOrder(day.items, function(it){return it.ex;}, exMap); }
+/* Badge affiché partout où une machine apparaît (aperçu de séance, séance
+   en cours, séance libre). Touchable quand onChange est fourni — un tap
+   fait tourner 1→2→3→1, pour corriger le palier d'une machine directement
+   là où on la voit, sans devoir aller dans l'onglet Machines. Sans
+   onChange (ex. historique), reste un simple indicateur non cliquable. */
 function OrderBadge(props){
-  var order = props.order;
+  var order = props.order, onChange = props.onChange;
   if (!order) return null;
-  return h("span",{title:"Ordre conseillé dans la séance : "+order+"/3 — "+(ORDER_TIER_LABEL[order]||""),
-    style:{display:"inline-flex",alignItems:"center",justifyContent:"center",width:19,height:19,borderRadius:"50%",
-      flexShrink:0,marginTop:1,background:C.shroud,border:"1px solid "+C.taupeDim,
-      fontFamily:sansCond,fontSize:11,fontWeight:700,color:C.pin}}, order);
+  var title = (onChange ? "Palier : " : "Ordre conseillé dans la séance : ")+order+"/3 — "+(ORDER_TIER_LABEL[order]||"")+(onChange ? " — touche pour changer" : "");
+  var style = {display:"inline-flex",alignItems:"center",justifyContent:"center",width:19,height:19,borderRadius:"50%",
+    flexShrink:0,marginTop:1,background:C.shroud,border:"1px solid "+(onChange?C.pin:C.taupeDim),
+    fontFamily:sansCond,fontSize:11,fontWeight:700,color:C.pin};
+  if (!onChange) return h("span",{title:title, style:style}, order);
+  return h("button",{title:title, onClick:function(){ onChange(order>=3?1:order+1); },
+    style:Object.assign({},style,{padding:0,cursor:"pointer"})}, order);
+}
+/* Palier de POIDS — le plus petit incrément (kg) entre deux charges d'une
+   machine (2.5 kg pour la plupart, 5 kg sur certaines Leg Press, 1 kg voire
+   moins sur des poids libres...). À ne pas confondre avec OrderBadge
+   ci-dessus (le palier poly/semi/isolation) — deux réglages différents qui
+   utilisent tous les deux le mot "palier". Affiché en compact partout où
+   une machine apparaît (séance + Machines) pour pouvoir le corriger sans
+   supprimer/rajouter la machine. e.stopPropagation() sur les boutons pour
+   ne jamais déclencher un clic sur la ligne parente. */
+function IncStepper(props){
+  var value=props.value, onChange=props.onChange, step=props.step||0.5, min=props.min!=null?props.min:0.25;
+  return h("div",{style:{display:"inline-flex",alignItems:"center",gap:3,marginTop:2}},
+    h("button",{onClick:function(e){e.stopPropagation(); onChange(Math.max(min, round((value||0)-step)));}, "aria-label":"Diminuer le palier de poids",
+      style:{width:16,height:16,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:3,background:C.shroud,color:C.taupe,border:"1px solid "+C.taupeDim,padding:0,fontSize:10,lineHeight:1,flexShrink:0}}, "−"),
+    h("span",{style:{fontFamily:sansCond,fontSize:11,color:C.taupe,whiteSpace:"nowrap"}}, "pas "+value+" kg"),
+    h("button",{onClick:function(e){e.stopPropagation(); onChange(round((value||0)+step));}, "aria-label":"Augmenter le palier de poids",
+      style:{width:16,height:16,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:3,background:C.shroud,color:C.taupe,border:"1px solid "+C.taupeDim,padding:0,fontSize:10,lineHeight:1,flexShrink:0}}, "+"));
 }
 function Section(props){
   return h("div",{style:{marginBottom:24}},
@@ -818,26 +913,66 @@ function SyncDot(props){
     h("span",{style:{fontFamily:sansCond,fontSize:10.5,color:C.taupe}}, status==="cloud"?"synchronisé":status==="saving"?"…":"local"));
 }
 
-/* Beep synthesized with Web Audio (no asset to host) + a short vibration —
-   fired once, exactly when the rest countdown crosses zero. */
-function restAlert() {
+/* Microwave-style alert: 4 short, sharp square-wave beeps (a harsher, more
+   "kitchen timer" tone than a single sine chime) + a matching vibration
+   pattern. `volume` is 0–1 (from profile.alertVolume, see Options tab); at
+   0 there's no point creating an AudioContext, just vibrate. Called once
+   per repeat cycle by RestTimerBar — see the comment there for why it
+   repeats instead of firing only once. */
+function restAlert(volume) {
+  var vol = volume == null ? 1 : Math.max(0, Math.min(1, volume));
+  if (vol > 0) {
+    try {
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      if (Ctx) {
+        var ctx = new Ctx();
+        var beeps = 4, beepDur = 0.11, gap = 0.09;
+        for (var i = 0; i < beeps; i++) {
+          var delay = i * (beepDur + gap);
+          var o = ctx.createOscillator(), g = ctx.createGain();
+          o.type = "square"; o.frequency.value = 2100;
+          g.gain.setValueAtTime(0.0001, ctx.currentTime + delay);
+          g.gain.exponentialRampToValueAtTime(0.3 * vol, ctx.currentTime + delay + 0.01);
+          g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + delay + beepDur);
+          o.connect(g); g.connect(ctx.destination);
+          o.start(ctx.currentTime + delay); o.stop(ctx.currentTime + delay + beepDur + 0.02);
+        }
+        setTimeout(function(){ ctx.close(); }, (beeps * (beepDur + gap) + 0.3) * 1000);
+      }
+    } catch (e) {}
+  }
+  if (navigator.vibrate) { try { navigator.vibrate([120, 60, 120, 60, 120, 60, 120]); } catch (e) {} }
+}
+
+/* Best-effort system notification when a rest period ends, so there's a
+   chance of an alert even if you've switched to another app — see the
+   Options tab and the note in RestTimerBar for the real limits of this:
+   web pages get throttled or fully suspended in the background on both
+   Android and iOS, so this can arrive late or not at all if the phone has
+   been away from the app (or screen-locked) for more than a short while.
+   It's a mitigation, not a guarantee — there's no way to make a plain web
+   app behave like a native alarm. Requires persistent (service-worker)
+   notifications: the plain `Notification()` constructor throws on most
+   mobile browsers. */
+function ensureNotifyPermission() {
+  if (typeof Notification === "undefined") return Promise.resolve(false);
+  if (Notification.permission === "granted") return Promise.resolve(true);
+  if (Notification.permission === "denied") return Promise.resolve(false);
+  try { return Notification.requestPermission().then(function(p){ return p === "granted"; }); }
+  catch (e) { return Promise.resolve(false); }
+}
+function notifyRestDone(label) {
   try {
-    var Ctx = window.AudioContext || window.webkitAudioContext;
-    if (Ctx) {
-      var ctx = new Ctx();
-      [0, 0.18].forEach(function(delay){
-        var o = ctx.createOscillator(), g = ctx.createGain();
-        o.type = "sine"; o.frequency.value = 880;
-        g.gain.setValueAtTime(0.0001, ctx.currentTime + delay);
-        g.gain.exponentialRampToValueAtTime(0.35, ctx.currentTime + delay + 0.015);
-        g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + delay + 0.16);
-        o.connect(g); g.connect(ctx.destination);
-        o.start(ctx.currentTime + delay); o.stop(ctx.currentTime + delay + 0.2);
-      });
-      setTimeout(function(){ ctx.close(); }, 700);
-    }
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    if (!("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.getRegistration().then(function(reg){
+      if (!reg || !reg.showNotification) return;
+      reg.showNotification("Repos terminé", {
+        body: label ? "Prochaine série : " + label : "C'est reparti.",
+        tag: "rest-timer", renotify: true, vibrate: [180, 90, 180], silent: false,
+      }).catch(function(){});
+    }).catch(function(){});
   } catch (e) {}
-  if (navigator.vibrate) { try { navigator.vibrate([180, 90, 180]); } catch (e) {} }
 }
 
 /* Rest timer bar — pinned above the bottom nav so it stays visible the
@@ -847,17 +982,26 @@ function restAlert() {
    hits zero it keeps counting up in red ("overtime") instead of vanishing,
    so a glance always tells you both "done" and "by how much". */
 function RestTimerBar(props) {
-  var timer = props.timer, onAdjust = props.onAdjust, onDismiss = props.onDismiss;
+  var timer = props.timer, onAdjust = props.onAdjust, onDismiss = props.onDismiss, volume = props.volume;
   var _t = useState(Date.now()), now = _t[0], setNow = _t[1];
-  var firedRef = useRef(null);
   useEffect(function(){
     var id = setInterval(function(){ setNow(Date.now()); }, 250);
     return function(){ clearInterval(id); };
   }, [timer.id]);
   var remainingMs = timer.endTime - now;
   var over = remainingMs <= 0;
+  /* Repeats every 4s while overtime and the bar hasn't been dismissed —
+     like a microwave that keeps beeping until you open the door — rather
+     than a single beep you can miss. Stops the moment `over` goes back to
+     false (new timer started) or the component unmounts (dismissed). The
+     system notification only fires once per overtime period, to avoid
+     spamming the notification tray. */
   useEffect(function(){
-    if (over && firedRef.current !== timer.id) { firedRef.current = timer.id; restAlert(); }
+    if (!over) return;
+    restAlert(volume);
+    notifyRestDone(timer.label);
+    var id = setInterval(function(){ restAlert(volume); }, 4000);
+    return function(){ clearInterval(id); };
   }, [over, timer.id]);
   var totalSec = Math.round(Math.abs(remainingMs) / 1000);
   var mm = Math.floor(totalSec / 60), ss = totalSec % 60;
@@ -876,6 +1020,23 @@ function RestTimerBar(props) {
         style:{padding:"8px 10px",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:13,fontWeight:600}}, "+15"),
       h("button",{onClick:onDismiss, "aria-label":"Arrêter le chrono",
         style:{padding:8,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent"}}, h(Icon,{name:"x",size:15}))));
+}
+
+/* Total elapsed time since the session started — pure display, ticks off
+   Date.now() vs the session's start date so it stays correct even if the
+   tab was backgrounded. Ticks locally (its own interval) rather than in the
+   parent, so the rest of SeanceTab doesn't re-render every second. */
+function SessionClock(props) {
+  var startMs = props.startMs, style = props.style;
+  var _t = useState(Date.now()), now = _t[0], setNow = _t[1];
+  useEffect(function(){
+    var id = setInterval(function(){ setNow(Date.now()); }, 1000);
+    return function(){ clearInterval(id); };
+  }, [startMs]);
+  var totalSec = Math.max(0, Math.round((now - startMs) / 1000));
+  var hh = Math.floor(totalSec / 3600), mm = Math.floor((totalSec % 3600) / 60), ss = totalSec % 60;
+  var text = (hh > 0 ? hh + ":" + (mm < 10 ? "0" : "") + mm : mm) + ":" + (ss < 10 ? "0" : "") + ss;
+  return h("span", {style: style}, text);
 }
 
 /* ============================================================
@@ -900,10 +1061,50 @@ function SeanceTab(props) {
   var program=props.program, exercises=props.exercises||[], exMap=props.exMap, sessions=props.sessions, nextDayKey=props.nextDayKey,
       active=props.active, setActive=props.setActive, finishSession=props.finishSession, startRestTimer=props.startRestTimer,
       deloadForNextStart=props.deloadForNextStart, setDeloadForNextStart=props.setDeloadForNextStart,
-      snoozeDeload=props.snoozeDeload, deloadSuggested=props.deloadSuggested, deloadReason=props.deloadReason;
+      snoozeDeload=props.snoozeDeload, deloadSuggested=props.deloadSuggested, deloadReason=props.deloadReason,
+      updateExerciseOrder=props.updateExerciseOrder, updateExerciseInc=props.updateExerciseInc, persistConfig=props.persistConfig;
   var _p = useState(false), pickerOpen=_p[0], setPickerOpen=_p[1];
   var _fp = useState(""), freePick=_fp[0], setFreePick=_fp[1];
+  var _sw = useState(null), swapPending=_sw[0], setSwapPending=_sw[1];
   var day = program.find(function(d){return d.key === (active ? active.dayKey : nextDayKey);}) || program[0];
+
+  /* Changer de machine à la volée, "quand j'en ai envie" — pas seulement
+     quand l'app détecte un plateau (voir Analyse). Propose la meilleure
+     alternative du même muscle (voir bestCandidate) ; si on confirme, ça
+     remplace la machine dans toute la rotation (comme "Remplacer dans le
+     programme" ailleurs dans l'app — pas juste pour cette séance) et, si
+     une séance est en cours, met aussi à jour l'entrée déjà commencée pour
+     qu'on puisse continuer à logger dessus tout de suite. */
+  function requestSwap(ex){
+    if (!ex) return;
+    var cand = suggestSwap(ex.id, exercises, program);
+    setSwapPending({ exId: ex.id, oldName: ex.name, muscle: ex.muscle, candidate: cand });
+  }
+  function confirmSwap(){
+    if (!swapPending || !swapPending.candidate) { setSwapPending(null); return; }
+    var oldId = swapPending.exId, newId = swapPending.candidate.id;
+    persistConfig(exercises, applySwap(oldId, newId, program));
+    if (active && !active.freeform) {
+      setActive(Object.assign({}, active, { entries: active.entries.map(function(e){
+        return e.ex===oldId ? Object.assign({}, e, {ex: newId}) : e;
+      }) }));
+    }
+    setSwapPending(null);
+  }
+  function cancelSwap(){ setSwapPending(null); }
+  function swapCard(){
+    if (!swapPending) return null;
+    return h("div",{style:{marginBottom:16,borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+(swapPending.candidate?C.green:C.rust)}},
+      swapPending.candidate ? h("div",null,
+        h("div",{style:{fontSize:13.5,color:C.bone,lineHeight:1.5,marginBottom:10}},
+          "Remplacer "+swapPending.oldName+" par "+swapPending.candidate.name+" ? Ça change la machine dans toute la rotation à partir de maintenant"+(active && !active.freeform?" (et dans la séance en cours)":"")+"."),
+        h("div",{style:{display:"flex",gap:8}},
+          h("button",{onClick:confirmSwap, style:{flex:1,padding:"8px 0",borderRadius:6,background:C.green,color:C.shroudDeep,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Remplacer"),
+          h("button",{onClick:cancelSwap, style:{flex:1,padding:"8px 0",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:14}}, "Annuler")))
+      : h("div",null,
+        h("div",{style:{fontSize:13.5,color:C.bone,lineHeight:1.5,marginBottom:10}}, "Aucune autre machine disponible pour "+swapPending.muscle+" pour remplacer "+swapPending.oldName+"."),
+        h("button",{onClick:cancelSwap, style:{width:"100%",padding:"8px 0",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:14}}, "Compris")));
+  }
 
   function startFreeform() {
     setActive({ id:"s"+Date.now(), date:new Date().toISOString(), dayKey:FREEFORM_LABEL, done:false, deload:false, freeform:true, entries:[] });
@@ -967,6 +1168,7 @@ function SeanceTab(props) {
 
   if (!active) {
     return h("div", null,
+      swapCard(),
       deloadSuggested ? h(DeloadBanner,{ reason: deloadReason,
         onActivate: function(){ setDeloadForNextStart(true); },
         onSnooze: snoozeDeload }) : null,
@@ -996,11 +1198,15 @@ function SeanceTab(props) {
             var ex = exMap[it.ex];
             return h("div",{key:i, style:{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,padding:"12px",background:C.shroudDeep,borderTop:i?"1px solid "+C.shroud:"none"}},
               h("div",{style:{display:"flex",alignItems:"flex-start",gap:8,minWidth:0}},
-                h(OrderBadge,{order: ex?ex.order:null}),
+                h(OrderBadge,{order: ex?exerciseOrderTier(ex):null, onChange: (ex && updateExerciseOrder) ? function(v){updateExerciseOrder(ex.id, v);} : undefined}),
                 h("div",{style:{minWidth:0}},
                   h("div",{style:{fontSize:15,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}, ex?ex.name:"Machine supprimée"),
-                  h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe}}, ex?ex.brand:"—"))),
-              h(StackPlate,{weight:p.weight, repMin:it.min, repMax:it.max, sets:p.setsOverride||it.sets, state:p.state}));
+                  h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe}}, ex?ex.brand:"—"),
+                  (ex && updateExerciseInc) ? h(IncStepper,{value:ex.inc, onChange:function(v){updateExerciseInc(ex.id, v);}}) : null)),
+              h("div",{style:{display:"flex",alignItems:"center",gap:8,flexShrink:0}},
+                h(StackPlate,{weight:p.weight, repMin:it.min, repMax:it.max, sets:p.setsOverride||it.sets, state:p.state}),
+                ex ? h("button",{onClick:function(){requestSwap(ex);}, title:"Changer de machine",
+                  style:{padding:6,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",flexShrink:0}}, h(Icon,{name:"repeat",size:14})) : null));
           })
         ))
     );
@@ -1012,24 +1218,35 @@ function SeanceTab(props) {
       return Object.assign({}, e, { sets: e.sets.map(function(s,j){ return j!==si ? s : Object.assign({}, s, (function(){ var o={}; o[field]=val; return o; })()); }) });
     }) }));
   }
-  /* Auto-starts the rest timer the moment a set goes from incomplete to
-     complete (both weight and reps filled in) — no extra tap needed. */
+  /* Auto-starts the rest timer at the very first tap that fills in the set
+     you just did — as soon as either weight or reps gets a value on a set
+     that was fully empty — rather than waiting for both fields to be
+     complete. You've already finished the set the moment you start logging
+     it, so the rest clock should start right then, not once you're done
+     typing both numbers. */
   function updateSetAndMaybeRest(idx, si, field, val, restSeconds, label) {
     var prevSet = active.entries[idx].sets[si];
-    var wasComplete = prevSet.weight!=null && prevSet.reps!=null;
+    var wasStarted = prevSet.weight!=null || prevSet.reps!=null;
     updateSet(idx, si, field, val);
-    var newWeight = field==="weight" ? val : prevSet.weight;
-    var newReps = field==="reps" ? val : prevSet.reps;
-    if (!wasComplete && newWeight!=null && newReps!=null && startRestTimer) {
+    if (!wasStarted && val!=null && startRestTimer) {
       startRestTimer(restSeconds, label);
     }
   }
-  function fillDown(idx, si) {
+  /* Recopie le poids/reps/etc. de la série si UNIQUEMENT sur la série
+     suivante (si+1) — pas sur toutes les séries restantes comme avant :
+     chaque série garde ses propres valeurs tant qu'on ne les recopie pas
+     explicitement une par une, ce qui évite d'écraser des séries déjà
+     prévues pour dégressiver par exemple. Démarre aussi tout de suite le
+     chrono de repos : recopier vers la suivante veut dire "j'ai fini cette
+     série, je passe à la suivante", donc le repos doit commencer main-
+     tenant, pas seulement quand on retouche le poids/reps de la prochaine. */
+  function fillNext(idx, si, restSeconds, label) {
     var entry = active.entries[idx]; var src = entry.sets[si];
     setActive(Object.assign({}, active, { entries: active.entries.map(function(e,i){
       if (i!==idx) return e;
-      return Object.assign({}, e, { sets: e.sets.map(function(s,j){ return j<=si ? s : Object.assign({}, src); }) });
+      return Object.assign({}, e, { sets: e.sets.map(function(s,j){ return j!==si+1 ? s : Object.assign({}, src); }) });
     }) }));
+    if (startRestTimer) startRestTimer(restSeconds, label);
   }
 
   if (active.freeform) {
@@ -1038,7 +1255,9 @@ function SeanceTab(props) {
     return h("div", null,
       h("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}},
         h("div",null,
-          h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe}}, "En cours"),
+          h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,display:"flex",alignItems:"center",gap:5}},
+            h("span",null,"En cours"), h("span",null,"·"),
+            h(SessionClock,{startMs:new Date(active.date).getTime(), style:{fontFamily:sansBody,fontWeight:700,color:C.pin,fontVariantNumeric:"tabular-nums"}})),
           h("div",{style:{fontFamily:sansCond,fontSize:26,fontWeight:700,color:C.bone}}, FREEFORM_LABEL)),
         h("button",{onClick:function(){setActive(null);}, style:{padding:"8px 12px",borderRadius:6,display:"flex",alignItems:"center",gap:5,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:13}},
           h(Icon,{name:"x",size:14}), "Abandonner")),
@@ -1053,10 +1272,11 @@ function SeanceTab(props) {
         return h("div",{key:idx, style:{marginBottom:12,borderRadius:10,overflow:"hidden",border:"1px solid "+C.taupeDim}},
           h("div",{style:{padding:"12px",display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12,background:C.shroudDeep}},
             h("div",{style:{display:"flex",alignItems:"flex-start",gap:8,minWidth:0}},
-              h(OrderBadge,{order: ex?ex.order:null}),
+              h(OrderBadge,{order: ex?exerciseOrderTier(ex):null, onChange: (ex && updateExerciseOrder) ? function(v){updateExerciseOrder(ex.id, v);} : undefined}),
               h("div",{style:{minWidth:0}},
                 h("div",{style:{fontSize:16,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}, ex?ex.name:"Machine supprimée"),
-                h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe}}, ex?ex.brand:"—"))),
+                h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe}}, ex?ex.brand:"—"),
+                (ex && updateExerciseInc) ? h(IncStepper,{value:ex.inc, onChange:function(v){updateExerciseInc(ex.id, v);}}) : null)),
             h("button",{onClick:function(){removeFreeformEntry(idx);}, title:"Retirer cet exercice",
               style:{padding:6,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",flexShrink:0}}, h(Icon,{name:"x",size:14}))),
           note ? h("div",{style:{padding:"8px 12px",background:C.shroudDeep,borderTop:"1px solid "+C.shroud}},
@@ -1094,28 +1314,42 @@ function SeanceTab(props) {
   var dayActive = program.find(function(d){return d.key===active.dayKey;}) || program[0];
 
   return h("div", null,
+    swapCard(),
     h("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}},
       h("div",null,
-        h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe}}, active.deload ? "En cours · décharge" : "En cours"),
+        h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,display:"flex",alignItems:"center",gap:5}},
+          h("span",null, active.deload ? "En cours · décharge" : "En cours"), h("span",null,"·"),
+          h(SessionClock,{startMs:new Date(active.date).getTime(), style:{fontFamily:sansBody,fontWeight:700,color:C.pin,fontVariantNumeric:"tabular-nums"}})),
         h("div",{style:{fontFamily:sansCond,fontSize:26,fontWeight:700,color:dayActive.accent}}, dayActive.label)),
       h("button",{onClick:function(){setActive(null);}, style:{padding:"8px 12px",borderRadius:6,display:"flex",alignItems:"center",gap:5,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:13}},
         h(Icon,{name:"x",size:14}), "Abandonner")),
     h("div",{style:{marginBottom:16,padding:"10px 12px",borderRadius:8,background:C.shroudDeep,border:"1px solid "+C.taupeDim,display:"flex",alignItems:"flex-start",gap:8}},
       h(Icon,{name:"gauge",size:15,color:C.pin}),
       h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.45}}, "\"Facile / Correct / Dur\" est optionnel — ça aide l'app à ajuster plus vite, mais elle progresse très bien avec juste le poids et les reps si tu préfères ne pas y penser.")),
-    sortedDayItems(dayActive, exMap).map(function(it, idx){
+    sortedDayItems(dayActive, exMap).map(function(it){
       var p = prescribe(sessions, it, active.deload);
       var ex = exMap[it.ex];
-      var entry = active.entries[idx];
+      /* Repérer l'entrée par id d'exercice, pas par position : active.entries
+         garde l'ordre figé du début de séance, alors que sortedDayItems est
+         retrié à chaque rendu (palier changé via le badge, ou machine
+         échangée en cours de route — voir requestSwap). Si les deux listes
+         se retrouvaient triées différemment, indexer par position afficherait
+         les séries de la mauvaise machine. */
+      var idx = active.entries.findIndex(function(e){return e.ex===it.ex;});
+      var entry = idx>=0 ? active.entries[idx] : null;
       if (!entry) return null;
-      return h("div",{key:idx, style:{marginBottom:12,borderRadius:10,overflow:"hidden",border:"1px solid "+C.taupeDim}},
+      return h("div",{key:it.ex, style:{marginBottom:12,borderRadius:10,overflow:"hidden",border:"1px solid "+C.taupeDim}},
         h("div",{style:{padding:"12px",display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12,background:C.shroudDeep}},
           h("div",{style:{display:"flex",alignItems:"flex-start",gap:8,minWidth:0}},
-            h(OrderBadge,{order: ex?ex.order:null}),
+            h(OrderBadge,{order: ex?exerciseOrderTier(ex):null, onChange: (ex && updateExerciseOrder) ? function(v){updateExerciseOrder(ex.id, v);} : undefined}),
             h("div",{style:{minWidth:0}},
               h("div",{style:{fontSize:16,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}, ex?ex.name:"Machine supprimée"),
-              h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe}}, (ex?ex.brand:"—")+" · repos "+it.rest+"s"))),
-          h(StackPlate,{weight:p.weight, repMin:it.min, repMax:it.max, sets:p.setsOverride||it.sets, state:p.state})),
+              h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe}}, (ex?ex.brand:"—")+" · repos "+it.rest+"s"),
+              (ex && updateExerciseInc) ? h(IncStepper,{value:ex.inc, onChange:function(v){updateExerciseInc(ex.id, v);}}) : null)),
+          h("div",{style:{display:"flex",alignItems:"center",gap:8,flexShrink:0}},
+            h(StackPlate,{weight:p.weight, repMin:it.min, repMax:it.max, sets:p.setsOverride||it.sets, state:p.state}),
+            ex ? h("button",{onClick:function(){requestSwap(ex);}, title:"Changer de machine",
+              style:{padding:6,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",flexShrink:0}}, h(Icon,{name:"repeat",size:14})) : null)),
         h("div",{style:{padding:"8px 12px",background:C.shroudDeep,borderTop:"1px solid "+C.shroud}},
           h("div",{style:{fontSize:12.5,color:p.state==="up"?C.green:p.state==="down"?C.rust:p.state==="deload"?C.steel:C.taupe,lineHeight:1.45}}, p.note)),
         h("div",{style:{background:C.shroud}},
@@ -1126,7 +1360,7 @@ function SeanceTab(props) {
                 h(Stepper,{value:s.weight, onChange:function(v){updateSetAndMaybeRest(idx,si,"weight",v,it.rest,ex?ex.name:"Repos");}, step: ex?ex.inc:2.5, suffix:"kg", placeholder:"kg", wide:true}),
                 h(Stepper,{value:s.reps, onChange:function(v){updateSetAndMaybeRest(idx,si,"reps",v,it.rest,ex?ex.name:"Repos");}, step:1, suffix:"rep", placeholder:"rep"}),
                 ex && ex.unilateral ? h(SideToggle,{value:s.weakSide, onChange:function(v){updateSet(idx,si,"weakSide",v);}}) : null,
-                h("button",{onClick:function(){fillDown(idx,si);}, title:"Recopier sur les séries suivantes",
+                h("button",{onClick:function(){fillNext(idx,si,it.rest,ex?ex.name:"Repos");}, title:"Recopier sur la série suivante et démarrer le repos",
                   style:{padding:6,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent"}}, h(Icon,{name:"chevronDown",size:14}))),
               h("div",{style:{display:"flex",alignItems:"center",gap:8,paddingLeft:38}},
                 h("span",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe}}, "Difficulté"),
@@ -1158,9 +1392,8 @@ function Slider(props){
       style:{width:"100%", accentColor:C.pin}}));
 }
 function ProgrammeTab(props){
-  var program=props.program, exercises=props.exercises, profile=props.profile, setProfile=props.setProfile;
+  var program=props.program, exercises=props.exercises;
   var exMap = {}; exercises.forEach(function(e){exMap[e.id]=e;});
-  var nut = computeNutrition(profile);
 
   return h("div", null,
     h(Section, {title:"Ton split — machines uniquement"},
@@ -1177,61 +1410,130 @@ function ProgrammeTab(props){
               d.items.slice(0,4).map(function(it){ var ex=exMap[it.ex]; return h("div",{key:it.ex,style:{fontSize:11.5,color:C.bone,opacity:0.85,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}, "· "+(ex?ex.name:"—")); }),
               d.items.length>4 ? h("div",{style:{fontSize:11,color:C.taupe}}, "+ "+(d.items.length-4)+" autres") : null));
         }))
-    ),
-    h(Section, {title:"Nutrition — calculateur personnel"},
-      h("p",{style:{fontSize:13,color:C.taupe,lineHeight:1.6,marginBottom:12}},
-        "Basé sur ta dernière mesure Boditrax. Ajuste les champs si ton poids ou ton activité changent — les cibles se recalculent tout de suite."),
-      h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}},
+    )
+  );
+}
+
+/* ============================================================
+   OPTIONS — réglages personnels, DER/pas/séances → calcul kcal/prot,
+   et volume de la sonnerie du chrono de repos. Centralise ce qui était
+   avant éparpillé dans l'onglet Programme (nutrition) + code en dur
+   (le son n'était pas réglable).
+   ============================================================ */
+function OptionsTab(props){
+  var profile=props.profile, setProfile=props.setProfile, program=props.program, exercises=props.exercises;
+  var _perm = useState(typeof Notification!=="undefined" ? Notification.permission : "unsupported");
+  var notifPerm=_perm[0], setNotifPerm=_perm[1];
+  function set(patch){ setProfile(Object.assign({}, profile, patch)); }
+
+  var exMap = {}; exercises.forEach(function(e){exMap[e.id]=e;});
+  var avgSessionMinutes = program.length
+    ? Math.round(program.reduce(function(a,d){return a+estimateDayMinutes(d, exMap);},0) / program.length)
+    : 0;
+  var nut = computeNutrition(profile, avgSessionMinutes);
+
+  return h("div", null,
+    h(Section, {title:"Réglages personnels"},
+      h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}},
         h("div",null,
-          h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe}}, "Poids actuel (kg)"),
-          h(Stepper,{value:profile.weightKg, step:0.1, min:30, onChange:function(v){setProfile(Object.assign({},profile,{weightKg:v}));}})),
+          h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe}}, "Poids (kg)"),
+          h(Stepper,{value:profile.weightKg, step:0.1, min:30, onChange:function(v){set({weightKg:v});}})),
+        h("div",null,
+          h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe}}, "Taille (cm)"),
+          h(Stepper,{value:profile.heightCm, step:1, min:120, suffix:"cm", onChange:function(v){set({heightCm:v});}}))),
+      h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}},
         h("div",null,
           h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe}}, "Âge"),
-          h(Stepper,{value:profile.age, step:1, min:14, onChange:function(v){setProfile(Object.assign({},profile,{age:v}));}}))),
-      h("div",{style:{padding:"10px 12px",borderRadius:8,background:C.shroudDeep,border:"1px solid "+C.taupeDim,marginBottom:14}},
-        h("label",{style:{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.bone}},
-          h("input",{type:"checkbox", checked:!profile.useBmrFormula, onChange:function(e){setProfile(Object.assign({},profile,{useBmrFormula:!e.target.checked}));}}),
-          "Utiliser le métabolisme de base mesuré par ta balance Boditrax ("+profile.bmrMeasured+" kcal)"),
-        profile.useBmrFormula ? h("div",{style:{marginTop:10,display:"flex",flexDirection:"column",gap:8}},
-          h("div",{style:{fontSize:12,color:C.taupe,lineHeight:1.5}}, "Sans mesure, on utilise la formule de Mifflin–St Jeor — indique ta taille et ton sexe biologique pour qu'elle soit juste."),
-          h("div",{style:{display:"flex",gap:8,alignItems:"center"}},
-            h("span",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,width:60}}, "Taille"),
-            h(Stepper,{value:profile.heightCm, step:1, min:120, suffix:"cm", onChange:function(v){setProfile(Object.assign({},profile,{heightCm:v}));}})),
+          h(Stepper,{value:profile.age, step:1, min:14, onChange:function(v){set({age:v});}})),
+        h("div",null,
+          h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe,display:"block",marginBottom:4}}, "Sexe (pour DER/kcal)"),
           h("div",{style:{display:"flex",gap:8}},
-            ["M","F"].map(function(s){ var on=profile.sex===s; return h("button",{key:s, onClick:function(){setProfile(Object.assign({},profile,{sex:s}));},
-              style:{flex:1,padding:"7px 0",borderRadius:6,background:on?C.pin:C.shroud,color:on?C.shroudDeep:C.taupe,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:13}}, s==="M"?"Homme":"Femme"); }))
-        ) : null),
-      h("div",{style:{marginBottom:6}},
-        h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe,display:"block",marginBottom:4}}, "Niveau d'activité"),
-        h(Select,{value:profile.activityMultiplier, onChange:function(v){setProfile(Object.assign({},profile,{activityMultiplier:parseFloat(v)}));}},
-          ACTIVITY_LEVELS.map(function(a){ return h("option",{key:a.k,value:a.k}, a.label+" — "+a.desc); }))),
-      h("p",{style:{fontSize:12,color:C.taupe,lineHeight:1.5,marginBottom:12}},
-        "Avec 3–4 séances/semaine + 12 000 pas les jours de bloc opératoire (2–3×/semaine), “Modérément actif” est un point de départ raisonnable — ajuste-le selon ce que ton poids fait réellement sur 2–3 semaines."),
-      h("div",{style:{padding:"10px 12px",borderRadius:8,background:C.shroudDeep,border:"1px solid "+C.taupeDim,marginBottom:14}},
-        h("label",{style:{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.bone}},
-          h("input",{type:"checkbox", checked:!!profile.manualTarget, onChange:function(e){setProfile(Object.assign({},profile,{manualTarget:e.target.checked}));}}),
-          "Cible fixe (ex. donnée par un coach ou une diététicienne) plutôt que calculée")),
-      profile.manualTarget ? h("div",{style:{display:"flex",flexDirection:"column",gap:10,marginBottom:4}},
+            ["M","F"].map(function(s){ var on=profile.sex===s; return h("button",{key:s, onClick:function(){set({sex:s});},
+              style:{flex:1,padding:"7px 0",borderRadius:6,background:on?C.pin:C.shroud,color:on?C.shroudDeep:C.taupe,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:13}}, s==="M"?"Homme":"Femme"); })))),
+      h("div",{style:{marginBottom:4}},
+        h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe,display:"block",marginBottom:4}}, "Séances par semaine (min–max)"),
+        h("div",{style:{display:"flex",gap:8,alignItems:"center"}},
+          h(Stepper,{value:profile.sessionsMin, step:1, min:0, onChange:function(v){set({sessionsMin:v});}}),
+          h("span",{style:{color:C.taupe,fontSize:13}},"à"),
+          h(Stepper,{value:profile.sessionsMax, step:1, min:profile.sessionsMin||0, onChange:function(v){set({sessionsMax:v});}})))
+    ),
+
+    h(Section, {title:"Dépense énergétique de repos (DER)"},
+      h("div",{style:{padding:"10px 12px",borderRadius:8,background:C.shroudDeep,border:"1px solid "+C.taupeDim,marginBottom:10}},
+        h("label",{style:{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.bone,marginBottom: profile.useBmrFormula?0:10}},
+          h("input",{type:"checkbox", checked:!profile.useBmrFormula, onChange:function(e){set({useBmrFormula:!e.target.checked});}}),
+          "Valeur mesurée (ex. balance Boditrax) plutôt que calculée"),
+        !profile.useBmrFormula ? h("div",{style:{display:"flex",gap:8,alignItems:"center"}},
+          h("span",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,width:110}}, "DER (kcal/jour)"),
+          h(Stepper,{value:profile.bmrMeasured, step:10, min:800, suffix:"kcal", onChange:function(v){set({bmrMeasured:v});}}))
+        : h("div",{style:{fontSize:12,color:C.taupe,lineHeight:1.5}}, "Sans mesure, on utilise la formule de Mifflin–St Jeor à partir du poids, de la taille, de l'âge et du sexe renseignés ci-dessus.")
+      )
+    ),
+
+    h(Section, {title:"Activité quotidienne"},
+      h("div",{style:{marginBottom:4}},
+        h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe,display:"block",marginBottom:4}}, "Nombre de pas / jour en moyenne"),
+        h(Stepper,{value:profile.dailySteps, step:500, min:0, suffix:"pas", wide:true, onChange:function(v){set({dailySteps:v});}})),
+      h("div",{style:{marginBottom:4}},
+        h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe,display:"block",marginBottom:4}}, "Niveau d'activité (mode déficit uniquement)"),
+        h(Select,{value:profile.activityMultiplier, onChange:function(v){set({activityMultiplier:parseFloat(v)});}},
+          ACTIVITY_LEVELS.map(function(a){ return h("option",{key:a.k,value:a.k}, a.label+" — "+a.desc); })))
+    ),
+
+    h(Section, {title:"Cible calorique et protéique"},
+      h("div",{style:{display:"flex",gap:6,marginBottom:12,flexWrap:"wrap"}},
+        [{k:"manual",label:"Cible fixe"},{k:"deficit",label:"Déficit manuel"},{k:"steps",label:"DER + pas + séances"}].map(function(o){
+          var on = (profile.targetMode||"manual")===o.k;
+          return h("button",{key:o.k, onClick:function(){set({targetMode:o.k, manualTarget:o.k==="manual"});},
+            style:{padding:"7px 10px",borderRadius:6,background:on?C.pin:C.shroud,color:on?C.shroudDeep:C.taupe,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:12.5,fontWeight:600}}, o.label);
+        })),
+
+      profile.targetMode==="manual" ? h("div",{style:{display:"flex",flexDirection:"column",gap:10,marginBottom:4}},
         h("div",{style:{display:"flex",gap:8,alignItems:"center"}},
           h("span",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,width:110}}, "Cible / jour"),
-          h(Stepper,{value:profile.manualTargetKcal, step:25, min:0, suffix:"kcal", onChange:function(v){setProfile(Object.assign({},profile,{manualTargetKcal:v}));}})),
+          h(Stepper,{value:profile.manualTargetKcal, step:25, min:0, suffix:"kcal", onChange:function(v){set({manualTargetKcal:v});}})),
         h("div",{style:{display:"flex",gap:8,alignItems:"center"}},
           h("span",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,width:110}}, "Protéines"),
-          h(Stepper,{value:profile.manualProteinG, step:5, min:0, suffix:"g", onChange:function(v){setProfile(Object.assign({},profile,{manualProteinG:v}));}})))
-        : h("div",{style:{display:"flex",flexDirection:"column",gap:0}},
+          h(Stepper,{value:profile.manualProteinG, step:5, min:0, suffix:"g", onChange:function(v){set({manualProteinG:v});}})))
+      : profile.targetMode==="steps" ? h("p",{style:{fontSize:12,color:C.taupe,lineHeight:1.6,marginBottom:8}},
+          "TDEE = DER + kcal estimées à partir du nombre de pas + kcal estimées d'entraînement (durée moyenne de séance × moyenne des séances/semaine renseignées ci-dessus). Le détail apparaît sous les résultats.")
+      : h("div",{style:{display:"flex",flexDirection:"column",gap:0}},
           h(Slider,{label:"Déficit calorique", min:0, max:600, step:25, value:profile.deficitKcal, display:profile.deficitKcal+" kcal/j",
-            onChange:function(v){setProfile(Object.assign({},profile,{deficitKcal:v}));}}),
+            onChange:function(v){set({deficitKcal:v});}}),
           h(Slider,{label:"Protéines cible", min:1.6, max:2.4, step:0.1, value:profile.proteinPerKg, display:profile.proteinPerKg.toFixed(1)+" g/kg",
-            onChange:function(v){setProfile(Object.assign({},profile,{proteinPerKg:v}));}})),
-      nut ? h("div",{style:{display:"flex",flexWrap:"wrap",gap:8,marginTop:14}},
-        h(StatCard,{label:"BMR", value:nut.bmr!=null?nut.bmr+" kcal":"—"}),
+            onChange:function(v){set({proteinPerKg:v});}})),
+
+      nut ? h("div",{style:{display:"flex",flexWrap:"wrap",gap:8,marginTop:10}},
+        h(StatCard,{label:"DER", value:nut.bmr!=null?nut.bmr+" kcal":"—"}),
         h(StatCard,{label:"Maintenance (TDEE)", value:nut.tdee!=null?nut.tdee+" kcal":"—"}),
         h(StatCard,{label:"Cible / jour", value:nut.target+" kcal", color:C.pin}),
         h(StatCard,{label:"Protéines", value:nut.proteinG+" g", color:C.green}),
         h(StatCard,{label:"Lipides", value:nut.fatG+" g"}),
-        h(StatCard,{label:"Glucides", value:nut.carbG+" g"})
-      ) : h("div",{style:{fontSize:13,color:C.rust,marginTop:10}}, "Renseigne taille + sexe (ou coche la mesure Boditrax) pour calculer tes cibles.")
+        h(StatCard,{label:"Glucides", value:nut.carbG+" g"}),
+        nut.breakdown ? h(StatCard,{label:"Pas (~"+(profile.dailySteps||0)+"/j)", value:nut.breakdown.stepsKcal+" kcal"}) : null,
+        nut.breakdown ? h(StatCard,{label:"Entraînement (~"+nut.breakdown.avgSessionMinutes+" min × "+nut.breakdown.avgSessions.toFixed(1)+"/sem)", value:nut.breakdown.trainingKcal+" kcal"}) : null
+      ) : h("div",{style:{fontSize:13,color:C.rust,marginTop:10}}, "Renseigne taille + sexe (ou une DER mesurée) pour calculer tes cibles.")
     ),
+
+    h(Section, {title:"Son du chrono de repos"},
+      h(Slider,{label:"Volume de la sonnerie", min:0, max:1, step:0.05, value:profile.alertVolume!=null?profile.alertVolume:1,
+        display: Math.round((profile.alertVolume!=null?profile.alertVolume:1)*100)+"%",
+        onChange:function(v){set({alertVolume:v});}}),
+      h("button",{onClick:function(){restAlert(profile.alertVolume!=null?profile.alertVolume:1);},
+        style:{padding:"9px 16px",borderRadius:6,background:C.shroud,color:C.bone,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:13.5,fontWeight:600,marginBottom:14}},
+        "Tester le son"),
+      h("div",{style:{padding:"10px 12px",borderRadius:8,background:C.shroudDeep,border:"1px solid "+C.taupeDim}},
+        h("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}},
+          h("span",{style:{fontSize:13,color:C.bone}}, "Notifications système"),
+          h("span",{style:{fontSize:12,fontWeight:600,color: notifPerm==="granted"?C.green:notifPerm==="denied"?C.rust:C.taupe}},
+            notifPerm==="granted"?"Activées":notifPerm==="denied"?"Refusées":notifPerm==="unsupported"?"Non supportées":"Non activées")),
+        notifPerm!=="granted" && notifPerm!=="denied" && notifPerm!=="unsupported" ? h("button",{
+          onClick:function(){ ensureNotifyPermission().then(function(){ setNotifPerm(Notification.permission); }); },
+          style:{padding:"7px 14px",borderRadius:6,background:C.pin,color:C.shroudDeep,border:"none",fontFamily:sansCond,fontSize:13,fontWeight:700}}, "Activer") : null,
+        h("p",{style:{fontSize:11.5,color:C.taupe,lineHeight:1.6,marginTop:8,marginBottom:0}},
+          "Important : un navigateur mobile met en pause les pages en arrière-plan, et encore plus quand l'écran est verrouillé. Le son + la notification augmentent les chances que l'alerte passe si tu changes d'appli brièvement, mais rien ne peut garantir qu'elle sonnera si le téléphone reste verrouillé ou l'appli fermée longtemps — ce n'est pas possible avec une application web, seulement avec une appli native. Le mieux reste de garder l'écran allumé/l'appli ouverte pendant le repos.")
+      )
+    )
   );
 }
 
@@ -1275,9 +1577,29 @@ function HistoriqueTab(props){
 /* ============================================================
    MACHINES
    ============================================================ */
+/* Bug fixé : ce formulaire ne demandait pas le palier poly/semi/isolation
+   (`order`) d'une nouvelle machine. La machine ajoutée se retrouvait donc
+   avec order=undefined pour toujours (rien dans l'app ne le complétait
+   après coup) : plus de badge numéroté affiché (OrderBadge n'affiche rien
+   sans order) et un tri "isolation par défaut" (exerciseOrderTier renvoie
+   3 si order est absent) qui pouvait décaler la machine à la fin de la
+   séance même si elle remplaçait un exercice polyarticulaire. D'où le
+   'ordre changé + badges disparus pour toujours' : order:2 (semi-isolation)
+   ci-dessous n'est qu'un défaut neutre — le choix explicite est ce qui
+   corrige le bug, pas la valeur par défaut elle-même. */
+function OrderTierPicker(props){
+  var value=props.value, onChange=props.onChange;
+  return h("div",{style:{display:"flex",gap:6}}, [1,2,3].map(function(t){
+    var on = value===t;
+    return h("button",{key:t, onClick:function(){onChange(t);}, title:ORDER_TIER_LABEL[t],
+      style:{flex:1,padding:"8px 4px",borderRadius:6,background:on?C.pin:C.shroud,color:on?C.shroudDeep:C.taupe,
+        border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:11.5,fontWeight:600,lineHeight:1.3}},
+      t+" — "+(t===1?"Poly":t===2?"Semi-iso":"Isolation"));
+  }));
+}
 function ManualAdd(props){
   var onAdd = props.onAdd;
-  var _d = useState({name:"",brand:"",muscle:"Dos",kind:"machine",inc:2.5,unilateral:false}), d=_d[0], setD=_d[1];
+  var _d = useState({name:"",brand:"",muscle:"Dos",kind:"machine",inc:2.5,unilateral:false,order:2}), d=_d[0], setD=_d[1];
   return h("div",{style:{borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.taupeDim}},
     h(TextField,{value:d.name, placeholder:"Nom (ex. Tirage vertical)", onChange:function(v){setD(Object.assign({},d,{name:v}));}}),
     h(TextField,{value:d.brand, placeholder:"Marque (ex. Technogym)", onChange:function(v){setD(Object.assign({},d,{brand:v}));}}),
@@ -1289,6 +1611,9 @@ function ManualAdd(props){
     h("label",{style:{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.bone,marginBottom:10}},
       h("input",{type:"checkbox", checked:d.unilateral, onChange:function(e){setD(Object.assign({},d,{unilateral:e.target.checked}));}}),
       "Exercice unilatéral (un bras / une jambe à la fois)"),
+    h("div",{style:{marginBottom:10}},
+      h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe,display:"block",marginBottom:4}}, "Ordre dans la séance"),
+      h(OrderTierPicker,{value:d.order, onChange:function(v){setD(Object.assign({},d,{order:v}));}})),
     h("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:12}},
       h("span",{style:{fontFamily:sansCond,fontSize:13,color:C.taupe}}, "Plus petit incrément"),
       h(Stepper,{value:d.inc, step:0.5, min:0.5, suffix:"kg", onChange:function(v){setD(Object.assign({},d,{inc:v}));}})),
@@ -1311,7 +1636,7 @@ function AddToDay(props){
     h("button",{onClick:add, style:{padding:"0 16px",borderRadius:6,background:C.pin,color:C.shroudDeep,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Ajouter"));
 }
 function MachinesTab(props){
-  var exercises=props.exercises, program=props.program, persistConfig=props.persistConfig, sessions=props.sessions;
+  var exercises=props.exercises, program=props.program, persistConfig=props.persistConfig, sessions=props.sessions, updateExerciseInc=props.updateExerciseInc;
   var exMapForDuration = {}; exercises.forEach(function(e){ exMapForDuration[e.id]=e; });
   var _m=useState(null), mode=_m[0], setMode=_m[1];
   var _e=useState(null), editDay=_e[0], setEditDay=_e[1];
@@ -1339,6 +1664,12 @@ function MachinesTab(props){
   function acceptPlacement(){
     persistConfig(exercises, applyPlacement(proposal.newEx, proposal.placement, exercises, program));
     setProposal(null);
+  }
+  /* Corrige/ajuste le palier poly/semi/isolation d'une machine déjà dans le
+     matériel — utile pour les machines ajoutées avant que ce champ soit
+     demandé à la création (voir ManualAdd), et pour corriger un choix. */
+  function updateOrder(exId, order){
+    persistConfig(exercises.map(function(e){ return e.id===exId ? Object.assign({},e,{order:order}) : e; }), program);
   }
   var vol = plannedVolume(program, exercises);
   var byMuscle = {}; exercises.forEach(function(e){ (byMuscle[e.muscle]=byMuscle[e.muscle]||[]).push(e); });
@@ -1423,15 +1754,19 @@ function MachinesTab(props){
           list.map(function(e){
             var stall = stallInfo(sessions, e.id), u = usage(e.id), pending = confirmDel===e.id;
             var alt = exercises.find(function(x){return x.id!==e.id && x.muscle===e.muscle;});
-            return h("div",{key:e.id, style:{marginBottom:4,borderRadius:8,overflow:"hidden",background:C.shroudDeep,border:"1px solid "+(pending?C.rust:C.shroud)}},
+            return h("div",{key:e.id, style:{marginBottom:4,borderRadius:8,overflow:"hidden",background:C.shroudDeep,border:"1px solid "+(pending?C.rust:(e.order?C.shroud:C.rust))}},
               h("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 12px",gap:8}},
                 h("div",{style:{minWidth:0}},
                   h("div",{style:{fontSize:14,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}, e.name+(e.unilateral?" · unilatéral":"")),
-                  h("div",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe}}, e.brand+" · "+KIND_LABEL[e.kind]+" · pas de "+e.inc+" kg")),
+                  h("div",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe}}, e.brand+" · "+KIND_LABEL[e.kind]),
+                  updateExerciseInc ? h(IncStepper,{value:e.inc, onChange:function(v){updateExerciseInc(e.id, v);}}) : null),
                 h("div",{style:{display:"flex",alignItems:"center",gap:8,flexShrink:0}},
                   stall ? h(Icon,{name:"alert",size:15,color:C.rust}) : null,
                   h("button",{onClick:function(){setConfirmDel(pending?null:e.id);}, "aria-label":"Supprimer "+e.name,
                     style:{padding:6,borderRadius:6,color:pending?C.rust:C.taupeDim,background:"transparent",border:"none"}}, h(Icon,{name:"trash",size:15})))),
+              h("div",{style:{padding:"0 12px 10px"}},
+                !e.order ? h("div",{style:{fontSize:11,color:C.rust,marginBottom:4}}, "Ordre non défini — choisis un palier ci-dessous.") : null,
+                h(OrderTierPicker,{value:exerciseOrderTier(e), onChange:function(v){updateOrder(e.id, v);}})),
               pending ? h("div",{style:{padding:"0 12px 12px",borderTop:"1px solid "+C.shroud}},
                 h("p",{style:{fontSize:13,color:C.bone,lineHeight:1.5,margin:"8px 0"}},
                   (u.days.length>0 ? (alt ? "Utilisée dans "+u.days.join(" et ")+". Sera remplacée par "+alt.name+", mêmes séries." : "Utilisée dans "+u.days.join(" et ")+". Aucune autre machine pour "+e.muscle+" — ces séries seront perdues.") : "Pas utilisée dans tes séances.")
@@ -1666,18 +2001,46 @@ function App(props){
 
   var _rt = useState(null), restTimer=_rt[0], setRestTimer=_rt[1];
   var restIdRef = useRef(0);
+  var wakeLockRef = useRef(null);
+  // Screen Wake Lock: while a rest timer runs, ask the browser to keep the
+  // screen on. This ONLY prevents the screen from auto-dimming/locking on
+  // its own while the app stays open and visible — it does nothing once the
+  // user manually locks the phone or switches to another app (the spec
+  // auto-releases the lock the instant the page becomes hidden). Wrapped in
+  // try/catch and feature-detected since many mobile browsers (notably
+  // Safari on iOS before 16.4, and some in-app browsers) don't support it.
+  function acquireWakeLock(){
+    try {
+      if (navigator.wakeLock && !wakeLockRef.current) {
+        navigator.wakeLock.request("screen").then(function(wl){ wakeLockRef.current = wl; }).catch(function(){});
+      }
+    } catch(e) {}
+  }
+  function releaseWakeLock(){
+    try {
+      if (wakeLockRef.current) { wakeLockRef.current.release().catch(function(){}); wakeLockRef.current = null; }
+    } catch(e) {}
+  }
+  useEffect(function(){
+    function onVisible(){
+      if (document.visibilityState === "visible" && restTimer) acquireWakeLock();
+    }
+    document.addEventListener("visibilitychange", onVisible);
+    return function(){ document.removeEventListener("visibilitychange", onVisible); };
+  }, [restTimer]);
   function startRestTimer(seconds, label){
     restIdRef.current += 1;
     setRestTimer({ id: restIdRef.current, endTime: Date.now() + seconds*1000, duration: seconds, label: label });
+    acquireWakeLock();
   }
   function adjustRestTimer(delta){
     setRestTimer(function(rt){ return rt ? Object.assign({}, rt, {endTime: rt.endTime + delta*1000}) : rt; });
   }
-  function stopRestTimer(){ setRestTimer(null); }
+  function stopRestTimer(){ setRestTimer(null); releaseWakeLock(); }
 
   function persistConfig(exercises, program){ setState({exercises:exercises, program:program}); }
   function persistSessions(sessions){ setState({sessions:sessions}); }
-  function setActive(active){ if (!active) setRestTimer(null); setState({active:active}); }
+  function setActive(active){ if (!active) { setRestTimer(null); releaseWakeLock(); } setState({active:active}); }
   function setDeloadForNextStart(v){ setState({deloadForNextStart:v}); }
   function snoozeDeload(){ setState(function(prev){ return Object.assign({},prev,{meta:{deloadSnoozeUntil: prev.sessions.filter(function(s){return s.done;}).length + 4}}); }); }
   function finishSession(){
@@ -1686,10 +2049,24 @@ function App(props){
       entries: active.entries.map(function(e){ return Object.assign({}, e, {sets: e.sets.filter(function(s){return s.weight!=null && s.reps!=null;})}); }).filter(function(e){return e.sets.length>0;}) });
     if (cleaned.entries.length===0) { setActive(null); return; }
     setRestTimer(null);
+    releaseWakeLock();
     setState({ sessions: state.sessions.concat([cleaned]), active: null });
   }
   function deleteSession(id){ setState({sessions: state.sessions.filter(function(s){return s.id!==id;})}); }
   function setProfile(p){ setState({profile:p}); }
+  /* Corrige le palier poly/semi/isolation d'une machine, appelable depuis
+     n'importe quel écran qui affiche son badge (pas seulement l'onglet
+     Machines) — voir OrderBadge. */
+  function updateExerciseOrder(exId, order){
+    setState({ exercises: state.exercises.map(function(e){ return e.id===exId ? Object.assign({},e,{order:order}) : e; }) });
+  }
+  /* Palier de poids (plus petit incrément, en kg) d'une machine — distinct
+     du palier poly/semi/isolation ci-dessus. Même schéma : appelable depuis
+     n'importe quel écran (voir IncStepper). INC_CACHE se met à jour tout
+     seul via le useEffect(...[state.exercises]) plus haut. */
+  function updateExerciseInc(exId, inc){
+    setState({ exercises: state.exercises.map(function(e){ return e.id===exId ? Object.assign({},e,{inc:inc}) : e; }) });
+  }
   function addBodyEntry(entry){
     setState({ bodyLog: (state.bodyLog||[]).concat([Object.assign({id:"b"+Date.now(), date: todayISO(), source:"manuel"}, entry)]) });
   }
@@ -1699,6 +2076,7 @@ function App(props){
     { k:"historique", label:"Historique", icon:"history" },
     { k:"machines", label:"Machines", icon:"wrench" },
     { k:"analyse", label:"Analyse", icon:"trending" },
+    { k:"options", label:"Options", icon:"gear" },
   ];
 
   return h("div",{style:{background:C.shroudDeep, fontFamily:sansBody, color:C.bone, minHeight:"100vh"}},
@@ -1711,13 +2089,15 @@ function App(props){
       tab==="seance" ? h(SeanceTab,{ program:state.program, exercises:state.exercises, exMap:exMap, sessions:state.sessions, nextDayKey:nextDayKey,
         active:state.active, setActive:setActive, finishSession:finishSession, startRestTimer:startRestTimer,
         deloadForNextStart:state.deloadForNextStart, setDeloadForNextStart:setDeloadForNextStart,
-        snoozeDeload:snoozeDeload, deloadSuggested: !state.active && deloadSuggested, deloadReason:deloadReason }) : null,
+        snoozeDeload:snoozeDeload, deloadSuggested: !state.active && deloadSuggested, deloadReason:deloadReason,
+        updateExerciseOrder:updateExerciseOrder, updateExerciseInc:updateExerciseInc, persistConfig:persistConfig }) : null,
       tab==="programme" ? h(ProgrammeTab,{ program:state.program, exercises:state.exercises, profile:state.profile, setProfile:setProfile }) : null,
       tab==="historique" ? h(HistoriqueTab,{ sessions:state.sessions, exMap:exMap, program:state.program, deleteSession:deleteSession }) : null,
-      tab==="machines" ? h(MachinesTab,{ exercises:state.exercises, program:state.program, persistConfig:persistConfig, sessions:state.sessions }) : null,
-      tab==="analyse" ? h(AnalyseTab,{ sessions:state.sessions, exercises:state.exercises, exMap:exMap, program:state.program, persistConfig:persistConfig, bodyLog:state.bodyLog, addBodyEntry:addBodyEntry }) : null),
+      tab==="machines" ? h(MachinesTab,{ exercises:state.exercises, program:state.program, persistConfig:persistConfig, sessions:state.sessions, updateExerciseInc:updateExerciseInc }) : null,
+      tab==="analyse" ? h(AnalyseTab,{ sessions:state.sessions, exercises:state.exercises, exMap:exMap, program:state.program, persistConfig:persistConfig, bodyLog:state.bodyLog, addBodyEntry:addBodyEntry }) : null,
+      tab==="options" ? h(OptionsTab,{ profile:state.profile, setProfile:setProfile, program:state.program, exercises:state.exercises }) : null),
     h("div",{style:{position:"fixed",bottom:0,left:0,right:0}},
-      restTimer ? h(RestTimerBar,{timer:restTimer, onAdjust:adjustRestTimer, onDismiss:stopRestTimer}) : null,
+      restTimer ? h(RestTimerBar,{timer:restTimer, onAdjust:adjustRestTimer, onDismiss:stopRestTimer, volume: state.profile.alertVolume}) : null,
       h("nav",{style:{display:"flex",background:C.shroudDeep,borderTop:"1px solid "+C.taupeDim}},
         TABS.map(function(t){ return h("button",{key:t.k, onClick:function(){setTab(t.k);},
           style:{flex:1,padding:"10px 0",display:"flex",flexDirection:"column",alignItems:"center",gap:3,background:"transparent",border:"none",color:tab===t.k?C.pin:C.taupe}},
@@ -1745,7 +2125,6 @@ function App(props){
   });
 })();
 </script>
-
 
 <script>
 if ("serviceWorker" in navigator) {
