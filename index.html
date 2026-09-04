@@ -409,17 +409,23 @@ function proactiveDeloadDue(sessions, program){
   return c > 0 && c % 6 === 0 && done % program.length === 0;
 }
 
-/* Estimated real session length: ~40s of work per set + its rest, doubled for
-   unilateral exercises (each "set" is actually done twice, once per side),
-   plus ~70s of transition between machines and a 5-minute warm-up/waiting
-   buffer. Rough but directional — real gym time also depends on how busy it
-   is, so treat this as a floor, not a promise. */
+/* Estimated real session length: ~40s of work per set + its rest, plus ~70s
+   de transition entre machines et 5 min d'échauffement/attente. Rough but
+   directional — real gym time also depends on how busy it is, so treat
+   this as a floor, not a promise.
+
+   Calculé en BILATÉRAL (demandé le 4 sept. 2026) : ne double plus les
+   séries pour les exercices unilatéraux (bras/jambe par bras). Avant, un
+   exercice unilatéral comptait chaque série deux fois (une par côté), ce
+   qui gonflait l'estimation (~96 min vu en Options) — cohérent avec la
+   phase 1 (voir plus haut, unilatéral partout le temps de vérifier
+   l'équilibre gauche/droite) mais plus ce que l'utilisateur veut voir
+   affiché ici. `exMap` gardé en paramètre pour ne pas casser les appels
+   existants, même s'il ne sert plus dans cette fonction. */
 function estimateDayMinutes(day, exMap) {
   var total = 0;
   day.items.forEach(function(it) {
-    var ex = exMap[it.ex];
-    var physicalSets = (ex && ex.unilateral) ? it.sets * 2 : it.sets;
-    total += physicalSets * (40 + it.rest);
+    total += it.sets * (40 + it.rest);
   });
   total += Math.max(0, day.items.length - 1) * 70;
   total += 300;
