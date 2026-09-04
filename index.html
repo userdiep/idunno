@@ -660,6 +660,44 @@ var GOALS = [
   { k: "loss_strength", label: "Perte de gras + Force" },
   { k: "hyper_strength", label: "Hypertrophie + Force" },
 ];
+/* Comment EXÉCUTER les répétitions (tempo excentrique/pause/concentrique)
+   par objectif — demandé le 4 sept. 2026, affiché sous les boutons
+   d'objectif dans Options. Recherché spécifiquement pour cette question
+   plutôt que supposé :
+   - Hypertrophie : une plage de tempo large (0,5 à 8s/répétition) donne une
+     hypertrophie similaire tant que l'effort est proche de l'échec
+     (Schoenfeld, Ogborn & Krieger 2015, méta-analyse) — SEUL repère qui
+     tient : les répétitions volontairement très lentes (>10s) sont
+     inférieures. Le travail en excentrique seul ne fait pas non plus mieux
+     grossir le muscle que le concentrique, à travail/charge égal
+     (Schoenfeld et al. 2017, méta-analyse "Concentric vs. Eccentric") —
+     donc pas de tempo excentrique "magique" à viser pour la taille du
+     muscle, juste rester dans une plage raisonnable et contrôlée.
+   - Force : ici le tempo compte différemment. Plusieurs essais contrôlés
+     (González-Badillo et al. ; Jones et al., entraînement basé sur la
+     vélocité) trouvent que pousser/tirer avec une INTENTION explosive en
+     concentrique (même si la charge lourde fait bouger la machine
+     lentement en pratique — c'est l'INTENTION qui compte, pas la vitesse
+     réelle) donne de meilleurs gains de force/1RM qu'un concentrique
+     volontairement lent, à charge égale. L'excentrique reste contrôlé (ne
+     jamais lâcher la charge) mais n'a pas besoin d'être ralenti davantage.
+   - Perte de gras : aucune étude trouvée ne montre un effet du tempo sur
+     la perte de gras elle-même (c'est le déficit calorique qui la pilote,
+     voir Nutrition) — le tempo hypertrophie s'applique par défaut, pour
+     garder assez de tension utile et préserver le muscle pendant le
+     déficit (voir l'audit protéines/déficit plus bas dans cette Section).
+   Objectifs combinés : le tempo suit la composante qui a la contrainte la
+   plus spécifique (force > hypertrophie > perte de gras seule), exercice
+   par exercice n'étant pas suivi par l'app — repère global, pas une règle
+   par machine. */
+var TEMPO_ADVICE = {
+  loss: "Excentrique contrôlé (~2s), pas de rebond en bas, remontée contrôlée (~1-2s). Le tempo ne change rien à la perte de gras elle-même — c'est le déficit calorique qui la pilote (voir Nutrition ci-dessous) — mais des répétitions trop rapides ou en rebond déchargent le muscle que le déficit cherche justement à préserver. Seul repère à éviter : les répétitions volontairement très lentes (>10s), montrées moins efficaces même pour l'hypertrophie (Schoenfeld et al. 2015).",
+  hyper: "Excentrique contrôlé (~2-3s), pause brève, concentrique contrôlé (~1-2s) — pas besoin d'exploser. Une plage de tempo large (0,5 à 8s/répétition) donne une hypertrophie similaire tant que tu vas proche de l'échec (Schoenfeld, Ogborn & Krieger 2015, méta-analyse) ; seules les répétitions volontairement très lentes (>10s) sont inférieures. Le travail en excentrique seul ne fait pas non plus mieux grossir le muscle que le concentrique à charge égale (Schoenfeld et al. 2017) — pas de tempo excentrique \"magique\" à chercher.",
+  strength: "Excentrique contrôlé (~1-2s, ne jamais lâcher la charge), pause brève, concentrique explosif en INTENTION — pousse/tire aussi vite que possible, même si la charge lourde fait bouger la machine lentement. C'est cette intention explosive, pas la vitesse réelle, qui donne de meilleurs gains de force/1RM qu'un concentrique volontairement lent, à charge égale (González-Badillo et al. ; Jones et al., entraînement basé sur la vélocité).",
+  loss_hyper: "Même repère que \"Hypertrophie\" seule (excentrique ~2-3s, concentrique contrôlé ~1-2s, pas besoin d'exploser) — le déficit calorique ne change rien au tempo optimal, voir \"Perte de gras\" ci-dessus pour le détail des sources.",
+  loss_strength: "Sur les machines poly/lourdes visées par cet objectif : excentrique contrôlé, concentrique explosif en INTENTION (voir \"Force\" ci-dessus) — c'est la priorité de cet objectif. Sur les accessoires/isolation : tempo \"Hypertrophie\" classique (contrôlé, pas besoin d'exploser) suffit, aucune étude ne montrant un intérêt du concentrique explosif sur ces mouvements.",
+  hyper_strength: "Même logique que \"Perte de gras + Force\" sans le déficit : concentrique explosif en INTENTION sur les mouvements poly/lourds (voir \"Force\"), tempo \"Hypertrophie\" classique (contrôlé) sur les accessoires/isolation.",
+};
 var GOAL_PRESETS = {
   // Perte de gras seule : déficit haut de fourchette Helms (~1%/sem pour ce
   // poids), protéines en haut de la plage cutting traduite, tiers proches
@@ -1882,9 +1920,14 @@ function OptionsTab(props){
     h(Section, {title:"Objectif d'entraînement"},
       h("p",{style:{fontSize:12,color:C.taupe,lineHeight:1.6,marginBottom:10}},
         "Détermine le déficit/protéines/activité par défaut ci-dessous (et repasse la cible en mode \"DER + pas + séances\" si tu étais en \"Cible fixe\", sinon le changement ne se verrait pas — ce mode calcule une vraie moyenne hebdomadaire à partir de tes pas et de tes séances réelles, pas juste un multiplicateur d'activité générique), et les séries/reps/repos proposés pour les PROCHAINES machines ajoutées ou remplacées (voir Séance > icône de remplacement, et Programme > ajouter un exercice). Ne modifie les machines déjà en place que si tu le confirmes ci-dessous après avoir changé d'objectif."),
-      h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8, marginBottom: reapplyPrompt?10:0}},
+      h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8, marginBottom:10}},
         GOALS.map(function(g){ var on = (profile.goal||"loss_hyper")===g.k; return h("button",{key:g.k, onClick:function(){applyGoal(g.k);},
           style:{padding:"9px 8px",borderRadius:6,background:on?C.pin:C.shroud,color:on?C.ink:C.taupe,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:12.5,fontWeight:600}}, g.label); })),
+      h("div",{style:{borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.taupeDim,marginBottom: reapplyPrompt?10:0}},
+        h("div",{style:{fontFamily:sansCond,fontSize:12,fontWeight:700,color:C.pin,marginBottom:6}},
+          "Comment exécuter les répétitions — "+((GOALS.find(function(g){return g.k===(profile.goal||"loss_hyper");})||{}).label||"")),
+        h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.55}}, TEMPO_ADVICE[profile.goal||"loss_hyper"] || TEMPO_ADVICE.loss_hyper)
+      ),
       reapplyPrompt ? h("div",{style:{borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.pin}},
         h("div",{style:{fontSize:13,color:C.bone,lineHeight:1.5,marginBottom:10}},
           "Appliquer aussi les séries/reps/repos de \""+((GOALS.find(function(g){return g.k===profile.goal;})||{}).label||"")+"\" aux "+totalItems+" exercices déjà dans ton programme actuel ? Ça remplace le réglage de CHAQUE machine par le repère de son palier (poly/semi/isolation) pour ce nouvel objectif — écrase donc les ajustements que tu as pu faire à la main entre-temps."),
