@@ -13,6 +13,7 @@
 <title>Sunglo sport</title>
 <style>
 :root{ color-scheme: dark; }
+:root[data-theme="light"]{ color-scheme: light; }
 *{box-sizing:border-box;}
 html,body{margin:0;padding:0;}
 body{
@@ -21,6 +22,7 @@ body{
   color:#EDEAE3;
   -webkit-font-smoothing:antialiased;
 }
+[data-theme="light"] body{ background:#F2EEE7; color:#20262D; }
 input[type=number]::-webkit-outer-spin-button,
 input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
 input[type=number]{-moz-appearance:textfield;}
@@ -51,16 +53,34 @@ var useState = React.useState, useEffect = React.useEffect, useMemo = React.useM
 
 /* ============================================================
    PALETTE — machine shroud charcoal, taupe cap, selector-pin amber,
-   stack-plate bone. Deliberately a single dark "gym equipment" theme:
-   the whole app is styled after the machines themselves, so it keeps
-   one visual world rather than switching looks with the OS theme.
-   ============================================================ */
-var C = {
+   stack-plate bone. Deux variantes du même "gym equipment" theme (sombre/
+   clair, voir Options > Apparence), pas un thème par app système : le choix
+   reste explicite plutôt que suivre l'OS.
+   `C` est l'objet VIVANT lu partout dans le rendu (styles inline) — changer
+   de thème MUTE ses propriétés (voir applyTheme) plutôt que de remplacer la
+   référence, pour que tout composant qui lit C.xxx pendant son rendu prenne
+   la nouvelle valeur sans avoir à passer le thème en prop partout.
+   `ink` est un ajout : plusieurs boutons/badges posent du texte foncé sur un
+   fond accent clair (pin/green/rust/steel, ex. bouton "Ajouter" en amber
+   avec texte foncé) — ce texte doit rester foncé dans les DEUX thèmes pour
+   garder un contraste correct sur ces fonds accent, contrairement à
+   shroudDeep/bone qui inversent leur luminosité entre les deux thèmes. */
+var C_DARK = {
   shroud: "#20262D", shroudDeep: "#171C21", panel: "#262D34",
   taupe: "#8A8079", taupeDim: "#5A544F",
   pin: "#F0A62E", pinDim: "#7A5A22",
   bone: "#EDEAE3", green: "#6E9E6B", rust: "#C4674A", steel: "#6C93A6",
+  ink: "#171C21",
 };
+var C_LIGHT = {
+  shroud: "#FFFFFF", shroudDeep: "#F2EEE7", panel: "#FFFFFF",
+  taupe: "#6B6058", taupeDim: "#D8D0C4",
+  pin: "#F0A62E", pinDim: "#7A5A22",
+  bone: "#20262D", green: "#6E9E6B", rust: "#C4674A", steel: "#6C93A6",
+  ink: "#171C21",
+};
+var C = Object.assign({}, C_DARK);
+function applyTheme(theme) { Object.assign(C, theme === "light" ? C_LIGHT : C_DARK); }
 var sansBody = "'Barlow', ui-sans-serif, system-ui, sans-serif";
 var sansCond = "'Barlow Semi Condensed', 'Barlow', ui-sans-serif, sans-serif";
 
@@ -93,12 +113,27 @@ var PUSHPULL = {
    muscle biarticulaire ou beaucoup de synergistes recrutés — ischios,
    mollets, fessiers, lombaires, oiseau/deltoïde arrière), 3 = isolation
    (une seule articulation, un seul muscle ciblé). Sert à trier l'ordre des
-   exercices dans une séance : la littérature (ACSM position stand ; NSCA)
-   recommande de faire les polyarticulaires en premier, pendant que tu es
-   frais, et les isolations en dernier — voir sources dans la conversation.
+   exercices dans une séance (poly d'abord, isolation en dernier).
    Le découpage en 3 paliers (plutôt que juste poly/isolation) est une
    convention pratique, pas une catégorie validée par la littérature en
-   tant que telle — seule la règle poly-avant-isolation l'est vraiment. */
+   tant que telle.
+
+   Vérifié (re-recherché pour la question "meilleures machines par objectif") :
+   Nunes et al. 2020 (European Journal of Sport Science, méta-analyse sur
+   l'ORDRE des exercices) trouve que pour l'HYPERTROPHIE, l'ordre n'a
+   quasiment aucun effet (taille d'effet combinée ≈0.03, "zero effect").
+   Pour la FORCE en revanche, l'exercice placé EN PREMIER progresse le plus
+   — et ce bénéfice de position est même un peu plus marqué pour les
+   exercices d'isolation que pour les polyarticulaires (ES ≈0.58 vs 0.32)
+   quand on inverse l'ordre. Autrement dit la littérature ne dit PAS
+   "commencer par le polyarticulaire fait plus progresser" — le vrai levier
+   est "commencer par ce qu'on veut prioriser". La règle poly-avant-
+   isolation gardée ici est donc surtout une convention pratique de
+   fraîcheur/technique/sécurité (mouvements pluri-articulaires plus lourds
+   et plus exigeants en coordination, mieux faits frais) plutôt qu'un
+   levier de performance validé par la littérature — modifiable à la main
+   pour un exercice précis via le rond numéroté si tu veux prioriser
+   volontairement une isolation. */
 var SEED_EXERCISES = [
   { id: "tg-chest-press", name: "Chest Press", brand: "Technogym", muscle: "Pectoraux", kind: "machine", inc: 2.5, unilateral:true, order:1 },
   { id: "tg-wide-chest", name: "Wide Chest Press", brand: "Technogym", muscle: "Pectoraux", kind: "machine", inc: 2.5, unilateral:true, order:1 },
@@ -415,7 +450,33 @@ function pushPullBalance(vol){
       ne pas casser l'ordre poly-avant-isolation de la séance (voir Séance >
       petit badge numéroté sur chaque machine).
    À égalité sur ces deux critères, l'ordre du catalogue tranche — ça reste
-   déterministe et prévisible. */
+   déterministe et prévisible.
+
+   Objectif d'entraînement (goal) délibérément PAS un critère ici — question
+   vérifiée spécifiquement (recherche faite pour "quelles sont les
+   meilleures machines pour chaque objectif") plutôt que supposée. Trois
+   études trouvées comparant des machines polyarticulaires à des machines
+   d'isolation pour LE MÊME muscle :
+   - un essai croisé randomisé chez des hommes entraînés (International
+     Journal of Exercise Science, 2020) ne trouve AUCUNE différence
+     significative de gain de force (1RM développé couché, squat) entre un
+     protocole polyarticulaire et un protocole en isolation ;
+   - une méta-analyse dédiée à l'hypertrophie (mono- vs poly-articulaire,
+     membres) ne trouve pas non plus de différence significative sur la
+     croissance musculaire globale (mais suggère un possible intérêt de
+     CUMULER les deux types pour le développement régional du muscle,
+     piste encore peu étudiée) ;
+   - une méta-analyse sur l'ORDRE des exercices (Nunes et al. 2020, voir
+     note plus haut sur `order`) confirme que l'ordre n'affecte pas
+     l'hypertrophie, et que pour la force c'est LA POSITION (premier de la
+     séance) qui compte, pas le fait que l'exercice soit poly ou isolation.
+   Conclusion retenue : pas de base solide pour préférer une machine
+   polyarticulaire à une machine d'isolation ciblant le même muscle selon
+   l'objectif (force/hypertrophie/perte de gras) — bestCandidate reste donc
+   volontairement identique pour les 6 objectifs. Ce qui varie réellement
+   par objectif, et qui est bien implémenté ailleurs, c'est le nombre de
+   séries/reps/repos par palier (GOAL_PRESETS/tierDefaultsForGoal) et la
+   cible kcal/protéines — pas le choix de LA machine. */
 function bestCandidate(candidates, referenceOrder) {
   if (!candidates.length) return null;
   var scored = candidates.map(function(e, i){
@@ -462,16 +523,187 @@ function suggestSwap(exId, exercises, program) {
   var candidates = exercises.filter(function(e){ return e.muscle===ex.muscle && e.id!==exId && !usedIds[e.id]; });
   return bestCandidate(candidates, exerciseOrderTier(ex));
 }
-function applySwap(oldExId, newExId, program) {
+/* Séries/reps/repos à proposer quand on remplace oldEx par newEx dans le
+   programme, quel que soit l'endroit d'où vient la demande (bouton "Changer
+   de machine" en Séance, ou suggestion de remplacement sur un exercice
+   bloqué en Analyse — les deux doivent s'adapter pareil, sinon un des deux
+   chemins garde un ancien réglage qui ne correspond plus à la machine).
+   Même palier (poly/semi/iso) que l'exercice remplacé : le réglage déjà en
+   place reste pertinent, pas de raison d'y toucher. Palier différent : on
+   repart des repères par palier ET par objectif (GOAL_PRESETS ci-dessus),
+   plutôt que de garder des reps/repos pensés pour un autre type de
+   mouvement. Le nombre de séries en cours (sampleItem.sets) est conservé
+   même en cas de palier différent, seuls reps/repos changent — on ne
+   réduit pas le volume programmé juste parce que la machine change. */
+function swapRecommendation(oldEx, newEx, program, goal) {
+  var oldTier = exerciseOrderTier(oldEx), newTier = exerciseOrderTier(newEx);
+  var sampleItem = null;
+  program.some(function(d){ var it = d.items.find(function(x){return x.ex===oldEx.id;}); if (it) { sampleItem = it; return true; } return false; });
+  var d2 = tierDefaultsForGoal(goal, newTier);
+  return (newTier === oldTier && sampleItem)
+    ? { sets: sampleItem.sets, min: sampleItem.min, max: sampleItem.max, rest: sampleItem.rest }
+    : { sets: sampleItem ? sampleItem.sets : d2.sets, min: d2.min, max: d2.max, rest: d2.rest };
+}
+/* ============================================================
+   OBJECTIFS D'ENTRAÎNEMENT — presets par palier (poly/semi/iso) et
+   nutrition (déficit/protéines/activité), un par combinaison choisie par
+   l'utilisateur (perte de gras, hypertrophie, force, et les 3 associations
+   entre deux de ces trois). "loss_hyper" reste la valeur par défaut ET
+   reste EXACTEMENT ce qui était déjà en place avant ce menu (recomposition,
+   voir l'audit dans la conversation) — volontairement non retouché ici,
+   même si une source plus bas suggère qu'un repos un peu plus long
+   profiterait aussi à ce preset (voir note repos).
+
+   Sources vérifiées pour les 5 autres presets (recherchées et lues pour ce
+   changement, pas des chiffres inventés) :
+   - Force — charge/volume : mise à jour ACSM 2026 des recommandations de
+     musculation (première révision en 17 ans) : force ≈ ≥80% 1RM, 2-3
+     séries/exercice. ≥80% 1RM correspond conventionnellement à une zone
+     d'environ 4-6 répétitions avant échec technique. Repos : la convention
+     de longue date (NSCA Essentials of Strength Training, ACSM) pour des
+     charges quasi-maximales reste 2-5 min, pour permettre une récupération
+     quasi complète de la filière ATP-PC entre séries — pas de remise en
+     cause récente trouvée sur ce point précis.
+   - Hypertrophie — charge/volume : la même mise à jour ACSM 2026 constate
+     que l'hypertrophie se produit sur une large plage de charges (30-100%
+     1RM) tant que l'effort est suffisant (proche de l'échec) — donc le "rep
+     range hypertrophie 6-12" n'est plus considéré comme une zone magique,
+     plutôt une zone pratique parmi d'autres qui marchent aussi bien ;
+     volume cible ≥10 séries/muscle/semaine (repère qui s'applique au volume
+     hebdomadaire total, voir VOL_MIN/VOL_MAX/plannedVolume — les tiers
+     ci-dessous ne fixent que le point de départ par exercice).
+   - Repos et hypertrophie : une méta-analyse bayésienne récente (Robinson
+     et al., Frontiers in Sports and Active Living, 2024, "Give it a Rest")
+     trouve un léger avantage hypertrophique aux repos >60s, sans bénéfice
+     supplémentaire net au-delà de ~90s — ce qui va à l'encontre de l'ancien
+     repère NSCA "30-90s pour l'hypertrophie". Preuve qualifiée de faible
+     certitude par les auteurs eux-mêmes (intervalles crédibles larges,
+     seulement 9 études) — donc traité ici comme "viser plutôt ≥90s que
+     60s", pas comme une règle stricte.
+   - Perte de gras — déficit : revue Helms/Aragon/Fitschen 2014 (contest
+     prep naturel) : viser une perte de 0,5 à 1%/semaine du poids corporel
+     pour préserver au mieux la masse maigre (plus lent = mieux préservé).
+     Converti en kcal/jour pour CE profil (poids actuel dans l'appli) avec
+     l'équivalence usuelle ~7700 kcal/kg de masse grasse : 0,5%/sem ≈
+     470 kcal/j, 1%/sem ≈ 935 kcal/j — une fourchette large, pas un chiffre
+     validé au kg près. Le preset "Perte de gras" seule (priorité vitesse,
+     pas de muscle à construire) prend le haut de cette fourchette ; les
+     presets combinés à hypertrophie/force restent plus prudents (bas de
+     fourchette), cohérent avec la recommandation "plus lent préserve
+     mieux". Aucune étude trouvée ne montre qu'un rep range particulier
+     accélère la perte de gras elle-même — donc les tiers ci-dessous, pour
+     "Perte de gras" seule, restent proches d'un schéma hypertrophie
+     générique plutôt que d'inventer un rep range "brûle-graisse" qui
+     n'a pas de base solide.
+   - Protéines en déficit : CONVERGENCE de deux sources indépendantes — la
+     position de l'ISSN "Diets and Body Composition" (Aragon et al. 2017) et
+     la revue Helms et al. 2014 citée ci-dessus recommandent toutes les deux
+     2,3-3,1 g/kg de MASSE MAIGRE/jour pour les sujets entraînés en
+     restriction calorique, l'extrémité haute étant pour un déficit plus
+     important ou une masse grasse plus basse. Traduit en g/kg de POIDS
+     TOTAL (l'unité du curseur Options) avec la masse maigre estimée de ce
+     profil (~62,7 kg sur 85,1 kg, voir Options > repère masse maigre) :
+     ≈1,7-2,3 g/kg de poids total. Les presets avec perte de gras utilisent
+     le haut de cette plage traduite (2,1-2,3) ; ce repère spécifique à la
+     recomposition (2,6-3,5 g/kg masse maigre, revue Barakat et al. 2020,
+     déjà utilisé pour "loss_hyper") reste PLUS élevé que ce repère cutting
+     général — cohérent avec le fait que la recomposition demande de
+     construire ET préserver en même temps.
+   - Sans perte de gras (Hypertrophie seule, Force seule, Hypertrophie +
+     Force) : déficit à 0 (maintenance). Une vraie prise de masse
+     bénéficierait d'un léger surplus calorique, mais l'appli n'a qu'un
+     curseur de déficit (0-600 kcal) — limite assumée plutôt que masquée
+     par un chiffre inventé. Protéines dans ces cas : ~1,8-1,9 g/kg de
+     poids total, cohérent avec le seuil ≥1,6 g/kg validé par méta-analyse
+     pour la prise de masse maigre hors restriction calorique (voir Options
+     > sources), sans la majoration "cutting" puisqu'il n'y a pas de
+     restriction à compenser.
+   - Activité quotidienne (activityMultiplier) : volontairement IDENTIQUE
+     sur les 6 presets — c'est un reflet du mode de vie (niveau d'activité
+     hors entraînement), pas de l'objectif d'entraînement ; le faire varier
+     par objectif n'aurait aucune justification.
+
+   Sert de point de départ éditable — pour les machines déjà dans un
+   programme, voir requestSwap/swapCard (remplacement) ou proposePlacement/
+   applyPlacement (ajout) ; jamais appliqué sans une action explicite de
+   l'utilisateur (changer l'objectif, confirmer un remplacement/ajout). */
+var GOALS = [
+  { k: "loss", label: "Perte de gras" },
+  { k: "hyper", label: "Hypertrophie" },
+  { k: "strength", label: "Force" },
+  { k: "loss_hyper", label: "Perte de gras + Hypertrophie" },
+  { k: "loss_strength", label: "Perte de gras + Force" },
+  { k: "hyper_strength", label: "Hypertrophie + Force" },
+];
+var GOAL_PRESETS = {
+  // Perte de gras seule : déficit haut de fourchette Helms (~1%/sem pour ce
+  // poids), protéines en haut de la plage cutting traduite, tiers proches
+  // d'un schéma hypertrophie générique (pas de rep range anti-graisse).
+  loss:           { nutrition: { activityMultiplier: 1.55, deficitKcal: 600, proteinPerKg: 2.3 },
+    tiers: { 1: {sets:3, min:8,  max:12, rest:90},  2: {sets:3, min:10, max:15, rest:75}, 3: {sets:3, min:12, max:15, rest:60} } },
+  // Hypertrophie seule : maintenance, ~10 séries/muscle/semaine visées
+  // (ACSM 2026), repos remonté vers ≥90s (méta-analyse 2024 sur le repos).
+  hyper:          { nutrition: { activityMultiplier: 1.55, deficitKcal: 0,   proteinPerKg: 1.8 },
+    tiers: { 1: {sets:4, min:6,  max:10, rest:110}, 2: {sets:4, min:8,  max:12, rest:95}, 3: {sets:4, min:10, max:15, rest:90} } },
+  // Force seule : maintenance, ≥80% 1RM (≈4-6 reps)/2-3 séries (ACSM 2026),
+  // repos long (2-3 min, convention NSCA/ACSM pour charge quasi-maximale).
+  strength:       { nutrition: { activityMultiplier: 1.55, deficitKcal: 0,   proteinPerKg: 1.8 },
+    tiers: { 1: {sets:3, min:4,  max:6,  rest:180}, 2: {sets:3, min:5,  max:8,  rest:150}, 3: {sets:3, min:8,  max:12, rest:90} } },
+  loss_hyper:     { nutrition: { activityMultiplier: 1.55, deficitKcal: 350, proteinPerKg: 2.0 },  // = réglages historiques (recomposition), volontairement inchangés
+    tiers: { 1: {sets:3, min:8,  max:12, rest:110}, 2: {sets:3, min:10, max:15, rest:85}, 3: {sets:4, min:12, max:15, rest:65} } },
+  // Perte de gras + Force : déficit plus prudent que "Perte de gras" seule
+  // (préserver la performance/force pendant la restriction, cf. Helms :
+  // plus lent préserve mieux), reps mi-chemin force/hypertrophie.
+  loss_strength:  { nutrition: { activityMultiplier: 1.55, deficitKcal: 450, proteinPerKg: 2.1 },
+    tiers: { 1: {sets:4, min:5,  max:8,  rest:120}, 2: {sets:3, min:6,  max:10, rest:100}, 3: {sets:3, min:10, max:15, rest:75} } },
+  // Hypertrophie + Force ("powerbuilding") : maintenance (pas de perte de
+  // gras visée), reps mi-chemin, repos plutôt long sur les gros mouvements.
+  hyper_strength: { nutrition: { activityMultiplier: 1.55, deficitKcal: 0,   proteinPerKg: 1.9 },
+    tiers: { 1: {sets:4, min:5,  max:8,  rest:130}, 2: {sets:4, min:8,  max:12, rest:100}, 3: {sets:4, min:12, max:15, rest:85} } },
+};
+function goalPreset(goal) { return GOAL_PRESETS[goal] || GOAL_PRESETS.loss_hyper; }
+function tierDefaultsForGoal(goal, tier) { var g = goalPreset(goal); return g.tiers[tier] || g.tiers[2]; }
+
+/* Réappliquer un objectif à TOUT le programme déjà en place — pas le
+   comportement par défaut d'un changement d'objectif (voir applyGoal dans
+   OptionsTab, qui ne touche que la nutrition + les repères pour les
+   PROCHAINS ajouts/remplacements), mais une action explicite proposée
+   juste après avoir changé d'objectif, à confirmer avant d'écraser quoi
+   que ce soit (voir OptionsTab > bouton "Appliquer aux séances
+   actuelles"). Recalcule séries/reps/repos de CHAQUE machine déjà
+   programmée à partir de son palier (poly/semi/isolation) et du nouveau
+   preset — ne les fait pas hériter de leurs anciennes valeurs comme le
+   fait un remplacement de machine "même palier" (swapRecommendation) :
+   ici on veut vraiment repartir des repères du nouvel objectif partout. */
+function applyGoalToProgram(program, exercises, goal) {
+  var exMap = {}; exercises.forEach(function(e){ exMap[e.id]=e; });
   return program.map(function(d){
     return Object.assign({}, d, { items: d.items.map(function(it){
-      return it.ex===oldExId ? Object.assign({}, it, {ex: newExId}) : it;
+      var ex = exMap[it.ex];
+      var tierDef = tierDefaultsForGoal(goal, ex ? exerciseOrderTier(ex) : 2);
+      return Object.assign({}, it, { sets: tierDef.sets, min: tierDef.min, max: tierDef.max, rest: tierDef.rest });
     }) });
   });
 }
 
-/* Adding a machine: propose where it belongs, based on where that muscle is already trained. */
-function proposePlacement(newEx, exercises, program) {
+function applySwap(oldExId, newExId, program, overrides) {
+  return program.map(function(d){
+    return Object.assign({}, d, { items: d.items.map(function(it){
+      if (it.ex !== oldExId) return it;
+      var patch = { ex: newExId };
+      if (overrides) { patch.sets = overrides.sets; patch.min = overrides.min; patch.max = overrides.max; patch.rest = overrides.rest; }
+      return Object.assign({}, it, patch);
+    }) });
+  });
+}
+
+/* Adding a machine: propose where it belongs, based on where that muscle is
+   already trained, and what sets/reps/repos to start it at — dérivés du
+   palier de la machine (poly/semi/iso) ET de l'objectif d'entraînement
+   actuel (voir GOAL_PRESETS/tierDefaultsForGoal ci-dessus), pas d'un
+   10-15 reps générique fixe comme avant ce menu. `goal` est optionnel :
+   à défaut, se comporte comme avant (recomposition). */
+function proposePlacement(newEx, exercises, program, goal) {
   var withNew = exercises.concat([newEx]);
   var vol = plannedVolume(program, withNew);
   var cur = vol.find(function(v){return v.muscle===newEx.muscle;});
@@ -482,13 +714,15 @@ function proposePlacement(newEx, exercises, program) {
   }); });
   var targets = daysTraining.length > 0 ? daysTraining.slice(0,2)
     : program.slice().sort(function(a,b){return a.items.length-b.items.length;}).slice(0,2);
-  var setsEach = current >= VOL_MIN ? 3 : 4;
-  return { targets: targets.map(function(d){return d.key;}), targetLabels: targets.map(function(d){return d.label;}), setsEach: setsEach, current: current };
+  var tierDef = tierDefaultsForGoal(goal, exerciseOrderTier(newEx));
+  var setsEach = current >= VOL_MIN ? tierDef.sets : tierDef.sets + 1;
+  return { targets: targets.map(function(d){return d.key;}), targetLabels: targets.map(function(d){return d.label;}),
+    setsEach: setsEach, min: tierDef.min, max: tierDef.max, rest: tierDef.rest, current: current };
 }
 function applyPlacement(newEx, placement, exercises, program) {
   return program.map(function(d){
     return placement.targets.indexOf(d.key) >= 0
-      ? Object.assign({}, d, { items: d.items.concat([{ ex: newEx.id, sets: placement.setsEach, min: 10, max: 15, rest: 90 }]) })
+      ? Object.assign({}, d, { items: d.items.concat([{ ex: newEx.id, sets: placement.setsEach, min: placement.min, max: placement.max, rest: placement.rest }]) })
       : d;
   });
 }
@@ -606,6 +840,7 @@ function seedState() {
       manualTarget: true, manualTargetKcal: 2250, manualProteinG: 175,
       targetMode: "manual", dailySteps: 8000, sessionsMin: 3, sessionsMax: 4, alertVolume: 1,
       wheyLabel: "HSN Whey Protein Isolate (scoop 30 g)", wheyKcal: 116, wheyProtein: 27.9,
+      goal: "loss_hyper", bodyFatPctManual: null, theme: "dark",
     },
   };
 }
@@ -690,20 +925,64 @@ function withOptionsDefaults(state) {
     _justMigrated: true,
   });
 }
-/* NOTE — no auto-migration here on purpose (tried one, reverted it): an
-   earlier version of this fix silently defaulted every exercise missing
-   `order` to 2 (semi-isolation). That sounded harmless but wasn't — anyone
-   who'd added several custom machines over time (via "Ajouter au matériel",
-   before the order-tier picker existed) had ALL of them flattened to the
-   same "2" in one shot, which reshuffled their position in the session
-   sequence instead of leaving already-working data alone. Silently
-   rewriting data nobody asked to change is worse than a missing badge.
-   The fix now touches only what the user explicitly sets: ManualAdd asks
-   for the tier on every new machine going forward, and the Machines tab
-   shows an "ordre non défini" hint + picker on any existing machine still
-   missing it, so each one gets corrected one at a time, on purpose, by the
-   person who actually knows what it should be — nothing changes on load. */
-function withAllMigrations(state) { return withOptionsDefaults(withNutritionDefaults(withLatestProgram(state))); }
+/* An earlier version of this fix silently defaulted every exercise missing
+   `order` to a flat, uniform 2 (semi-isolation) — that flattened distinctly
+   different machines to the same value in one shot and reshuffled the
+   session sequence, so it got reverted (see git history / prior session).
+   This version runs the real name-based classifier (inferOrderTier —
+   validated against all 29 catalog machines plus 18 common real-world
+   machine-name patterns, see its comment) against each exercise's own
+   name, so different machines get different, reasoned answers instead of
+   one blind guess.
+   ORDER_INFERENCE_VERSION makes this a versioned RE-classification, not a
+   one-time fill-in: inferOrderTier's keyword coverage was widened after
+   the first pass left custom machines with no keyword match falling back
+   to a generic guess (user-reported: too many machines landing in poly or
+   semi with none in isolation). Bumping the version reruns the (now
+   broader) classifier over EVERY exercise, replacing whatever `order` is
+   already there — including a value set by the previous, narrower pass,
+   and including a value you corrected by hand via the badge/picker since
+   then. Bump the version again in the future only when the keyword list
+   itself changes meaningfully; a version bump should be rare precisely
+   because it overwrites manual corrections. */
+var ORDER_INFERENCE_VERSION = 2;
+function withInferredOrderDefaults(state) {
+  if (!state || !state.exercises) return state;
+  if ((state.orderInferenceVersion||0) >= ORDER_INFERENCE_VERSION) return state;
+  return Object.assign({}, state, {
+    orderInferenceVersion: ORDER_INFERENCE_VERSION,
+    exercises: state.exercises.map(function(e){ return Object.assign({}, e, {order: inferOrderTier(e.name, e.muscle)}); }),
+    _justMigrated: true,
+  });
+}
+/* Ajout ponctuel et additif (pas de gate sur un champ existant, juste une
+   présence-check sur ce champ précis) : bodyFatPctManual permet d'affiner la
+   cible protéique sur la masse maigre réelle plutôt que le poids total —
+   voir OptionsTab et computeNutrition. Reste `null` tant que l'utilisateur
+   ne l'a pas renseigné ; dans ce cas l'appli se rabat automatiquement sur le
+   dernier bodyLog contenant un fatKg (scan Boditrax déjà loggé). */
+function withBodyFatDefault(state) {
+  if (!state || !state.profile || state.profile.bodyFatPctManual !== undefined) return state;
+  return Object.assign({}, state, { profile: Object.assign({ bodyFatPctManual: null }, state.profile) });
+}
+/* Ajout ponctuel et additif : profile.goal (voir GOALS/GOAL_PRESETS). Défaut
+   "loss_hyper" — c'est délibérément la seule valeur qui NE CHANGE AUCUN
+   réglage existant (elle correspond exactement au déficit/protéines/paliers
+   déjà en place avant l'ajout de ce menu), donc un profil existant garde un
+   comportement identique tant qu'il ne choisit pas explicitement un autre
+   objectif dans Options. */
+function withGoalDefault(state) {
+  if (!state || !state.profile || state.profile.goal !== undefined) return state;
+  return Object.assign({}, state, { profile: Object.assign({ goal: "loss_hyper" }, state.profile) });
+}
+/* Ajout ponctuel et additif : profile.theme ("dark"|"light", voir Options >
+   Apparence, et applyTheme/C_DARK/C_LIGHT plus haut). Défaut "dark" pour ne
+   rien changer visuellement à un profil existant. */
+function withThemeDefault(state) {
+  if (!state || !state.profile || state.profile.theme !== undefined) return state;
+  return Object.assign({}, state, { profile: Object.assign({ theme: "dark" }, state.profile) });
+}
+function withAllMigrations(state) { return withThemeDefault(withGoalDefault(withBodyFatDefault(withInferredOrderDefaults(withOptionsDefaults(withNutritionDefaults(withLatestProgram(state))))))); }
 async function loadInitialState() {
   try {
     var res = await fetch("data/state.json", { cache: "no-store" });
@@ -771,7 +1050,7 @@ function RirPicker(props) {
     var on = value===o.v, good = o.v<=1;
     return h("button",{key:o.v, onClick:function(){onChange(on?null:o.v);}, title:o.sub,
       style:{padding:"6px 10px",borderRadius:6, background:on?(good?C.green:C.rust):C.shroudDeep,
-        color:on?C.shroudDeep:C.taupe, border:"1px solid "+(on?"transparent":C.taupeDim),
+        color:on?C.ink:C.taupe, border:"1px solid "+(on?"transparent":C.taupeDim),
         fontFamily:sansCond,fontSize:12.5,fontWeight:600}}, o.label);
   }));
 }
@@ -783,7 +1062,7 @@ function SideToggle(props){
   return h("div",{style:{display:"flex",gap:4}}, [{k:"L",label:"G+"},{k:null,label:"Égal"},{k:"R",label:"D+"}].map(function(o){
     var on = value===o.k;
     return h("button",{key:String(o.k), onClick:function(){onChange(o.k);}, title:o.k?"Côté "+(o.k==="L"?"gauche":"droit")+" plus dur":"Deux côtés égaux",
-      style:{padding:"5px 8px",borderRadius:6, background:on?C.steel:C.shroudDeep, color:on?C.shroudDeep:C.taupe,
+      style:{padding:"5px 8px",borderRadius:6, background:on?C.steel:C.shroudDeep, color:on?C.ink:C.taupe,
         border:"1px solid "+(on?"transparent":C.taupeDim), fontFamily:sansCond, fontSize:11.5, fontWeight:700}}, o.label);
   }));
 }
@@ -793,8 +1072,8 @@ function StackPlate(props) {
   var repTxt = (repMin!=null && repMax!=null) ? (repMin===repMax ? String(repMin) : repMin+"-"+repMax) : String(props.reps);
   return h("div",{style:{display:"flex",alignItems:"stretch",borderRadius:3,overflow:"hidden",flexShrink:0,border:"2px solid "+tone}},
     h("div",{style:{padding:"8px 12px",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:tone,minWidth:74}},
-      h("span",{style:{fontFamily:sansBody,fontSize:25,fontWeight:700,lineHeight:1,color:C.shroudDeep,fontVariantNumeric:"tabular-nums"}}, weight==null?"—":String(weight)),
-      h("span",{style:{fontFamily:sansCond,fontSize:10,fontWeight:600,color:C.shroudDeep,opacity:0.75}},"kg")),
+      h("span",{style:{fontFamily:sansBody,fontSize:25,fontWeight:700,lineHeight:1,color:C.ink,fontVariantNumeric:"tabular-nums"}}, weight==null?"—":String(weight)),
+      h("span",{style:{fontFamily:sansCond,fontSize:10,fontWeight:600,color:C.ink,opacity:0.75}},"kg")),
     h("div",{style:{padding:"8px 12px",display:"flex",flexDirection:"column",justifyContent:"center",background:C.shroudDeep,minWidth:66}},
       h("span",{style:{fontFamily:sansBody,fontSize:19,fontWeight:600,lineHeight:1,color:C.bone,fontVariantNumeric:"tabular-nums"}}, sets+"×"+repTxt),
       h("span",{style:{fontFamily:sansCond,fontSize:10,color:C.taupe}},"objectif"))
@@ -802,6 +1081,49 @@ function StackPlate(props) {
 }
 var ORDER_TIER_LABEL = { 1:"Polyarticulaire — à faire en premier", 2:"Semi-isolation", 3:"Isolation — à faire en dernier" };
 function exerciseOrderTier(ex){ return (ex && ex.order) || 3; }
+function stripAccents(s){ return String(s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase(); }
+/* Devine le palier poly/semi/isolation d'une machine à partir de son nom
+   (et, en repli, de son muscle) — pour que ce soit l'app qui détermine ça,
+   pas l'utilisateur, à la création comme pour corriger les machines
+   existantes sans palier. Validé pour reproduire exactement le classement
+   des 29 machines d'origine du catalogue (SEED_EXERCISES), et élargi avec
+   des synonymes FR/EN et noms de marque courants (Technogym, Life Fitness,
+   Hammer Strength) pour mieux couvrir des machines ajoutées manuellement
+   avec un nom différent. Les motifs les plus SPÉCIFIQUES sont testés en
+   premier — ex. "leg curl" doit être reconnu comme semi-isolation (ischios)
+   avant que le mot générique "curl" plus bas ne le classe à tort en
+   isolation (biceps). C'est une estimation par mots-clés, pas une
+   classification anatomique certifiée — reste modifiable à tout moment via
+   le badge (séance) ou le sélecteur (onglet Machines) si elle tombe à côté
+   pour une machine précise. */
+function inferOrderTier(name, muscle){
+  var n = stripAccents(name);
+  // --- Motifs spécifiques d'abord, pour lever les ambiguïtés avec les
+  //     motifs génériques plus bas (ex. "curl", "presse", "extension"). ---
+  if (/leg curl|hamstring curl|flexion des jambes|ischio/.test(n)) return 2;
+  if (/leg extension|extension.*jambe|quad.*extension/.test(n)) return 3;
+  if (/calf|mollet/.test(n)) return 2;
+  if (/glute|fessier|hip thrust|hip bridge/.test(n)) return 2;
+  if (/lower back|lombaire|hyperextension|back extension|extension du dos/.test(n)) return 2;
+  if (/rear delt|deltoide arriere|reverse fly|face pull/.test(n)) return 2;
+  if (/trapez|shrug/.test(n)) return 2;
+  if (/pull-?up|pull-?over|chin-?up/.test(n)) return 1;
+  if (/pector|pec deck|butterfly|papillon|ecarte|\bfly\b/.test(n)) return 3;
+  if (/elevation laterale|lateral raise|elevation frontale|front raise/.test(n)) return 3;
+  if (/abduction|adduction/.test(n)) return 3;
+  if (/crunch|abdomina|gainage|sit.?up|rotation du torse/.test(n)) return 3;
+  if (/pushdown|kickback/.test(n)) return 3;
+  // --- Motifs génériques ensuite. ---
+  if (/biceps|triceps|curl/.test(n)) return 3;
+  if (/press|developpe|presse|squat|deadlift|souleve de terre|\bdip\b/.test(n)) return 1;
+  if (/tirage|traction|\brow\b|rowing|pulldown/.test(n)) return 1;
+  if (/upper back|tronc/.test(n)) return 1;
+  // Rien reconnu dans le nom : repli par muscle, sinon semi-isolation neutre.
+  var m = stripAccents(muscle);
+  if (/biceps|triceps|abdomina/.test(m)) return 3;
+  if (/ischio|mollet|fessier|lombaire|deltoides post/.test(m)) return 2;
+  return 2;
+}
 /* Trie une liste d'items/entries de séance par palier d'exercice (1
    polyarticulaire → 2 semi-isolation → 3 isolation), à égalité de palier
    l'ordre d'origine est conservé (tri stable). getExId(item) doit renvoyer
@@ -944,36 +1266,6 @@ function restAlert(volume) {
   if (navigator.vibrate) { try { navigator.vibrate([120, 60, 120, 60, 120, 60, 120]); } catch (e) {} }
 }
 
-/* Best-effort system notification when a rest period ends, so there's a
-   chance of an alert even if you've switched to another app — see the
-   Options tab and the note in RestTimerBar for the real limits of this:
-   web pages get throttled or fully suspended in the background on both
-   Android and iOS, so this can arrive late or not at all if the phone has
-   been away from the app (or screen-locked) for more than a short while.
-   It's a mitigation, not a guarantee — there's no way to make a plain web
-   app behave like a native alarm. Requires persistent (service-worker)
-   notifications: the plain `Notification()` constructor throws on most
-   mobile browsers. */
-function ensureNotifyPermission() {
-  if (typeof Notification === "undefined") return Promise.resolve(false);
-  if (Notification.permission === "granted") return Promise.resolve(true);
-  if (Notification.permission === "denied") return Promise.resolve(false);
-  try { return Notification.requestPermission().then(function(p){ return p === "granted"; }); }
-  catch (e) { return Promise.resolve(false); }
-}
-function notifyRestDone(label) {
-  try {
-    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
-    if (!("serviceWorker" in navigator)) return;
-    navigator.serviceWorker.getRegistration().then(function(reg){
-      if (!reg || !reg.showNotification) return;
-      reg.showNotification("Repos terminé", {
-        body: label ? "Prochaine série : " + label : "C'est reparti.",
-        tag: "rest-timer", renotify: true, vibrate: [180, 90, 180], silent: false,
-      }).catch(function(){});
-    }).catch(function(){});
-  } catch (e) {}
-}
 
 /* Rest timer bar — pinned above the bottom nav so it stays visible the
    whole time during a session, whatever tab is open. Ticks off wall-clock
@@ -993,13 +1285,10 @@ function RestTimerBar(props) {
   /* Repeats every 4s while overtime and the bar hasn't been dismissed —
      like a microwave that keeps beeping until you open the door — rather
      than a single beep you can miss. Stops the moment `over` goes back to
-     false (new timer started) or the component unmounts (dismissed). The
-     system notification only fires once per overtime period, to avoid
-     spamming the notification tray. */
+     false (new timer started) or the component unmounts (dismissed). */
   useEffect(function(){
     if (!over) return;
     restAlert(volume);
-    notifyRestDone(timer.label);
     var id = setInterval(function(){ restAlert(volume); }, 4000);
     return function(){ clearInterval(id); };
   }, [over, timer.id]);
@@ -1051,7 +1340,7 @@ function DeloadBanner(props){
         h("div",{style:{fontFamily:sansCond,fontSize:15.5,fontWeight:700,marginBottom:4}}, "Semaine de décharge conseillée"),
         h("div",{style:{fontSize:13, color:C.taupe, lineHeight:1.5, marginBottom:10}}, reason),
         h("div",{style:{display:"flex",gap:8}},
-          h("button",{onClick:onActivate, style:{flex:1,padding:"9px 0",borderRadius:6,background:C.steel,color:C.shroudDeep,fontFamily:sansCond,fontSize:13.5,fontWeight:700,border:"none"}}, "Activer pour la prochaine séance"),
+          h("button",{onClick:onActivate, style:{flex:1,padding:"9px 0",borderRadius:6,background:C.steel,color:C.ink,fontFamily:sansCond,fontSize:13.5,fontWeight:700,border:"none"}}, "Activer pour la prochaine séance"),
           h("button",{onClick:onSnooze, style:{flex:1,padding:"9px 0",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:13.5}}, "Pas maintenant"))
       )));
 }
@@ -1062,7 +1351,8 @@ function SeanceTab(props) {
       active=props.active, setActive=props.setActive, finishSession=props.finishSession, startRestTimer=props.startRestTimer,
       deloadForNextStart=props.deloadForNextStart, setDeloadForNextStart=props.setDeloadForNextStart,
       snoozeDeload=props.snoozeDeload, deloadSuggested=props.deloadSuggested, deloadReason=props.deloadReason,
-      updateExerciseOrder=props.updateExerciseOrder, updateExerciseInc=props.updateExerciseInc, persistConfig=props.persistConfig;
+      updateExerciseOrder=props.updateExerciseOrder, updateExerciseInc=props.updateExerciseInc, persistConfig=props.persistConfig,
+      goal=props.goal;
   var _p = useState(false), pickerOpen=_p[0], setPickerOpen=_p[1];
   var _fp = useState(""), freePick=_fp[0], setFreePick=_fp[1];
   var _sw = useState(null), swapPending=_sw[0], setSwapPending=_sw[1];
@@ -1078,12 +1368,14 @@ function SeanceTab(props) {
   function requestSwap(ex){
     if (!ex) return;
     var cand = suggestSwap(ex.id, exercises, program);
-    setSwapPending({ exId: ex.id, oldName: ex.name, muscle: ex.muscle, candidate: cand });
+    var rec = cand ? swapRecommendation(ex, cand, program, goal) : null;
+    setSwapPending({ exId: ex.id, oldName: ex.name, muscle: ex.muscle, candidate: cand, rec: rec });
   }
+  function setSwapRec(patch){ setSwapPending(Object.assign({}, swapPending, {rec: Object.assign({}, swapPending.rec, patch)})); }
   function confirmSwap(){
     if (!swapPending || !swapPending.candidate) { setSwapPending(null); return; }
     var oldId = swapPending.exId, newId = swapPending.candidate.id;
-    persistConfig(exercises, applySwap(oldId, newId, program));
+    persistConfig(exercises, applySwap(oldId, newId, program, swapPending.rec));
     if (active && !active.freeform) {
       setActive(Object.assign({}, active, { entries: active.entries.map(function(e){
         return e.ex===oldId ? Object.assign({}, e, {ex: newId}) : e;
@@ -1098,8 +1390,25 @@ function SeanceTab(props) {
       swapPending.candidate ? h("div",null,
         h("div",{style:{fontSize:13.5,color:C.bone,lineHeight:1.5,marginBottom:10}},
           "Remplacer "+swapPending.oldName+" par "+swapPending.candidate.name+" ? Ça change la machine dans toute la rotation à partir de maintenant"+(active && !active.freeform?" (et dans la séance en cours)":"")+"."),
+        swapPending.rec ? h("div",{style:{marginBottom:10}},
+          h("div",{style:{fontSize:11,color:C.taupe,marginBottom:6}}, "Séries/reps/repos recommandés pour cette machine — ajustables :"),
+          h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}},
+            h("div",null,
+              h("label",{style:{fontFamily:sansCond,fontSize:10.5,color:C.taupe}}, "Séries"),
+              h(Stepper,{value:swapPending.rec.sets, step:1, min:1, onChange:function(v){setSwapRec({sets:v});}})),
+            h("div",null,
+              h("label",{style:{fontFamily:sansCond,fontSize:10.5,color:C.taupe}}, "Repos (s)"),
+              h(Stepper,{value:swapPending.rec.rest, step:5, min:15, onChange:function(v){setSwapRec({rest:v});}}))),
+          h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}},
+            h("div",null,
+              h("label",{style:{fontFamily:sansCond,fontSize:10.5,color:C.taupe}}, "Reps min"),
+              h(Stepper,{value:swapPending.rec.min, step:1, min:1, onChange:function(v){setSwapRec({min:v, max:Math.max(v, swapPending.rec.max)});}})),
+            h("div",null,
+              h("label",{style:{fontFamily:sansCond,fontSize:10.5,color:C.taupe}}, "Reps max"),
+              h(Stepper,{value:swapPending.rec.max, step:1, min:swapPending.rec.min, onChange:function(v){setSwapRec({max:v});}})))
+        ) : null,
         h("div",{style:{display:"flex",gap:8}},
-          h("button",{onClick:confirmSwap, style:{flex:1,padding:"8px 0",borderRadius:6,background:C.green,color:C.shroudDeep,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Remplacer"),
+          h("button",{onClick:confirmSwap, style:{flex:1,padding:"8px 0",borderRadius:6,background:C.green,color:C.ink,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Remplacer"),
           h("button",{onClick:cancelSwap, style:{flex:1,padding:"8px 0",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:14}}, "Annuler")))
       : h("div",null,
         h("div",{style:{fontSize:13.5,color:C.bone,lineHeight:1.5,marginBottom:10}}, "Aucune autre machine disponible pour "+swapPending.muscle+" pour remplacer "+swapPending.oldName+"."),
@@ -1180,7 +1489,7 @@ function SeanceTab(props) {
           h("div",{style:{fontFamily:sansCond,fontSize:32,fontWeight:700,color:day.accent,lineHeight:1.1}}, day.label),
           h("div",{style:{fontSize:14,color:C.taupe,marginTop:8}}, day.items.length+" exercices · "+day.items.reduce(function(a,b){return a+b.sets;},0)+" séries · ~"+estimateDayMinutes(day,exMap)+" min estimées"),
           h("button",{onClick:function(){ start(day.key, deloadForNextStart); setDeloadForNextStart(false); },
-            style:{width:"100%",marginTop:20,padding:"12px 0",borderRadius:6,background:deloadForNextStart?C.steel:C.pin,color:C.shroudDeep,fontFamily:sansCond,fontSize:16,fontWeight:700,border:"none"}},
+            style:{width:"100%",marginTop:20,padding:"12px 0",borderRadius:6,background:deloadForNextStart?C.steel:C.pin,color:C.ink,fontFamily:sansCond,fontSize:16,fontWeight:700,border:"none"}},
             (deloadForNextStart?"Commencer "+day.label+" (décharge)":"Commencer "+day.label)),
           h("button",{onClick:function(){setPickerOpen(!pickerOpen);}, style:{width:"100%",marginTop:8,padding:"8px 0",borderRadius:6,color:C.taupe,fontFamily:sansCond,fontSize:14,border:"1px solid "+C.taupeDim,background:"transparent"}}, "Choisir une autre séance"),
           pickerOpen ? h("div",{style:{marginTop:8,display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}},
@@ -1248,6 +1557,24 @@ function SeanceTab(props) {
     }) }));
     if (startRestTimer) startRestTimer(restSeconds, label);
   }
+  /* Même chose, mais pour la séance libre (kiné) : là, le nombre de séries
+     n'est pas fixé par un programme (voir addFreeformSet) — donc si on est
+     déjà sur la dernière série, il n'y a pas de "série suivante" où coller.
+     Plutôt que de ne rien faire, on en crée une nouvelle avec les mêmes
+     valeurs avant de démarrer le repos, comme si on avait fait "+ Série"
+     puis recopié dessus en un seul geste. */
+  function fillNextFreeform(idx, si, restSeconds, label) {
+    var entry = active.entries[idx]; var src = entry.sets[si];
+    var hasNext = si+1 < entry.sets.length;
+    setActive(Object.assign({}, active, { entries: active.entries.map(function(e,i){
+      if (i!==idx) return e;
+      var sets = hasNext
+        ? e.sets.map(function(s,j){ return j!==si+1 ? s : Object.assign({}, src); })
+        : e.sets.concat([Object.assign({}, src)]);
+      return Object.assign({}, e, { sets: sets });
+    }) }));
+    if (startRestTimer) startRestTimer(restSeconds, label);
+  }
 
   if (active.freeform) {
     var addedIds = active.entries.map(function(e){return e.ex;});
@@ -1289,6 +1616,8 @@ function SeanceTab(props) {
                   h(Stepper,{value:s.weight, onChange:function(v){updateSetAndMaybeRest(idx,si,"weight",v,90,ex?ex.name:"Repos");}, step: ex?ex.inc:2.5, suffix:"kg", placeholder:"kg", wide:true}),
                   h(Stepper,{value:s.reps, onChange:function(v){updateSetAndMaybeRest(idx,si,"reps",v,90,ex?ex.name:"Repos");}, step:1, suffix:"rep", placeholder:"rep"}),
                   ex && ex.unilateral ? h(SideToggle,{value:s.weakSide, onChange:function(v){updateSet(idx,si,"weakSide",v);}}) : null,
+                  h("button",{onClick:function(){fillNextFreeform(idx,si,90,ex?ex.name:"Repos");}, title:"Recopier sur la série suivante (créée si besoin) et démarrer le repos",
+                    style:{padding:6,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent"}}, h(Icon,{name:"chevronDown",size:14})),
                   h("button",{onClick:function(){removeFreeformSet(idx,si);}, title:"Supprimer cette série",
                     style:{padding:6,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent"}}, h(Icon,{name:"x",size:14}))),
                 h("div",{style:{display:"flex",alignItems:"center",gap:8,paddingLeft:38}},
@@ -1304,8 +1633,8 @@ function SeanceTab(props) {
           style:{width:"100%",padding:"8px",borderRadius:6,background:C.shroudDeep,color:C.bone,border:"1px solid "+C.taupeDim,fontFamily:sansBody,fontSize:14}},
           h("option",{value:""}, "Ajouter une machine…"),
           available.map(function(e){ return h("option",{key:e.id,value:e.id}, e.name+" — "+e.muscle); })),
-        h("button",{onClick:addFreeformExercise, style:{width:"100%",padding:"10px 0",borderRadius:6,background:C.pin,color:C.shroudDeep,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Ajouter")),
-      h("button",{onClick:finishSession, style:{width:"100%",marginTop:8,padding:"14px 0",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:C.green,color:C.shroudDeep,fontFamily:sansCond,fontSize:16,fontWeight:700,border:"none"}},
+        h("button",{onClick:addFreeformExercise, style:{width:"100%",padding:"10px 0",borderRadius:6,background:C.pin,color:C.ink,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Ajouter")),
+      h("button",{onClick:finishSession, style:{width:"100%",marginTop:8,padding:"14px 0",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:C.green,color:C.ink,fontFamily:sansCond,fontSize:16,fontWeight:700,border:"none"}},
         h(Icon,{name:"check",size:18}), "Enregistrer la séance"),
       h("p",{style:{fontSize:12.5,color:C.taupe,marginTop:8,lineHeight:1.5}}, "Les séries vides ou les exercices sans série sont ignorés à l'enregistrement. Cette séance est suivie dans l'historique et alimente la progression de charge de chaque machine, exactement comme une séance normale.")
     );
@@ -1368,7 +1697,7 @@ function SeanceTab(props) {
           })
         ));
     }),
-    h("button",{onClick:finishSession, style:{width:"100%",marginTop:8,padding:"14px 0",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:C.green,color:C.shroudDeep,fontFamily:sansCond,fontSize:16,fontWeight:700,border:"none"}},
+    h("button",{onClick:finishSession, style:{width:"100%",marginTop:8,padding:"14px 0",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:C.green,color:C.ink,fontFamily:sansCond,fontSize:16,fontWeight:700,border:"none"}},
       h(Icon,{name:"check",size:18}), "Enregistrer la séance"),
     h("p",{style:{fontSize:12.5,color:C.taupe,marginTop:8,lineHeight:1.5}}, "Les séries vides sont ignorées. Si tu finis systématiquement à 3+ reps en réserve, l'app monte la charge plus vite.")
   );
@@ -1392,7 +1721,7 @@ function Slider(props){
       style:{width:"100%", accentColor:C.pin}}));
 }
 function ProgrammeTab(props){
-  var program=props.program, exercises=props.exercises;
+  var program=props.program, exercises=props.exercises, profile=props.profile||{};
   var exMap = {}; exercises.forEach(function(e){exMap[e.id]=e;});
 
   return h("div", null,
@@ -1421,18 +1750,88 @@ function ProgrammeTab(props){
    (le son n'était pas réglable).
    ============================================================ */
 function OptionsTab(props){
-  var profile=props.profile, setProfile=props.setProfile, program=props.program, exercises=props.exercises;
-  var _perm = useState(typeof Notification!=="undefined" ? Notification.permission : "unsupported");
-  var notifPerm=_perm[0], setNotifPerm=_perm[1];
+  var profile=props.profile, setProfile=props.setProfile, program=props.program, exercises=props.exercises, bodyLog=props.bodyLog||[], persistConfig=props.persistConfig;
   function set(patch){ setProfile(Object.assign({}, profile, patch)); }
+  var _rp = useState(false), reapplyPrompt=_rp[0], setReapplyPrompt=_rp[1];
 
   var exMap = {}; exercises.forEach(function(e){exMap[e.id]=e;});
   var avgSessionMinutes = program.length
     ? Math.round(program.reduce(function(a,d){return a+estimateDayMinutes(d, exMap);},0) / program.length)
     : 0;
   var nut = computeNutrition(profile, avgSessionMinutes);
+  /* Repère masse maigre pour la cible protéique — voir la Section "Cible
+     calorique et protéique" plus bas. On ne redéfinit PAS ce que veut dire
+     proteinPerKg (toujours g/kg de poids total, comme depuis le début) :
+     ça reste un simple comparatif informatif, jamais une réinterprétation
+     silencieuse d'une valeur déjà réglée par l'utilisateur. % masse grasse :
+     priorité au champ manuel (bodyFatPctManual) si renseigné, sinon le plus
+     récent bodyLog qui a un fatKg (ex. scan Boditrax) — le % est recalculé
+     sur le poids ACTUEL du profil plutôt que celui du jour du scan, pour
+     rester à jour si le poids a bougé depuis. */
+  var latestFatEntry = bodyLog.filter(function(b){return b.fatKg!=null && b.weightKg;})
+    .sort(function(a,b){ return (a.date||"")<(b.date||"") ? 1 : -1; })[0];
+  var bfPct = profile.bodyFatPctManual!=null ? profile.bodyFatPctManual
+    : (latestFatEntry ? latestFatEntry.fatKg/latestFatEntry.weightKg*100 : null);
+  var leanKg = (bfPct!=null && profile.weightKg) ? profile.weightKg*(1-bfPct/100) : null;
+  // Live preview from DER + pas + séances, computed regardless of the
+  // active target mode, so that changing poids/taille/DER/pas/séances
+  // always visibly moves a number on this screen — even in "Cible fixe"
+  // mode, which otherwise ignores those fields entirely by design (the
+  // whole point of a fixed target is that it does NOT move on its own).
+  // Shown only when it differs from the main display (i.e. not already
+  // in "steps" mode) so we don't render the same numbers twice, and it
+  // never silently touches profile.manualTargetKcal/manualProteinG —
+  // adopting it is an explicit action via the button below.
+  var stepsNut = (profile.targetMode !== "steps")
+    ? computeNutrition(Object.assign({}, profile, {targetMode:"steps"}), avgSessionMinutes)
+    : null;
+  /* Choisir un objectif applique tout de suite ses réglages nutrition
+     (déficit/protéines/activité) ET repasse en mode "Déficit manuel"
+     (targetMode:"deficit") si besoin — sinon, en mode "Cible fixe", la
+     cible affichée reste verrouillée sur manualTargetKcal/manualProteinG et
+     changer d'objectif n'a AUCUN effet visible (bug remonté le 4 sept.
+     2026 : "ça change rien... sur la nutrition" — le déficit/protéines/
+     activité changeaient bien en arrière-plan, mais le mode "Cible fixe"
+     les ignore complètement). Choix confirmé avec l'utilisateur : basculer
+     automatiquement, plutôt que garder "Cible fixe" et laisser le
+     changement invisible tant qu'on n'a pas changé de mode à la main.
+     Ne touche PAS le programme déjà en place (confirmé après coup, toujours
+     voulu) : les nouveaux repères sets/reps/repos par palier ne s'appliquent
+     qu'aux PROCHAINS ajouts ou remplacements de machine (voir GOAL_PRESETS/
+     tierDefaultsForGoal) — jamais une réécriture silencieuse d'un réglage
+     déjà en place — SAUF si tu confirmes explicitement via le bouton
+     "Appliquer aux séances actuelles" proposé juste après (voir
+     reapplyPrompt/applyGoalToProgram ci-dessous) : demandé le 4 sept. 2026
+     après avoir d'abord gardé l'ancien comportement (jamais toucher
+     l'existant) — l'utilisateur a changé d'avis et veut pouvoir tout
+     réappliquer d'un coup, tant que ça reste une action confirmée et pas
+     automatique. */
+  function applyGoal(g){ set(Object.assign({goal:g, targetMode:"deficit", manualTarget:false}, goalPreset(g).nutrition)); setReapplyPrompt(true); }
+  function reapplyGoalToProgram(){ persistConfig(exercises, applyGoalToProgram(program, exercises, profile.goal)); setReapplyPrompt(false); }
+  var totalItems = program.reduce(function(a,d){return a+d.items.length;},0);
 
   return h("div", null,
+    h(Section, {title:"Objectif d'entraînement"},
+      h("p",{style:{fontSize:12,color:C.taupe,lineHeight:1.6,marginBottom:10}},
+        "Détermine le déficit/protéines/activité par défaut ci-dessous (et repasse la cible en mode \"Déficit manuel\" si tu étais en \"Cible fixe\", sinon le changement ne se verrait pas), et les séries/reps/repos proposés pour les PROCHAINES machines ajoutées ou remplacées (voir Séance > icône de remplacement, et Programme > ajouter un exercice). Ne modifie les machines déjà en place que si tu le confirmes ci-dessous après avoir changé d'objectif."),
+      h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8, marginBottom: reapplyPrompt?10:0}},
+        GOALS.map(function(g){ var on = (profile.goal||"loss_hyper")===g.k; return h("button",{key:g.k, onClick:function(){applyGoal(g.k);},
+          style:{padding:"9px 8px",borderRadius:6,background:on?C.pin:C.shroud,color:on?C.ink:C.taupe,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:12.5,fontWeight:600}}, g.label); })),
+      reapplyPrompt ? h("div",{style:{borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.pin}},
+        h("div",{style:{fontSize:13,color:C.bone,lineHeight:1.5,marginBottom:10}},
+          "Appliquer aussi les séries/reps/repos de \""+((GOALS.find(function(g){return g.k===profile.goal;})||{}).label||"")+"\" aux "+totalItems+" exercices déjà dans ton programme actuel ? Ça remplace le réglage de CHAQUE machine par le repère de son palier (poly/semi/isolation) pour ce nouvel objectif — écrase donc les ajustements que tu as pu faire à la main entre-temps."),
+        h("div",{style:{display:"flex",gap:8}},
+          h("button",{onClick:reapplyGoalToProgram, style:{flex:1,padding:"9px 0",borderRadius:6,background:C.pin,color:C.ink,fontFamily:sansCond,fontSize:13.5,fontWeight:700,border:"none"}}, "Appliquer aux séances actuelles"),
+          h("button",{onClick:function(){setReapplyPrompt(false);}, style:{flex:1,padding:"9px 0",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:13.5}}, "Non merci"))
+      ) : null
+    ),
+
+    h(Section, {title:"Apparence"},
+      h("div",{style:{display:"flex",gap:8}},
+        [{k:"dark",label:"Sombre"},{k:"light",label:"Clair"}].map(function(t){ var on = (profile.theme||"dark")===t.k; return h("button",{key:t.k, onClick:function(){set({theme:t.k});},
+          style:{flex:1,padding:"9px 0",borderRadius:6,background:on?C.pin:C.shroud,color:on?C.ink:C.taupe,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:13,fontWeight:600}}, t.label); }))
+    ),
+
     h(Section, {title:"Réglages personnels"},
       h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}},
         h("div",null,
@@ -1441,6 +1840,11 @@ function OptionsTab(props){
         h("div",null,
           h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe}}, "Taille (cm)"),
           h(Stepper,{value:profile.heightCm, step:1, min:120, suffix:"cm", onChange:function(v){set({heightCm:v});}}))),
+      h("div",{style:{marginBottom:10}},
+        h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe,display:"block",marginBottom:4}}, "% masse grasse (optionnel — écrase le dernier scan Boditrax loggé si renseigné)"),
+        h(Stepper,{value:profile.bodyFatPctManual, step:0.5, min:3, suffix:"%", onChange:function(v){set({bodyFatPctManual:v});}, placeholder:"auto"}),
+        h("p",{style:{fontSize:11,color:C.taupe,lineHeight:1.5,marginTop:4,marginBottom:0}},
+          "Sert uniquement à comparer ta cible protéique à un repère basé sur la masse maigre (voir plus bas) — laisse vide pour utiliser automatiquement ton dernier bodyLog avec un % masse grasse (ex. scan Boditrax).")),
       h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}},
         h("div",null,
           h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe}}, "Âge"),
@@ -1449,7 +1853,7 @@ function OptionsTab(props){
           h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe,display:"block",marginBottom:4}}, "Sexe (pour DER/kcal)"),
           h("div",{style:{display:"flex",gap:8}},
             ["M","F"].map(function(s){ var on=profile.sex===s; return h("button",{key:s, onClick:function(){set({sex:s});},
-              style:{flex:1,padding:"7px 0",borderRadius:6,background:on?C.pin:C.shroud,color:on?C.shroudDeep:C.taupe,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:13}}, s==="M"?"Homme":"Femme"); })))),
+              style:{flex:1,padding:"7px 0",borderRadius:6,background:on?C.pin:C.shroud,color:on?C.ink:C.taupe,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:13}}, s==="M"?"Homme":"Femme"); })))),
       h("div",{style:{marginBottom:4}},
         h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe,display:"block",marginBottom:4}}, "Séances par semaine (min–max)"),
         h("div",{style:{display:"flex",gap:8,alignItems:"center"}},
@@ -1485,7 +1889,7 @@ function OptionsTab(props){
         [{k:"manual",label:"Cible fixe"},{k:"deficit",label:"Déficit manuel"},{k:"steps",label:"DER + pas + séances"}].map(function(o){
           var on = (profile.targetMode||"manual")===o.k;
           return h("button",{key:o.k, onClick:function(){set({targetMode:o.k, manualTarget:o.k==="manual"});},
-            style:{padding:"7px 10px",borderRadius:6,background:on?C.pin:C.shroud,color:on?C.shroudDeep:C.taupe,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:12.5,fontWeight:600}}, o.label);
+            style:{padding:"7px 10px",borderRadius:6,background:on?C.pin:C.shroud,color:on?C.ink:C.taupe,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:12.5,fontWeight:600}}, o.label);
         })),
 
       profile.targetMode==="manual" ? h("div",{style:{display:"flex",flexDirection:"column",gap:10,marginBottom:4}},
@@ -1512,7 +1916,27 @@ function OptionsTab(props){
         h(StatCard,{label:"Glucides", value:nut.carbG+" g"}),
         nut.breakdown ? h(StatCard,{label:"Pas (~"+(profile.dailySteps||0)+"/j)", value:nut.breakdown.stepsKcal+" kcal"}) : null,
         nut.breakdown ? h(StatCard,{label:"Entraînement (~"+nut.breakdown.avgSessionMinutes+" min × "+nut.breakdown.avgSessions.toFixed(1)+"/sem)", value:nut.breakdown.trainingKcal+" kcal"}) : null
-      ) : h("div",{style:{fontSize:13,color:C.rust,marginTop:10}}, "Renseigne taille + sexe (ou une DER mesurée) pour calculer tes cibles.")
+      ) : h("div",{style:{fontSize:13,color:C.rust,marginTop:10}}, "Renseigne taille + sexe (ou une DER mesurée) pour calculer tes cibles."),
+
+      (nut && leanKg) ? h("div",{style:{marginTop:10,padding:"10px 12px",borderRadius:8,background:C.shroudDeep,border:"1px solid "+C.taupeDim}},
+        h("div",{style:{fontSize:12,color:C.taupe,lineHeight:1.6}},
+          "Ta cible actuelle de "+nut.proteinG+" g équivaut à "+(nut.proteinG/leanKg).toFixed(2)+" g/kg de masse maigre estimée ("+leanKg.toFixed(1)+" kg, à partir de "+bfPct.toFixed(1)+"% de masse grasse"+(profile.bodyFatPctManual!=null?" saisi manuellement":" — dernier scan Boditrax loggé")+"). "+
+          "Repère pour la recomposition (revue narrative NSCA, Barakat et al. 2020 — preuve de niveau modéré, pas un essai contrôlé) : 2,6 à 3,5 g/kg de masse maigre. "+
+          ((nut.proteinG/leanKg) < 2.6 ? "Tu es en dessous de ce repère — augmenter le curseur \"Protéines cible\" ci-dessus le rapprocherait de cette fourchette."
+            : (nut.proteinG/leanKg) > 3.5 ? "Tu es au-dessus de ce repère — pas dangereux en soi, mais probablement inutile d'aller plus haut."
+            : "Tu es déjà dans cette fourchette, rien à changer."))
+      ) : null,
+
+      stepsNut ? h("div",{style:{marginTop:14,padding:"10px 12px",borderRadius:8,background:C.shroudDeep,border:"1px solid "+C.taupeDim}},
+        h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,marginBottom:8}},
+          "Estimation automatique (DER + pas + séances) — se recalcule dès que tu changes poids, taille, DER, pas ou séances/semaine ci-dessus :"),
+        h("div",{style:{display:"flex",flexWrap:"wrap",gap:8,marginBottom:profile.targetMode!=="manual"?0:10}},
+          h(StatCard,{label:"Cible / jour", value:stepsNut.target+" kcal", color:C.pin}),
+          h(StatCard,{label:"Protéines", value:stepsNut.proteinG+" g", color:C.green})),
+        profile.targetMode==="manual" ? h("button",{onClick:function(){set({manualTargetKcal:stepsNut.target, manualProteinG:stepsNut.proteinG});},
+          style:{padding:"7px 14px",borderRadius:6,background:C.shroud,color:C.bone,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:12.5,fontWeight:600}},
+          "Reprendre cette estimation comme cible fixe") : null
+      ) : null
     ),
 
     h(Section, {title:"Son du chrono de repos"},
@@ -1520,19 +1944,8 @@ function OptionsTab(props){
         display: Math.round((profile.alertVolume!=null?profile.alertVolume:1)*100)+"%",
         onChange:function(v){set({alertVolume:v});}}),
       h("button",{onClick:function(){restAlert(profile.alertVolume!=null?profile.alertVolume:1);},
-        style:{padding:"9px 16px",borderRadius:6,background:C.shroud,color:C.bone,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:13.5,fontWeight:600,marginBottom:14}},
-        "Tester le son"),
-      h("div",{style:{padding:"10px 12px",borderRadius:8,background:C.shroudDeep,border:"1px solid "+C.taupeDim}},
-        h("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}},
-          h("span",{style:{fontSize:13,color:C.bone}}, "Notifications système"),
-          h("span",{style:{fontSize:12,fontWeight:600,color: notifPerm==="granted"?C.green:notifPerm==="denied"?C.rust:C.taupe}},
-            notifPerm==="granted"?"Activées":notifPerm==="denied"?"Refusées":notifPerm==="unsupported"?"Non supportées":"Non activées")),
-        notifPerm!=="granted" && notifPerm!=="denied" && notifPerm!=="unsupported" ? h("button",{
-          onClick:function(){ ensureNotifyPermission().then(function(){ setNotifPerm(Notification.permission); }); },
-          style:{padding:"7px 14px",borderRadius:6,background:C.pin,color:C.shroudDeep,border:"none",fontFamily:sansCond,fontSize:13,fontWeight:700}}, "Activer") : null,
-        h("p",{style:{fontSize:11.5,color:C.taupe,lineHeight:1.6,marginTop:8,marginBottom:0}},
-          "Important : un navigateur mobile met en pause les pages en arrière-plan, et encore plus quand l'écran est verrouillé. Le son + la notification augmentent les chances que l'alerte passe si tu changes d'appli brièvement, mais rien ne peut garantir qu'elle sonnera si le téléphone reste verrouillé ou l'appli fermée longtemps — ce n'est pas possible avec une application web, seulement avec une appli native. Le mieux reste de garder l'écran allumé/l'appli ouverte pendant le repos.")
-      )
+        style:{padding:"9px 16px",borderRadius:6,background:C.shroud,color:C.bone,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:13.5,fontWeight:600}},
+        "Tester le son")
     )
   );
 }
@@ -1577,29 +1990,24 @@ function HistoriqueTab(props){
 /* ============================================================
    MACHINES
    ============================================================ */
-/* Bug fixé : ce formulaire ne demandait pas le palier poly/semi/isolation
-   (`order`) d'une nouvelle machine. La machine ajoutée se retrouvait donc
-   avec order=undefined pour toujours (rien dans l'app ne le complétait
-   après coup) : plus de badge numéroté affiché (OrderBadge n'affiche rien
-   sans order) et un tri "isolation par défaut" (exerciseOrderTier renvoie
-   3 si order est absent) qui pouvait décaler la machine à la fin de la
-   séance même si elle remplaçait un exercice polyarticulaire. D'où le
-   'ordre changé + badges disparus pour toujours' : order:2 (semi-isolation)
-   ci-dessous n'est qu'un défaut neutre — le choix explicite est ce qui
-   corrige le bug, pas la valeur par défaut elle-même. */
+/* Palier poly/semi/isolation : déterminé par l'app (voir inferOrderTier),
+   pas demandé à l'utilisateur — ManualAdd ne montre plus ce sélecteur à la
+   création. Il reste ici comme correcteur manuel, utilisable depuis le
+   badge en séance et depuis "Matériel disponible" (onglet Machines), pour
+   les cas où la devinette automatique tombe à côté. */
 function OrderTierPicker(props){
   var value=props.value, onChange=props.onChange;
   return h("div",{style:{display:"flex",gap:6}}, [1,2,3].map(function(t){
     var on = value===t;
     return h("button",{key:t, onClick:function(){onChange(t);}, title:ORDER_TIER_LABEL[t],
-      style:{flex:1,padding:"8px 4px",borderRadius:6,background:on?C.pin:C.shroud,color:on?C.shroudDeep:C.taupe,
+      style:{flex:1,padding:"8px 4px",borderRadius:6,background:on?C.pin:C.shroud,color:on?C.ink:C.taupe,
         border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:11.5,fontWeight:600,lineHeight:1.3}},
       t+" — "+(t===1?"Poly":t===2?"Semi-iso":"Isolation"));
   }));
 }
 function ManualAdd(props){
   var onAdd = props.onAdd;
-  var _d = useState({name:"",brand:"",muscle:"Dos",kind:"machine",inc:2.5,unilateral:false,order:2}), d=_d[0], setD=_d[1];
+  var _d = useState({name:"",brand:"",muscle:"Dos",kind:"machine",inc:2.5,unilateral:false}), d=_d[0], setD=_d[1];
   return h("div",{style:{borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.taupeDim}},
     h(TextField,{value:d.name, placeholder:"Nom (ex. Tirage vertical)", onChange:function(v){setD(Object.assign({},d,{name:v}));}}),
     h(TextField,{value:d.brand, placeholder:"Marque (ex. Technogym)", onChange:function(v){setD(Object.assign({},d,{brand:v}));}}),
@@ -1607,25 +2015,26 @@ function ManualAdd(props){
       MUSCLES.map(function(m){ return h("option",{key:m,value:m},m); })),
     h("div",{style:{display:"flex",gap:8,marginBottom:8}},
       Object.keys(KIND_LABEL).map(function(k){ var on=d.kind===k; return h("button",{key:k, onClick:function(){setD(Object.assign({},d,{kind:k}));},
-        style:{flex:1,padding:"8px 0",borderRadius:6,background:on?C.pin:C.shroud,color:on?C.shroudDeep:C.taupe,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:12.5,fontWeight:600}}, KIND_LABEL[k]); })),
+        style:{flex:1,padding:"8px 0",borderRadius:6,background:on?C.pin:C.shroud,color:on?C.ink:C.taupe,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:12.5,fontWeight:600}}, KIND_LABEL[k]); })),
     h("label",{style:{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.bone,marginBottom:10}},
       h("input",{type:"checkbox", checked:d.unilateral, onChange:function(e){setD(Object.assign({},d,{unilateral:e.target.checked}));}}),
       "Exercice unilatéral (un bras / une jambe à la fois)"),
-    h("div",{style:{marginBottom:10}},
-      h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe,display:"block",marginBottom:4}}, "Ordre dans la séance"),
-      h(OrderTierPicker,{value:d.order, onChange:function(v){setD(Object.assign({},d,{order:v}));}})),
     h("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:12}},
       h("span",{style:{fontFamily:sansCond,fontSize:13,color:C.taupe}}, "Plus petit incrément"),
       h(Stepper,{value:d.inc, step:0.5, min:0.5, suffix:"kg", onChange:function(v){setD(Object.assign({},d,{inc:v}));}})),
-    h("button",{onClick:function(){ if (d.name.trim()) onAdd(Object.assign({},d,{name:d.name.trim(), brand:d.brand.trim()||"—"})); },
-      style:{width:"100%",padding:"10px 0",borderRadius:6,background:C.pin,color:C.shroudDeep,fontFamily:sansCond,fontSize:15,fontWeight:700,border:"none"}}, "Ajouter au matériel"));
+    h("p",{style:{fontSize:11.5,color:C.taupe,lineHeight:1.5,marginBottom:10}},
+      "Le palier poly/semi/isolation est déterminé automatiquement à partir du nom — modifiable ensuite via le petit rond numéroté en séance ou dans la liste ci-dessous si besoin."),
+    h("button",{onClick:function(){ if (d.name.trim()) onAdd(Object.assign({},d,{name:d.name.trim(), brand:d.brand.trim()||"—", order: inferOrderTier(d.name, d.muscle)})); },
+      style:{width:"100%",padding:"10px 0",borderRadius:6,background:C.pin,color:C.ink,fontFamily:sansCond,fontSize:15,fontWeight:700,border:"none"}}, "Ajouter au matériel"));
 }
 function AddToDay(props){
-  var day=props.day, exercises=props.exercises, program=props.program, persistConfig=props.persistConfig;
+  var day=props.day, exercises=props.exercises, program=props.program, persistConfig=props.persistConfig, goal=props.goal;
   var _p = useState(""), pick=_p[0], setPick=_p[1];
   function add(){
     if (!pick) return;
-    persistConfig(exercises, program.map(function(pd){ return pd.key!==day.key ? pd : Object.assign({},pd,{items: pd.items.concat([{ex:pick, sets:3, min:10, max:15, rest:90}])}); }));
+    var ex = exercises.find(function(e){return e.id===pick;});
+    var tierDef = tierDefaultsForGoal(goal, ex ? exerciseOrderTier(ex) : 2);
+    persistConfig(exercises, program.map(function(pd){ return pd.key!==day.key ? pd : Object.assign({},pd,{items: pd.items.concat([{ex:pick, sets:tierDef.sets, min:tierDef.min, max:tierDef.max, rest:tierDef.rest}])}); }));
     setPick("");
   }
   return h("div",{style:{padding:"12px",display:"flex",gap:8,borderTop:"1px solid "+C.shroudDeep}},
@@ -1633,10 +2042,10 @@ function AddToDay(props){
       style:{flex:1,padding:"8px",borderRadius:6,background:C.shroudDeep,color:C.bone,border:"1px solid "+C.taupeDim,fontFamily:sansBody,fontSize:14}},
       h("option",{value:""}, "Ajouter un exercice…"),
       exercises.map(function(e){ return h("option",{key:e.id,value:e.id}, e.name+" — "+e.muscle); })),
-    h("button",{onClick:add, style:{padding:"0 16px",borderRadius:6,background:C.pin,color:C.shroudDeep,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Ajouter"));
+    h("button",{onClick:add, style:{padding:"0 16px",borderRadius:6,background:C.pin,color:C.ink,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Ajouter"));
 }
 function MachinesTab(props){
-  var exercises=props.exercises, program=props.program, persistConfig=props.persistConfig, sessions=props.sessions, updateExerciseInc=props.updateExerciseInc;
+  var exercises=props.exercises, program=props.program, persistConfig=props.persistConfig, sessions=props.sessions, updateExerciseInc=props.updateExerciseInc, goal=props.goal;
   var exMapForDuration = {}; exercises.forEach(function(e){ exMapForDuration[e.id]=e; });
   var _m=useState(null), mode=_m[0], setMode=_m[1];
   var _e=useState(null), editDay=_e[0], setEditDay=_e[1];
@@ -1656,7 +2065,7 @@ function MachinesTab(props){
   }
   function handleAdd(raw){
     var newEx = Object.assign({}, raw, { id: "u"+Date.now() });
-    var placement = proposePlacement(newEx, exercises, program);
+    var placement = proposePlacement(newEx, exercises, program, goal);
     persistConfig(exercises.concat([newEx]), program);
     setMode(null);
     setProposal({ newEx: newEx, placement: placement });
@@ -1689,13 +2098,13 @@ function MachinesTab(props){
       h("div",{style:{fontSize:13,color:C.taupe,lineHeight:1.5,marginBottom:10}},
         proposal.newEx.muscle+" est actuellement à "+proposal.placement.current+" séries/semaine"+(proposal.placement.current<VOL_MIN?" — en dessous de la zone utile.":".")+" Proposition : "+proposal.placement.setsEach+" séries dans "+proposal.placement.targetLabels.join(" et ")+"."),
       h("div",{style:{display:"flex",gap:8}},
-        h("button",{onClick:acceptPlacement, style:{flex:1,padding:"8px 0",borderRadius:6,background:C.green,color:C.shroudDeep,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Ajouter aux séances"),
+        h("button",{onClick:acceptPlacement, style:{flex:1,padding:"8px 0",borderRadius:6,background:C.green,color:C.ink,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Ajouter aux séances"),
         h("button",{onClick:function(){setProposal(null);}, style:{flex:1,padding:"8px 0",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:14}}, "Garder en réserve"))) : null,
 
     h(Section, {title:"Ajouter du matériel"},
       h("button",{onClick:function(){setMode(mode==="manual"?null:"manual");},
         style:{width:"100%",padding:"12px 0",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",gap:8,
-          background:mode==="manual"?C.pin:C.shroudDeep, color:mode==="manual"?C.shroudDeep:C.bone, border:"1px solid "+C.taupeDim,
+          background:mode==="manual"?C.pin:C.shroudDeep, color:mode==="manual"?C.ink:C.bone, border:"1px solid "+C.taupeDim,
           fontFamily:sansCond,fontSize:14.5,fontWeight:600, marginBottom:12}},
         h(Icon,{name:"plus",size:16}), "Ajouter une machine, une poulie ou un poids libre"),
       mode==="manual" ? h(ManualAdd,{onAdd:handleAdd}) :
@@ -1740,7 +2149,7 @@ function MachinesTab(props){
                   h("span",{style:{color:C.taupe}}, "–"),
                   h(Stepper,{value:it.max, min:1, onChange:function(v){upd({max:Math.max(it.min,v)});}})));
             }),
-            h(AddToDay,{day:d, exercises:exercises, program:program, persistConfig:persistConfig})
+            h(AddToDay,{day:d, exercises:exercises, program:program, persistConfig:persistConfig, goal:goal})
           ) : null);
       })),
 
@@ -1798,14 +2207,20 @@ function BalanceRow(props){
 }
 function AnalyseTab(props){
   var sessions=props.sessions, exercises=props.exercises, exMap=props.exMap, program=props.program,
-      persistConfig=props.persistConfig, bodyLog=props.bodyLog, addBodyEntry=props.addBodyEntry;
+      persistConfig=props.persistConfig, bodyLog=props.bodyLog, addBodyEntry=props.addBodyEntry, goal=props.goal;
   var done = sessions.filter(function(s){return s.done;});
   var _f = useState(null), focus=_f[0], setFocus=_f[1];
   var _w = useState(""), wInput=_w[0], setWInput=_w[1];
   var _ex = useState(null), exportMsg=_ex[0], setExportMsg=_ex[1];
   var _sw = useState({}), swapDone=_sw[0], setSwapDone=_sw[1];
+  /* Même repère séries/reps/repos que le remplacement fait depuis l'onglet
+     Séance (voir swapRecommendation) — avant ce correctif, remplacer une
+     machine bloquée depuis ici gardait l'ancien réglage tel quel, même sur
+     un palier différent (poly → isolation par ex.), ce qui n'a pas de sens. */
   function doSwap(oldExId, newEx){
-    persistConfig(exercises, applySwap(oldExId, newEx.id, program));
+    var oldEx = exMap[oldExId];
+    var rec = oldEx ? swapRecommendation(oldEx, newEx, program, goal) : null;
+    persistConfig(exercises, applySwap(oldExId, newEx.id, program, rec));
     setSwapDone(Object.assign({}, swapDone, (function(){ var o={}; o[oldExId]=newEx.name; return o; })()));
   }
   var last28 = done.filter(function(s){ return (Date.now()-new Date(s.date)) < 28*864e5; });
@@ -1942,7 +2357,7 @@ function AnalyseTab(props){
           onChange:function(e){setWInput(e.target.value);},
           style:{flex:1,padding:"8px 12px",borderRadius:6,background:C.shroud,color:C.bone,border:"1px solid "+C.taupeDim,fontFamily:sansBody,fontSize:15,outline:"none"}}),
         h("button",{onClick:function(){ var v=parseFloat(wInput); if(!isNaN(v)){ addBodyEntry({weightKg:v}); setWInput(""); } },
-          style:{padding:"0 16px",borderRadius:6,background:C.steel,color:C.shroudDeep,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Ajouter")),
+          style:{padding:"0 16px",borderRadius:6,background:C.steel,color:C.ink,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Ajouter")),
       h("p",{style:{fontSize:12,color:C.taupe,marginTop:8,lineHeight:1.5}}, "Pèse-toi dans les mêmes conditions (à jeun, le matin) — regarde la tendance sur 2–3 semaines, pas une pesée isolée : le poids bouge avec l'eau et la digestion.")),
 
     h(Section,{title:"Sortir les données"},
@@ -1961,6 +2376,21 @@ function App(props){
   var _tab = useState("seance"), tab=_tab[0], setTab=_tab[1];
   var _st = useState(initial), state=_st[0], setStateRaw=_st[1];
   var _sync = useState(initial ? "local" : "saving"), syncStatus=_sync[0], setSyncStatus=_sync[1];
+  /* Mute l'objet C partagé AVANT tout rendu de cette passe — chaque
+     composant enfant lit C.xxx pendant SON rendu, donc il faut que les
+     bonnes valeurs soient déjà en place quand ils s'exécutent, pas après
+     coup dans un useEffect (qui tournerait trop tard, après un premier
+     rendu avec les mauvaises couleurs). Voir Options > Apparence. */
+  applyTheme(state.profile.theme);
+  useEffect(function(){
+    try {
+      var isLight = state.profile.theme === "light";
+      document.documentElement.setAttribute("data-theme", isLight ? "light" : "dark");
+      // Teinte de la barre système sur la version PWA (absent sur l'artifact, no-op alors).
+      var meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.setAttribute("content", isLight ? C_LIGHT.shroudDeep : C_DARK.shroudDeep);
+    } catch (e) {}
+  }, [state.profile.theme]);
 
   var setState = useCallback(function(patch){
     setStateRaw(function(prev){
@@ -2073,8 +2503,8 @@ function App(props){
   var TABS = [
     { k:"seance", label:"Séance", icon:"dumbbell" },
     { k:"programme", label:"Programme", icon:"flag" },
-    { k:"historique", label:"Historique", icon:"history" },
     { k:"machines", label:"Machines", icon:"wrench" },
+    { k:"historique", label:"Historique", icon:"history" },
     { k:"analyse", label:"Analyse", icon:"trending" },
     { k:"options", label:"Options", icon:"gear" },
   ];
@@ -2090,12 +2520,12 @@ function App(props){
         active:state.active, setActive:setActive, finishSession:finishSession, startRestTimer:startRestTimer,
         deloadForNextStart:state.deloadForNextStart, setDeloadForNextStart:setDeloadForNextStart,
         snoozeDeload:snoozeDeload, deloadSuggested: !state.active && deloadSuggested, deloadReason:deloadReason,
-        updateExerciseOrder:updateExerciseOrder, updateExerciseInc:updateExerciseInc, persistConfig:persistConfig }) : null,
+        updateExerciseOrder:updateExerciseOrder, updateExerciseInc:updateExerciseInc, persistConfig:persistConfig, goal:state.profile.goal }) : null,
       tab==="programme" ? h(ProgrammeTab,{ program:state.program, exercises:state.exercises, profile:state.profile, setProfile:setProfile }) : null,
       tab==="historique" ? h(HistoriqueTab,{ sessions:state.sessions, exMap:exMap, program:state.program, deleteSession:deleteSession }) : null,
-      tab==="machines" ? h(MachinesTab,{ exercises:state.exercises, program:state.program, persistConfig:persistConfig, sessions:state.sessions, updateExerciseInc:updateExerciseInc }) : null,
-      tab==="analyse" ? h(AnalyseTab,{ sessions:state.sessions, exercises:state.exercises, exMap:exMap, program:state.program, persistConfig:persistConfig, bodyLog:state.bodyLog, addBodyEntry:addBodyEntry }) : null,
-      tab==="options" ? h(OptionsTab,{ profile:state.profile, setProfile:setProfile, program:state.program, exercises:state.exercises }) : null),
+      tab==="machines" ? h(MachinesTab,{ exercises:state.exercises, program:state.program, persistConfig:persistConfig, sessions:state.sessions, updateExerciseInc:updateExerciseInc, goal:state.profile.goal }) : null,
+      tab==="analyse" ? h(AnalyseTab,{ sessions:state.sessions, exercises:state.exercises, exMap:exMap, program:state.program, persistConfig:persistConfig, bodyLog:state.bodyLog, addBodyEntry:addBodyEntry, goal:state.profile.goal }) : null,
+      tab==="options" ? h(OptionsTab,{ profile:state.profile, setProfile:setProfile, program:state.program, exercises:state.exercises, bodyLog:state.bodyLog, persistConfig:persistConfig }) : null),
     h("div",{style:{position:"fixed",bottom:0,left:0,right:0}},
       restTimer ? h(RestTimerBar,{timer:restTimer, onAdjust:adjustRestTimer, onDismiss:stopRestTimer, volume: state.profile.alertVolume}) : null,
       h("nav",{style:{display:"flex",background:C.shroudDeep,borderTop:"1px solid "+C.taupeDim}},
@@ -2127,9 +2557,36 @@ function App(props){
 </script>
 
 <script>
+// v2 (2026-09-04) : le fetch handler du service worker est déjà en
+// network-first (voir service-worker.js), donc une simple réouverture de
+// l'appli va normalement chercher index.html à jour sur GitHub Pages. Le
+// trou restant : sur mobile, l'appli PWA n'est presque jamais "relancée à
+// froid" — l'OS la garde gelée en arrière-plan quand tu changes d'appli,
+// puis la ranime telle quelle (le JS déjà chargé continue de tourner) sans
+// jamais refaire de navigation ni redéclencher la vérif de mise à jour du
+// navigateur. Résultat vu par l'utilisateur : "je dois réinstaller l'appli
+// pour voir mes changements" alors que le vrai problème est juste que la
+// vérif ne se relance jamais toute seule. Deux ajouts pour ça :
+// 1) reg.update() forcé à chaque retour au premier plan (visibilitychange)
+//    — revérifie service-worker.js sur le réseau, indépendamment de tout
+//    cache navigateur, à chaque fois que tu reviens sur l'appli ;
+// 2) reload() automatique une seule fois quand un nouveau service worker
+//    prend le contrôle (controllerchange) — sinon le nouveau code est bien
+//    activé en arrière-plan mais la page déjà ouverte continue de tourner
+//    avec l'ancien JS déjà en mémoire jusqu'à un rechargement.
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", function(){
-    navigator.serviceWorker.register("service-worker.js").catch(function(){});
+    navigator.serviceWorker.register("service-worker.js").then(function(reg){
+      document.addEventListener("visibilitychange", function(){
+        if (document.visibilityState === "visible") reg.update().catch(function(){});
+      });
+    }).catch(function(){});
+    var reloaded = false;
+    navigator.serviceWorker.addEventListener("controllerchange", function(){
+      if (reloaded) return;
+      reloaded = true;
+      window.location.reload();
+    });
   });
 }
 </script>
