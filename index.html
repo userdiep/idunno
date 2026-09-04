@@ -251,7 +251,18 @@ var SEED_PROGRAM = [
   ]},
 ];
 
-var KIND_LABEL = { machine: "Machine guidée", cable: "Poulie", free: "Poids libre" };
+/* "bodyweight" ajouté le 4 sept. 2026 pour la callisthénie/street workout
+   (tractions, pompes, dips, muscle-up...) — jusque-là seul "free" ("Poids
+   libre", pensé pour haltères/barres) existait, ce qui étiquetait mal un
+   exercice fait à mains nues. `kind` ne sert qu'à l'étiquette affichée et
+   au filtrage visuel (voir KIND_LABEL plus bas) — aucune logique de séries/
+   reps/repos n'en dépend, donc l'ajouter ne casse rien d'existant. Pour un
+   exercice bodyweight sans lest, laisser le poids loggé à 0 kg et
+   progresser via les répétitions (vers le haut de la fourchette min-max de
+   l'exercice) avant d'ajouter du lest (gilet/ceinture) ou une variante plus
+   difficile — l'app suit déjà les séries/répétitions cible par palier
+   (GOAL_PRESETS) de la même façon que pour une machine. */
+var KIND_LABEL = { machine: "Machine guidée", cable: "Poulie", free: "Poids libre", bodyweight: "Poids du corps" };
 
 /* ============================================================
    ICONS — small hand-drawn stroke icons (no external icon lib
@@ -1196,7 +1207,7 @@ function inferOrderTier(name, muscle){
   var n = stripAccents(name);
   // --- Motifs spécifiques d'abord, pour lever les ambiguïtés avec les
   //     motifs génériques plus bas (ex. "curl", "presse", "extension"). ---
-  if (/leg curl|hamstring curl|flexion des jambes|ischio/.test(n)) return 2;
+  if (/leg curl|hamstring curl|flexion des jambes|ischio|nordic/.test(n)) return 2;
   if (/leg extension|extension.*jambe|quad.*extension/.test(n)) return 3;
   if (/calf|mollet/.test(n)) return 2;
   if (/glute|fessier|hip thrust|hip bridge/.test(n)) return 2;
@@ -1209,9 +1220,28 @@ function inferOrderTier(name, muscle){
   if (/abduction|adduction/.test(n)) return 3;
   if (/crunch|abdomina|gainage|sit.?up|rotation du torse/.test(n)) return 3;
   if (/pushdown|kickback/.test(n)) return 3;
+  // --- Callisthénie / street workout — mêmes paliers que leurs équivalents
+  //     machine (une traction reste polyarticulaire, faite au poids du
+  //     corps ou guidée) ; testés avant les motifs génériques ci-dessous
+  //     pour éviter tout conflit avec eux. Les tenues statiques avancées
+  //     (planche, front/back lever, drapeau) ne sont volontairement PAS
+  //     reconnues ici — trop ambiguës par mots-clés ("planche" désigne
+  //     aussi bien la figure que la planche abdominale) et pas vraiment
+  //     compatibles avec un objectif séries×reps de toute façon ; palier à
+  //     corriger à la main pour ces mouvements-là.
+  //     Au passage, deux bugs trouvés en testant sur des noms de
+  //     callisthénie réels : "dips" (pluriel) ne matchait pas le \bdip\b
+  //     du motif générique plus bas (corrigé en \bdips?\b) — aucun exercice
+  //     du catalogue d'origine ne s'appelait "dip", donc jamais remarqué
+  //     avant ; et "nordic curl" tombait sur le motif générique "curl" (→
+  //     isolation biceps) avant d'atteindre le repli par muscle, corrigé en
+  //     l'ajoutant au motif ischio-jambiers ci-dessus (comme "leg curl"). */
+  if (/muscle.?up|burpee/.test(n)) return 1;
+  if (/pompe|push.?up|pushup/.test(n)) return 1;
+  if (/fente|lunge/.test(n)) return 1;
   // --- Motifs génériques ensuite. ---
   if (/biceps|triceps|curl/.test(n)) return 3;
-  if (/press|developpe|presse|squat|deadlift|souleve de terre|\bdip\b/.test(n)) return 1;
+  if (/press|developpe|presse|squat|deadlift|souleve de terre|\bdips?\b/.test(n)) return 1;
   if (/tirage|traction|\brow\b|rowing|pulldown/.test(n)) return 1;
   if (/upper back|tronc/.test(n)) return 1;
   // Rien reconnu dans le nom : repli par muscle, sinon semi-isolation neutre.
@@ -2124,9 +2154,9 @@ function ManualAdd(props){
     h(TextField,{value:d.brand, placeholder:"Marque (ex. Technogym)", onChange:function(v){setD(Object.assign({},d,{brand:v}));}}),
     h(Select,{value:d.muscle, onChange:function(v){setD(Object.assign({},d,{muscle:v}));}},
       MUSCLES.map(function(m){ return h("option",{key:m,value:m},m); })),
-    h("div",{style:{display:"flex",gap:8,marginBottom:8}},
+    h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}},
       Object.keys(KIND_LABEL).map(function(k){ var on=d.kind===k; return h("button",{key:k, onClick:function(){setD(Object.assign({},d,{kind:k}));},
-        style:{flex:1,padding:"8px 0",borderRadius:6,background:on?C.pin:C.shroud,color:on?C.ink:C.taupe,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:12.5,fontWeight:600}}, KIND_LABEL[k]); })),
+        style:{padding:"8px 4px",borderRadius:6,background:on?C.pin:C.shroud,color:on?C.ink:C.taupe,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:12,fontWeight:600,lineHeight:1.25}}, KIND_LABEL[k]); })),
     h("label",{style:{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.bone,marginBottom:10}},
       h("input",{type:"checkbox", checked:d.unilateral, onChange:function(e){setD(Object.assign({},d,{unilateral:e.target.checked}));}}),
       "Exercice unilatéral (un bras / une jambe à la fois)"),
@@ -2134,7 +2164,7 @@ function ManualAdd(props){
       h("span",{style:{fontFamily:sansCond,fontSize:13,color:C.taupe}}, "Plus petit incrément"),
       h(Stepper,{value:d.inc, step:0.5, min:0.5, suffix:"kg", onChange:function(v){setD(Object.assign({},d,{inc:v}));}})),
     h("p",{style:{fontSize:11.5,color:C.taupe,lineHeight:1.5,marginBottom:10}},
-      "Le palier poly/semi/isolation est déterminé automatiquement à partir du nom — modifiable ensuite via le petit rond numéroté en séance ou dans la liste ci-dessous si besoin."),
+      "Le palier poly/semi/isolation est déterminé automatiquement à partir du nom — reconnaît aussi les exercices de callisthénie/street workout (tractions, pompes, dips, muscle-up, fentes, gainage...), pas que les noms de machines — modifiable ensuite via le petit rond numéroté en séance ou dans la liste ci-dessous si besoin. Sans lest ajouté, laisse le poids à 0 kg au moment de logger une série et progresse via les répétitions."),
     h("button",{onClick:function(){ if (d.name.trim()) onAdd(Object.assign({},d,{name:d.name.trim(), brand:d.brand.trim()||"—", order: inferOrderTier(d.name, d.muscle)})); },
       style:{width:"100%",padding:"10px 0",borderRadius:6,background:C.pin,color:C.ink,fontFamily:sansCond,fontSize:15,fontWeight:700,border:"none"}}, "Ajouter au matériel"));
 }
