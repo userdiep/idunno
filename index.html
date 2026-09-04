@@ -1786,15 +1786,25 @@ function OptionsTab(props){
     ? computeNutrition(Object.assign({}, profile, {targetMode:"steps"}), avgSessionMinutes)
     : null;
   /* Choisir un objectif applique tout de suite ses réglages nutrition
-     (déficit/protéines/activité) ET repasse en mode "Déficit manuel"
-     (targetMode:"deficit") si besoin — sinon, en mode "Cible fixe", la
-     cible affichée reste verrouillée sur manualTargetKcal/manualProteinG et
+     (déficit/protéines/activité) ET repasse en mode "DER + pas + séances"
+     (targetMode:"steps") si besoin — sinon, en mode "Cible fixe", la cible
+     affichée reste verrouillée sur manualTargetKcal/manualProteinG et
      changer d'objectif n'a AUCUN effet visible (bug remonté le 4 sept.
-     2026 : "ça change rien... sur la nutrition" — le déficit/protéines/
-     activité changeaient bien en arrière-plan, mais le mode "Cible fixe"
-     les ignore complètement). Choix confirmé avec l'utilisateur : basculer
-     automatiquement, plutôt que garder "Cible fixe" et laisser le
-     changement invisible tant qu'on n'a pas changé de mode à la main.
+     2026 : "ça change rien... sur la nutrition").
+
+     Repassait d'abord sur "Déficit manuel" (targetMode:"deficit"), qui
+     calcule le TDEE avec un multiplicateur d'activité FIXE (ex. ×1,55
+     "Modérément actif") — un seul chiffre pour toute la semaine, pas lié
+     aux pas ou séances réellement enregistrés. Changé pour "DER + pas +
+     séances" suite à un 2e retour le même jour ("je veux que ce soit une
+     moyenne, pas que les jours de sport") : ce mode calcule le TDEE à
+     partir du DER + calories des pas quotidiens (profile.dailySteps) +
+     calories d'entraînement, ces dernières étalées sur les 7 jours de la
+     semaine au prorata du nombre RÉEL de séances/semaine
+     (avgSessions/7 — voir computeNutrition, branche "steps") : une vraie
+     moyenne hebdomadaire personnalisée, pas le calcul d'un jour de sport
+     isolé ni un multiplicateur générique. Déficit et protéines du preset
+     s'appliquent ensuite pareil par-dessus, quel que soit le mode.
      Ne touche PAS le programme déjà en place (confirmé après coup, toujours
      voulu) : les nouveaux repères sets/reps/repos par palier ne s'appliquent
      qu'aux PROCHAINS ajouts ou remplacements de machine (voir GOAL_PRESETS/
@@ -1806,14 +1816,14 @@ function OptionsTab(props){
      l'existant) — l'utilisateur a changé d'avis et veut pouvoir tout
      réappliquer d'un coup, tant que ça reste une action confirmée et pas
      automatique. */
-  function applyGoal(g){ set(Object.assign({goal:g, targetMode:"deficit", manualTarget:false}, goalPreset(g).nutrition)); setReapplyPrompt(true); }
+  function applyGoal(g){ set(Object.assign({goal:g, targetMode:"steps", manualTarget:false}, goalPreset(g).nutrition)); setReapplyPrompt(true); }
   function reapplyGoalToProgram(){ persistConfig(exercises, applyGoalToProgram(program, exercises, profile.goal)); setReapplyPrompt(false); }
   var totalItems = program.reduce(function(a,d){return a+d.items.length;},0);
 
   return h("div", null,
     h(Section, {title:"Objectif d'entraînement"},
       h("p",{style:{fontSize:12,color:C.taupe,lineHeight:1.6,marginBottom:10}},
-        "Détermine le déficit/protéines/activité par défaut ci-dessous (et repasse la cible en mode \"Déficit manuel\" si tu étais en \"Cible fixe\", sinon le changement ne se verrait pas), et les séries/reps/repos proposés pour les PROCHAINES machines ajoutées ou remplacées (voir Séance > icône de remplacement, et Programme > ajouter un exercice). Ne modifie les machines déjà en place que si tu le confirmes ci-dessous après avoir changé d'objectif."),
+        "Détermine le déficit/protéines/activité par défaut ci-dessous (et repasse la cible en mode \"DER + pas + séances\" si tu étais en \"Cible fixe\", sinon le changement ne se verrait pas — ce mode calcule une vraie moyenne hebdomadaire à partir de tes pas et de tes séances réelles, pas juste un multiplicateur d'activité générique), et les séries/reps/repos proposés pour les PROCHAINES machines ajoutées ou remplacées (voir Séance > icône de remplacement, et Programme > ajouter un exercice). Ne modifie les machines déjà en place que si tu le confirmes ci-dessous après avoir changé d'objectif."),
       h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8, marginBottom: reapplyPrompt?10:0}},
         GOALS.map(function(g){ var on = (profile.goal||"loss_hyper")===g.k; return h("button",{key:g.k, onClick:function(){applyGoal(g.k);},
           style:{padding:"9px 8px",borderRadius:6,background:on?C.pin:C.shroud,color:on?C.ink:C.taupe,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:12.5,fontWeight:600}}, g.label); })),
