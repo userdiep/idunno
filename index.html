@@ -622,6 +622,31 @@ function swapRecommendation(oldEx, newEx, program, goal) {
      sur les 6 presets — c'est un reflet du mode de vie (niveau d'activité
      hors entraînement), pas de l'objectif d'entraînement ; le faire varier
      par objectif n'aurait aucune justification.
+   - Nombre de SÉRIES par palier — corrigé le 4 sept. 2026 (bug remonté :
+     "les muscles sont pas bien équilibrés à chaque fois que je change de
+     mode d'entraînement"). Vérifié en recalculant plannedVolume sur le
+     programme réel pour les 6 objectifs : "loss_hyper" (tier 3 à 4 séries
+     au lieu de 3, hérité tel quel de l'ancien réglage historique
+     pré-presets) et "loss_strength" (tier 1 à 4 séries au lieu de 3,
+     ajouté sans vérifier cet effet de bord) donnaient 1 série de PLUS à un
+     seul palier — or les muscles de ce catalogue sont chacun entraînés par
+     un mélange FIXE et différent de paliers (Dos = 100% poly, Ischio-
+     jambiers = 100% semi-isolation, Adducteurs = 100% isolation,
+     Pectoraux/Épaules/Quadriceps = mélange) : donner un bonus à UN palier
+     précis avantage mécaniquement les muscles qui tombent sur ce palier,
+     UNIQUEMENT quand cet objectif est actif. Aucune source trouvée ne
+     justifie de faire varier le NOMBRE DE SÉRIES selon poly/semi/isolation
+     (contrairement aux reps/repos, qui en dépendent bien, voir ACSM 2026 /
+     Robinson 2024 cités plus haut) — seul le nombre de séries total par
+     objectif a une base dans la littérature. Les 6 presets donnent donc
+     maintenant le même nombre de séries sur les 3 paliers (seuls reps et
+     repos restent différents par palier, partout) : un changement
+     d'objectif fait donc varier le volume de TOUS les muscles dans la
+     même proportion, sans avantager tel ou tel muscle selon son mélange de
+     paliers. Le déséquilibre RÉSIDUEL entre muscles qui ont plus ou moins
+     d'exercices déjà programmés (indépendant de l'objectif — visible dans
+     Machines > "Volume prévu par semaine") reste, lui, à corriger à la
+     main en ajoutant/retirant des exercices, pas par ce système de presets.
 
    Sert de point de départ éditable — pour les machines déjà dans un
    programme, voir requestSwap/swapCard (remplacement) ou proposePlacement/
@@ -649,13 +674,13 @@ var GOAL_PRESETS = {
   // repos long (2-3 min, convention NSCA/ACSM pour charge quasi-maximale).
   strength:       { nutrition: { activityMultiplier: 1.55, deficitKcal: 0,   proteinPerKg: 1.8 },
     tiers: { 1: {sets:3, min:4,  max:6,  rest:180}, 2: {sets:3, min:5,  max:8,  rest:150}, 3: {sets:3, min:8,  max:12, rest:90} } },
-  loss_hyper:     { nutrition: { activityMultiplier: 1.55, deficitKcal: 350, proteinPerKg: 2.0 },  // = réglages historiques (recomposition), volontairement inchangés
-    tiers: { 1: {sets:3, min:8,  max:12, rest:110}, 2: {sets:3, min:10, max:15, rest:85}, 3: {sets:4, min:12, max:15, rest:65} } },
+  loss_hyper:     { nutrition: { activityMultiplier: 1.55, deficitKcal: 350, proteinPerKg: 2.0 },  // = réglages historiques (recomposition), nutrition volontairement inchangée
+    tiers: { 1: {sets:3, min:8,  max:12, rest:110}, 2: {sets:3, min:10, max:15, rest:85}, 3: {sets:3, min:12, max:15, rest:65} } },
   // Perte de gras + Force : déficit plus prudent que "Perte de gras" seule
   // (préserver la performance/force pendant la restriction, cf. Helms :
   // plus lent préserve mieux), reps mi-chemin force/hypertrophie.
   loss_strength:  { nutrition: { activityMultiplier: 1.55, deficitKcal: 450, proteinPerKg: 2.1 },
-    tiers: { 1: {sets:4, min:5,  max:8,  rest:120}, 2: {sets:3, min:6,  max:10, rest:100}, 3: {sets:3, min:10, max:15, rest:75} } },
+    tiers: { 1: {sets:3, min:5,  max:8,  rest:120}, 2: {sets:3, min:6,  max:10, rest:100}, 3: {sets:3, min:10, max:15, rest:75} } },
   // Hypertrophie + Force ("powerbuilding") : maintenance (pas de perte de
   // gras visée), reps mi-chemin, repos plutôt long sur les gros mouvements.
   hyper_strength: { nutrition: { activityMultiplier: 1.55, deficitKcal: 0,   proteinPerKg: 1.9 },
@@ -674,14 +699,47 @@ function tierDefaultsForGoal(goal, tier) { var g = goalPreset(goal); return g.ti
    programmée à partir de son palier (poly/semi/isolation) et du nouveau
    preset — ne les fait pas hériter de leurs anciennes valeurs comme le
    fait un remplacement de machine "même palier" (swapRecommendation) :
-   ici on veut vraiment repartir des repères du nouvel objectif partout. */
+   ici on veut vraiment repartir des repères du nouvel objectif partout.
+
+   Corrigé le 4 sept. 2026 (2e signalement, avec capture d'écran de
+   "Volume prévu par semaine" à l'appui — la plupart des muscles encore
+   sous VOL_MIN après avoir uniformisé les séries par palier, voir plus
+   haut) : uniformiser les séries par palier retire le déséquilibre qui
+   BOUGE selon l'objectif, mais pas le déséquilibre STRUCTUREL entre
+   muscles qui ont plus ou moins d'exercices déjà programmés (ex.
+   Ischio-jambiers : 3 exercices vs Pectoraux : 2) — à séries-par-exercice
+   identiques, un muscle avec moins d'exercices reste mécaniquement en
+   dessous. Plutôt que de laisser ça à corriger à la main à chaque fois,
+   la même règle que proposePlacement (ajout d'un exercice : +1 série si
+   le muscle est sous VOL_MIN) est appliquée ici à tout le programme :
+   pour chaque muscle, si le volume hebdo total avec les séries de base du
+   palier reste sous VOL_MIN, la ou les séries manquantes sont réparties à
+   parts égales sur SES exercices déjà en place (jamais en ajoutant un
+   nouvel exercice, jamais en descendant sous le repère du palier). Reps
+   et repos restent ceux du palier dans tous les cas — seul le nombre de
+   séries peut monter pour sortir un muscle de la zone rouge. */
 function applyGoalToProgram(program, exercises, goal) {
   var exMap = {}; exercises.forEach(function(e){ exMap[e.id]=e; });
+  var factor = SESSIONS_PER_WEEK / Math.max(1, program.length);
+  var muscleCount = {}, muscleBaseSets = {};
+  program.forEach(function(d){ d.items.forEach(function(it){
+    var ex = exMap[it.ex]; if (!ex) return;
+    var tierDef = tierDefaultsForGoal(goal, exerciseOrderTier(ex));
+    muscleCount[ex.muscle] = (muscleCount[ex.muscle]||0) + 1;
+    muscleBaseSets[ex.muscle] = (muscleBaseSets[ex.muscle]||0) + tierDef.sets;
+  }); });
+  var muscleExtra = {};
+  Object.keys(muscleBaseSets).forEach(function(mu){
+    var neededTotal = Math.ceil(VOL_MIN / factor);
+    var deficit = Math.max(0, neededTotal - muscleBaseSets[mu]);
+    muscleExtra[mu] = deficit > 0 ? Math.ceil(deficit / muscleCount[mu]) : 0;
+  });
   return program.map(function(d){
     return Object.assign({}, d, { items: d.items.map(function(it){
       var ex = exMap[it.ex];
       var tierDef = tierDefaultsForGoal(goal, ex ? exerciseOrderTier(ex) : 2);
-      return Object.assign({}, it, { sets: tierDef.sets, min: tierDef.min, max: tierDef.max, rest: tierDef.rest });
+      var extra = ex ? (muscleExtra[ex.muscle]||0) : 0;
+      return Object.assign({}, it, { sets: tierDef.sets + extra, min: tierDef.min, max: tierDef.max, rest: tierDef.rest });
     }) });
   });
 }
