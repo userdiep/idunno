@@ -134,6 +134,54 @@ var PUSHPULL = {
   "Pectoraux":"push", "Épaules":"push", "Triceps":"push",
   "Dos":"pull", "Deltoïdes post.":"pull", "Biceps":"pull",
 };
+/* Ajouté le 5 sept. 2026 : certaines machines sollicitent plusieurs muscles
+   (ex. Chest Press = pectoraux ET triceps) — demande explicite pour pouvoir
+   assigner plusieurs muscles à une machine, à la création comme après coup.
+   Plutôt que de réécrire les 29 machines du catalogue d'origine (dont on n'a
+   pas vérifié la biomécanique précise une par une), le champ historique
+   `muscle` (singulier) reste la source de vérité pour les machines qui n'ont
+   qu'un seul muscle ; `muscles` (tableau) s'y ajoute quand il y en a
+   plusieurs. `allMuscles` centralise la lecture : tout le reste du code (volume,
+   fréquence, recherche de substitut, affichage) passe par cette fonction au
+   lieu de lire `.muscle` ou `.muscles` directement, pour ne jamais désynchroniser
+   les deux représentations. Par défaut (sans intensité précisée, voir
+   muscleWeight ci-dessous) un set d'un exercice multi-muscle compte pour la
+   totalité de son volume dans CHAQUE muscle listé (une série de Chest Press
+   vaut une série entière de pectoraux ET une série entière de triceps) — c'est
+   la convention usuelle des outils de suivi de volume pour les mouvements
+   composés, pas une charge divisée entre les muscles. */
+function allMuscles(ex) {
+  if (!ex) return [];
+  if (ex.muscles && ex.muscles.length) return ex.muscles;
+  return ex.muscle ? [ex.muscle] : [];
+}
+/* Ajouté le 5 sept. 2026 (demande : "selon l'intensité par machine") :
+   `muscleIntensity` (optionnel, {nomMuscle: fraction 0-1}) pondère la
+   contribution d'un muscle secondaire — ex. Chest Press avec Triceps à 0.5
+   compte pour une demi-série de triceps par série réellement faite, contre
+   une série entière de pectoraux (poids par défaut 1, muscle "principal").
+   Défaut 1 pour tout muscle non précisé : un exercice créé avant cet ajout,
+   ou dont l'intensité n'a jamais été touchée, se comporte EXACTEMENT comme
+   avant (crédit plein pour chaque muscle listé) — voir allMuscles. */
+function muscleWeight(ex, mu) {
+  if (!ex || !ex.muscleIntensity || ex.muscleIntensity[mu]==null) return 1;
+  return ex.muscleIntensity[mu];
+}
+/* Ajouté le 5 sept. 2026 (demande : "mettre les machines en fonction d'une
+   salle") : `gymIds` (optionnel, tableau d'ids de profile.gyms) restreint une
+   machine à une ou plusieurs salles. Tableau vide/absent = disponible PARTOUT
+   — c'est le défaut pour les 29 machines du catalogue d'origine et pour tout
+   ce qui a été ajouté avant cette fonctionnalité, donc rien ne disparaît pour
+   qui n'utilise qu'une seule salle. gymId=null (utilisateur sans salle
+   configurée, ne devrait plus arriver après la migration withGymsDefault)
+   est traité comme "pas de filtre" plutôt que d'exclure les machines
+   explicitement rattachées à une salle. */
+function exerciseAvailableAtGym(ex, gymId) {
+  if (!ex) return false;
+  if (!gymId) return true;
+  if (!ex.gymIds || !ex.gymIds.length) return true;
+  return ex.gymIds.indexOf(gymId) >= 0;
+}
 
 /* ============================================================
    SEED DATA — machines only. kind/kg-increment already support
@@ -484,8 +532,10 @@ function plannedVolume(program, exercises, avgSessions) {
     var musclesToday = {};
     d.items.forEach(function(it){
       var ex = exMap[it.ex]; if (!ex) return;
-      m[ex.muscle] = (m[ex.muscle]||0) + it.sets;
-      musclesToday[ex.muscle] = true;
+      allMuscles(ex).forEach(function(mu){
+        m[mu] = (m[mu]||0) + it.sets * muscleWeight(ex, mu);
+        musclesToday[mu] = true; // fréquence : ce muscle est sollicité ce jour-là, peu importe l'intensité
+      });
     });
     Object.keys(musclesToday).forEach(function(mu){ daysWith[mu] = (daysWith[mu]||0) + 1; });
   });
@@ -544,23 +594,36 @@ function pushPullBalance(vol){
    par objectif, et qui est bien implémenté ailleurs, c'est le nombre de
    séries/reps/repos par palier (GOAL_PRESETS/tierDefaultsForGoal) et la
    cible kcal/protéines — pas le choix de LA machine. */
-function bestCandidate(candidates, referenceOrder) {
+/* referenceMuscles (ajouté 5 sept. 2026, voir allMuscles) : nombre de muscles
+   partagés avec l'exercice remplacé/bloqué — un candidat qui couvre PLUSIEURS
+   des mêmes muscles est un meilleur substitut qu'un candidat qui n'en
+   partage qu'un seul, donc ce critère passe juste après "vérifiée" et avant
+   le palier. Optionnel : omis, tous les candidats sont à égalité dessus
+   (comportement identique à avant l'ajout). */
+function bestCandidate(candidates, referenceOrder, referenceMuscles) {
   if (!candidates.length) return null;
+  var refM = referenceMuscles || [];
   var scored = candidates.map(function(e, i){
-    return { e: e, i: i, verified: e.brand !== "?" ? 1 : 0, sameTier: exerciseOrderTier(e) === referenceOrder ? 1 : 0 };
+    var overlap = allMuscles(e).filter(function(mu){ return refM.indexOf(mu) >= 0; }).length;
+    return { e: e, i: i, verified: e.brand !== "?" ? 1 : 0, overlap: overlap, sameTier: exerciseOrderTier(e) === referenceOrder ? 1 : 0 };
   });
   scored.sort(function(a, b){
     if (a.verified !== b.verified) return b.verified - a.verified;
+    if (a.overlap !== b.overlap) return b.overlap - a.overlap;
     if (a.sameTier !== b.sameTier) return b.sameTier - a.sameTier;
     return a.i - b.i;
   });
   return scored[0].e;
 }
 
-/* Removing a machine: keep the volume by swapping in the BEST equivalent for
-   the same muscle (see bestCandidate), not just the first one on the list. */
+/* Removing a machine: keep the volume by swapping in the BEST equivalent
+   sharing at least one muscle (see bestCandidate), not just the first one on
+   the list. Un exercice multi-muscle (voir allMuscles) est un candidat valable
+   dès qu'il partage AU MOINS un muscle avec celui qu'on retire — bestCandidate
+   priorise ensuite celui qui en partage le plus. */
 function removeWithSubstitution(exId, exercises, program) {
   var gone = exercises.find(function(e){return e.id===exId;});
+  var goneMuscles = allMuscles(gone);
   var remaining = exercises.filter(function(e){return e.id!==exId;});
   var report = [];
   var nextProgram = program.map(function(day){
@@ -568,8 +631,8 @@ function removeWithSubstitution(exId, exercises, program) {
     day.items.forEach(function(it){
       if (it.ex !== exId) { items.push(it); return; }
       var taken = {}; day.items.forEach(function(x){taken[x.ex]=true;}); items.forEach(function(x){taken[x.ex]=true;});
-      var candidates = remaining.filter(function(e){ return e.muscle===gone.muscle && !taken[e.id]; });
-      var cand = bestCandidate(candidates, exerciseOrderTier(gone));
+      var candidates = remaining.filter(function(e){ return !taken[e.id] && allMuscles(e).some(function(mu){ return goneMuscles.indexOf(mu)>=0; }); });
+      var cand = bestCandidate(candidates, exerciseOrderTier(gone), goneMuscles);
       if (cand) { items.push(Object.assign({}, it, {ex: cand.id})); report.push({day: day.label, to: cand.name, sets: it.sets}); }
       else { report.push({day: day.label, to: null, sets: it.sets}); }
     });
@@ -579,16 +642,43 @@ function removeWithSubstitution(exId, exercises, program) {
 }
 
 /* An exercise is stalled (same weight 4+ séances) and it's the only one blocking:
-   look for the BEST other machine already in the catalog, targeting the same
-   muscle, that isn't already used anywhere in the program (see bestCandidate
-   for what "best" means here). Returns null if nothing suitable exists. */
+   look for the BEST other machine already in the catalog, sharing at least one
+   muscle (see allMuscles), that isn't already used anywhere in the program
+   (see bestCandidate for what "best" means here). Returns null if nothing
+   suitable exists. */
 function suggestSwap(exId, exercises, program) {
   var ex = exercises.find(function(e){return e.id===exId;});
   if (!ex) return null;
   var usedIds = {};
   program.forEach(function(d){ d.items.forEach(function(it){ usedIds[it.ex]=true; }); });
-  var candidates = exercises.filter(function(e){ return e.muscle===ex.muscle && e.id!==exId && !usedIds[e.id]; });
-  return bestCandidate(candidates, exerciseOrderTier(ex));
+  var exMuscles = allMuscles(ex);
+  var candidates = exercises.filter(function(e){ return e.id!==exId && !usedIds[e.id] && allMuscles(e).some(function(mu){ return exMuscles.indexOf(mu)>=0; }); });
+  return bestCandidate(candidates, exerciseOrderTier(ex), exMuscles);
+}
+/* Ajouté le 5 sept. 2026 (demande : "adapter les séances selon quelle salle
+   où je suis") — un jour de programme peut contenir une machine non
+   disponible dans la salle actuellement sélectionnée (voir
+   exerciseAvailableAtGym, profile.gyms/currentGymId). Plutôt que de bloquer
+   ou de faire disparaître silencieusement l'exercice, on la remplace ICI (à
+   l'affichage/au démarrage de la séance, PAS dans le programme permanent —
+   même logique que removeWithSubstitution/l'ajout à la volée) par la
+   meilleure machine dispo dans cette salle partageant au moins un muscle
+   (voir bestCandidate) ; si aucune n'existe, l'item est gardé tel quel avec
+   `gymMissing:true` pour que l'UI prévienne plutôt que de faire comme si de
+   rien n'était. Sans salle sélectionnée (gymId falsy) ou sans aucune machine
+   avec des gymIds restreints, retourne les items inchangés — comportement
+   identique à avant cette fonctionnalité pour qui n'utilise qu'une salle. */
+function adaptDayItems(items, exercises, exMap, gymId) {
+  if (!gymId) return items;
+  return items.map(function(it){
+    var ex = exMap[it.ex];
+    if (!ex || exerciseAvailableAtGym(ex, gymId)) return it;
+    var exM = allMuscles(ex);
+    var candidates = exercises.filter(function(x){ return x.id!==ex.id && exerciseAvailableAtGym(x, gymId) && allMuscles(x).some(function(mu){ return exM.indexOf(mu)>=0; }); });
+    var sub = bestCandidate(candidates, exerciseOrderTier(ex), exM);
+    if (sub) return Object.assign({}, it, { ex: sub.id, gymSwappedFrom: ex.name });
+    return Object.assign({}, it, { gymMissing: true });
+  });
 }
 /* Séries/reps/repos à proposer quand on remplace oldEx par newEx dans le
    programme, quel que soit l'endroit d'où vient la demande (bouton "Changer
@@ -904,26 +994,61 @@ var GOAL_PRESETS = {
   // gras — déficit" plus haut : 600 tombait au milieu de la fourchette, pas
   // en haut comme visé), protéines en haut de la plage cutting traduite,
   // tiers proches d'un schéma hypertrophie générique (pas de rep range
-  // anti-graisse). Séries/palier alignées sur "hyper" (4, avant 3) et
-  // targetSets identique (14) depuis la mise à jour du 4 sept. 2026 : Roth
-  // et al. 2023 ne trouve aucun avantage à réduire le volume en déficit
-  // modéré pour préserver la masse maigre — rien ne justifie donc que
-  // "Perte de gras" vise moins de volume que "Hypertrophie". minFreq:2 =
-  // repère informatif (voir note fréquence plus haut), pas une règle
-  // stricte.
-  loss:           { nutrition: { activityMultiplier: 1.55, deficitKcal: 925, proteinPerKg: 2.3 }, targetSets: 14, minFreq: 2,
+  // anti-graisse). Séries/palier alignées sur "hyper" (4, avant 3).
+  // targetSets:12 — baissé de 14 à 12 le 4 sept. 2026 (2e révision, demande
+  // explicite : viser "assez" plutôt qu'un chiffre confortable au milieu
+  // d'une fourchette, pour ne pas allonger les séances sans gain démontré).
+  // 12 = le PLANCHER de la zone où Pelland et al. 2025 situent l'essentiel
+  // du gain hypertrophique (12-20 séries/semaine) — rien ne montre que 14
+  // fait mieux que 12, donc 14 ajoutait 2 séries/semaine/muscle de temps de
+  // séance sans bénéfice démontré. Pour LA PERTE DE GRAS spécifiquement,
+  // deux études renforcent encore ce choix : Roth et al. 2023 (1-3 vs 3-5
+  // séries/exercice, 6 semaines de déficit) ET une étude 2026 (European
+  // Journal of Clinical Nutrition) comparant 12 vs 30 séries/semaine/muscle
+  // sous déficit sévère (-40%) pendant 4 semaines trouvent TOUTES LES DEUX
+  // une préservation de la masse maigre identique quel que soit le volume
+  // (la 2e étude montre même un plus grand gain de FORCE avec 30 séries,
+  // mais pas plus de muscle préservé) — le volume, pendant un déficit,
+  // ne sert qu'à préserver le muscle pendant que le déficit fait perdre le
+  // gras, PAS à accélérer la perte de gras elle-même ; 12 séries suffit
+  // déjà à ce rôle, aucune littérature ne justifie d'en faire plus.
+  // minFreq:2 = repère informatif (voir note fréquence plus haut), pas une
+  // règle stricte. recommendedSessions:{4,5} — AJOUTÉ le 5 sept. 2026 suite
+  // à la discussion "combien de séances/semaine pour être opti" : calculé en
+  // simulant applyGoalToProgram+plannedVolume+estimateDayMinutes sur CE
+  // catalogue avec la rotation à 4 jours fixe de l'appli (voir
+  // previewSessionStats plus bas) — à 4 séances/semaine, la fréquence réelle
+  // atteint ~2,1×/semaine/muscle (au-dessus du repère minFreq:2) pour des
+  // séances d'environ 85-105 min ; à 3 séances/semaine on retombe à ~1,6×
+  // (sous le repère) avec des séances plus longues (110-140 min) pour
+  // compenser. En dessous de 4, on peut certes descendre le temps TOTAL
+  // hebdomadaire (le volume total colle mieux au plancher, moins de
+  // séances = moins d'arrondis), mais au prix d'entasser tout le volume
+  // d'un muscle dans une seule séance par semaine — exactement le
+  // problème d'effet d'ordre/fatigue discuté (Nunes et al. 2020/2021) : les
+  // derniers exercices d'une séance de 150+ minutes souffriraient d'une
+  // fatigue accumulée qui dégraderait leur qualité. 4-5 séances/semaine est
+  // donc le compromis qui respecte à la fois le repère de fréquence ET des
+  // séances de durée raisonnable — pas une règle stricte, juste le calcul
+  // affiché en clair dans Options pour que tu voies le compromis réel de TON
+  // réglage actuel plutôt que de deviner.
+  loss:           { nutrition: { activityMultiplier: 1.55, deficitKcal: 925, proteinPerKg: 2.3 }, targetSets: 12, minFreq: 2, recommendedSessions: {min:4, max:5},
     tiers: { 1: {sets:4, min:8,  max:12, rest:90},  2: {sets:4, min:10, max:15, rest:75}, 3: {sets:4, min:12, max:15, rest:60} } },
   // Hypertrophie seule : léger SURPLUS calorique (mise à jour du 4 sept.
   // 2026, remplace la maintenance d'avant — voir note "Prise de masse" plus
   // haut, Oranchuk/Helms/Spence et al. 2023 : ~5% du TDEE, ≈-125 kcal/j pour
-  // ce profil, càd deficitKcal NÉGATIF = surplus). targetSets:14 (Pelland et
-  // al. 2025 : la plupart du gain se joue entre 12 et 20 séries/muscle/
-  // semaine, remplace le repère "≥10" moins précis utilisé avant). Repos
-  // remonté vers ≥90s (méta-analyse 2024 sur le repos). minFreq:2 = repère
-  // pratique pour répartir ce volume sur la semaine (voir note fréquence —
-  // pas un effet indépendant démontré, juste plus facile à bien exécuter
-  // réparti que tout en une séance).
-  hyper:          { nutrition: { activityMultiplier: 1.55, deficitKcal: -125, proteinPerKg: 1.8 }, targetSets: 14, minFreq: 2,
+  // ce profil, càd deficitKcal NÉGATIF = surplus). targetSets:12 — baissé de
+  // 14 à 12 le 4 sept. 2026 (voir note détaillée sur "Perte de gras"
+  // ci-dessus, même raisonnement : Pelland et al. 2025 situe l'essentiel du
+  // gain hypertrophique entre 12 et 20 séries/muscle/semaine, et rien ne
+  // montre que 14 fasse mieux que 12 — donc 12, le plancher de cette zone,
+  // plutôt qu'un chiffre arbitraire au milieu qui n'ajoute que du temps de
+  // séance sans bénéfice démontré). Repos remonté vers ≥90s (méta-analyse
+  // 2024 sur le repos). minFreq:2 = repère pratique pour répartir ce volume
+  // sur la semaine (voir note fréquence — pas un effet indépendant
+  // démontré, juste plus facile à bien exécuter réparti que tout en une
+  // séance).
+  hyper:          { nutrition: { activityMultiplier: 1.55, deficitKcal: -125, proteinPerKg: 1.8 }, targetSets: 12, minFreq: 2, recommendedSessions: {min:4, max:5},
     tiers: { 1: {sets:4, min:6,  max:10, rest:110}, 2: {sets:4, min:8,  max:12, rest:95}, 3: {sets:4, min:10, max:15, rest:90} } },
   // Force seule : léger SURPLUS (mise à jour du 4 sept. 2026, voir note
   // "Prise de masse" plus haut — l'essai Oranchuk/Helms/Spence 2023 a
@@ -939,34 +1064,45 @@ var GOAL_PRESETS = {
   // minFreq:1 (plus bas que les autres objectifs) — la fréquence a un effet
   // indépendant faible/inconsistant sur la force une fois le volume égalisé
   // (Ralston et al. 2018 ; Pelland et al. 2025), donc pas de repère ≥2
-  // imposé ici comme pour l'hypertrophie.
-  strength:       { nutrition: { activityMultiplier: 1.55, deficitKcal: -125, proteinPerKg: 1.8 }, targetSets: 6, minFreq: 1,
+  // imposé ici comme pour l'hypertrophie. recommendedSessions:{2,3} — le
+  // repère de fréquence (≥1×/semaine) est déjà satisfait même à 2 séances/
+  // semaine avec ce catalogue, et le volume plus faible (6 séries/semaine)
+  // tient dans des séances courtes (~90-130 min) sans avoir besoin d'en
+  // faire plus — contrairement aux 5 autres objectifs, ici minimiser le
+  // temps total ne coûte rien niveau fréquence.
+  strength:       { nutrition: { activityMultiplier: 1.55, deficitKcal: -125, proteinPerKg: 1.8 }, targetSets: 6, minFreq: 1, recommendedSessions: {min:2, max:3},
     tiers: { 1: {sets:3, min:4,  max:6,  rest:180}, 2: {sets:3, min:5,  max:8,  rest:150}, 3: {sets:3, min:8,  max:12, rest:90} } },
-  // targetSets:14 comme "hyper" — la recomposition (prise de muscle ET
-  // perte de gras en même temps) a exactement le même besoin de volume
-  // hypertrophique que "Hypertrophie" seule (voir Pelland et al. 2025 et la
-  // note Roth et al. 2023 sur le déficit, plus haut). Nutrition/tiers eux-
-  // mêmes restent les réglages historiques, volontairement inchangés.
-  loss_hyper:     { nutrition: { activityMultiplier: 1.55, deficitKcal: 350, proteinPerKg: 2.0 }, targetSets: 14, minFreq: 2,  // = réglages historiques (recomposition), nutrition volontairement inchangée
+  // targetSets:12 comme "hyper" (baissé de 14 à 12 le 4 sept. 2026, voir
+  // note détaillée sur "Perte de gras" plus haut) — la recomposition (prise
+  // de muscle ET perte de gras en même temps) a exactement le même besoin de
+  // volume hypertrophique que "Hypertrophie" seule (voir Pelland et al. 2025
+  // et les notes Roth et al. 2023 / EJCN 2026 sur le déficit, plus haut).
+  // Nutrition/tiers eux-mêmes restent les réglages historiques, volontairement
+  // inchangés.
+  loss_hyper:     { nutrition: { activityMultiplier: 1.55, deficitKcal: 350, proteinPerKg: 2.0 }, targetSets: 12, minFreq: 2, recommendedSessions: {min:4, max:5},  // = réglages historiques (recomposition), nutrition volontairement inchangée ; recommendedSessions même logique que "loss"/"hyper" (même targetSets/minFreq)
     tiers: { 1: {sets:3, min:8,  max:12, rest:110}, 2: {sets:3, min:10, max:15, rest:85}, 3: {sets:3, min:12, max:15, rest:65} } },
   // Perte de gras + Force : déficit plus prudent que "Perte de gras" seule
   // (préserver la performance/force pendant la restriction, cf. Helms :
   // plus lent préserve mieux), reps mi-chemin force/hypertrophie.
-  // targetSets:8 (mise à jour du 4 sept. 2026) — entre le plancher force (6)
-  // et la cible hypertrophie (14), reflète que cet objectif garde des
-  // mouvements lourds à faible volume (force) ET des accessoires qui
-  // profitent du volume hypertrophique.
-  loss_strength:  { nutrition: { activityMultiplier: 1.55, deficitKcal: 450, proteinPerKg: 2.1 }, targetSets: 8, minFreq: 2,
+  // targetSets:8 (mise à jour du 4 sept. 2026, inchangé lors de la 2e
+  // révision qui a baissé "hyper" de 14 à 12 — 8 reste cohérent, toujours
+  // "entre" le plancher force (6) et la cible hypertrophie, qu'elle soit à
+  // 12 ou 14) — entre le plancher force (6) et la cible hypertrophie (12),
+  // reflète que cet objectif garde des mouvements lourds à faible volume
+  // (force) ET des accessoires qui profitent du volume hypertrophique.
+  loss_strength:  { nutrition: { activityMultiplier: 1.55, deficitKcal: 450, proteinPerKg: 2.1 }, targetSets: 8, minFreq: 2, recommendedSessions: {min:4, max:5},
     tiers: { 1: {sets:3, min:5,  max:8,  rest:120}, 2: {sets:3, min:6,  max:10, rest:100}, 3: {sets:3, min:10, max:15, rest:75} } },
   // Hypertrophie + Force ("powerbuilding") : léger SURPLUS (mise à jour du
   // 4 sept. 2026, remplace la maintenance d'avant — voir note "Prise de
   // masse" plus haut ; pas de perte de gras visée ici, donc pas de conflit
   // avec un objectif de perte), reps mi-chemin, repos plutôt long sur les
-  // gros mouvements. targetSets:12 — légèrement sous la cible hypertrophie
-  // pure (14), les mouvements lourds tirant vers moins de séries (logique
-  // "force") tandis que les accessoires restent proches du volume
-  // hypertrophique.
-  hyper_strength: { nutrition: { activityMultiplier: 1.55, deficitKcal: -125, proteinPerKg: 1.9 }, targetSets: 12, minFreq: 2,
+  // gros mouvements. targetSets:10 — recalibré de 12 à 10 le 4 sept. 2026
+  // (2e révision) suite à la baisse de "hyper" de 14 à 12 : toujours
+  // légèrement sous la cible hypertrophie pure (maintenant 12, voir note
+  // détaillée plus haut sur "Perte de gras"/"Hypertrophie"), les mouvements
+  // lourds tirant vers moins de séries (logique "force") tandis que les
+  // accessoires restent proches du volume hypertrophique.
+  hyper_strength: { nutrition: { activityMultiplier: 1.55, deficitKcal: -125, proteinPerKg: 1.9 }, targetSets: 10, minFreq: 2, recommendedSessions: {min:4, max:5},
     tiers: { 1: {sets:4, min:5,  max:8,  rest:130}, 2: {sets:4, min:8,  max:12, rest:100}, 3: {sets:4, min:12, max:15, rest:85} } },
 };
 function goalPreset(goal) { return GOAL_PRESETS[goal] || GOAL_PRESETS.loss_hyper; }
@@ -1004,9 +1140,10 @@ function tierDefaultsForGoal(goal, tier) { var g = goalPreset(goal); return g.ti
 
    Mise à jour du 4 sept. 2026 (volume/fréquence, voir le commentaire au-
    dessus de GOAL_PRESETS) : la redistribution vise maintenant
-   goalPreset(goal).targetSets — un repère PAR OBJECTIF (14 pour
-   hypertrophie/perte de gras/recomposition, 6 pour force, 8-12 pour les
-   associations, voir GOAL_PRESETS) — au lieu du plancher générique
+   goalPreset(goal).targetSets — un repère PAR OBJECTIF (12 pour
+   hypertrophie/perte de gras/recomposition — baissé de 14 à 12 le 4 sept.
+   2026, 2e révision, voir GOAL_PRESETS pour le détail — 6 pour force, 8-10
+   pour les associations, voir GOAL_PRESETS) — au lieu du plancher générique
    VOL_MIN=5. VOL_MIN reste utilisé ailleurs (couleur rouge de "Volume prévu
    par semaine") comme plancher de sécurité universel, mais ce n'était pas
    le bon repère pour une redistribution censée optimiser la vitesse de
@@ -1020,11 +1157,17 @@ function applyGoalToProgram(program, exercises, goal, avgSessions) {
   var factor = (avgSessions||SESSIONS_PER_WEEK) / Math.max(1, program.length);
   var target = goalPreset(goal).targetSets || VOL_MIN;
   var muscleCount = {}, muscleBaseSets = {};
+  /* Multi-muscle (voir allMuscles, 5 sept. 2026) : une machine comme Chest
+     Press contribue au volume de base de CHACUN de ses muscles, donc elle
+     compte dans muscleCount/muscleBaseSets de chacun. */
   program.forEach(function(d){ d.items.forEach(function(it){
     var ex = exMap[it.ex]; if (!ex) return;
     var tierDef = tierDefaultsForGoal(goal, exerciseOrderTier(ex));
-    muscleCount[ex.muscle] = (muscleCount[ex.muscle]||0) + 1;
-    muscleBaseSets[ex.muscle] = (muscleBaseSets[ex.muscle]||0) + tierDef.sets;
+    allMuscles(ex).forEach(function(mu){
+      var w = muscleWeight(ex, mu);
+      muscleCount[mu] = (muscleCount[mu]||0) + w;
+      muscleBaseSets[mu] = (muscleBaseSets[mu]||0) + tierDef.sets*w;
+    });
   }); });
   var muscleExtra = {};
   Object.keys(muscleBaseSets).forEach(function(mu){
@@ -1036,10 +1179,33 @@ function applyGoalToProgram(program, exercises, goal, avgSessions) {
     return Object.assign({}, d, { items: d.items.map(function(it){
       var ex = exMap[it.ex];
       var tierDef = tierDefaultsForGoal(goal, ex ? exerciseOrderTier(ex) : 2);
-      var extra = ex ? (muscleExtra[ex.muscle]||0) : 0;
+      /* Le plus grand besoin parmi ses muscles (voir allMuscles) : ajouter ce
+         nombre de séries couvre le déficit de chacun, quitte à dépasser
+         légèrement celui qui avait le moins besoin — jamais l'inverse. */
+      var extra = ex ? Math.max.apply(null, allMuscles(ex).map(function(mu){return muscleExtra[mu]||0;}).concat([0])) : 0;
       return Object.assign({}, it, { sets: tierDef.sets + extra, min: tierDef.min, max: tierDef.max, rest: tierDef.rest });
     }) });
   });
+}
+
+/* Simule (SANS RIEN PERSISTER) ce que donnerait un objectif + un nombre de
+   séances/semaine donnés sur CE catalogue de machines : durée moyenne de
+   séance et fréquence réelle par muscle. Ajouté le 5 sept. 2026 suite à la
+   discussion "combien de séances par semaine pour être opti" — plutôt que de
+   deviner un chiffre générique, l'appli calcule la vraie réponse pour TON
+   programme actuel et l'affiche dans Options (voir OptionsTab > repère
+   "séances recommandées"). Pure fonction, ne modifie ni program ni exercises
+   — applyGoalToProgram est déjà pur (retourne un nouveau tableau), donc
+   l'appeler ici pour prévisualiser est sans risque. */
+function previewSessionStats(program, exercises, goal, avgSessions) {
+  var simulated = applyGoalToProgram(program, exercises, goal, avgSessions);
+  var exMap = {}; exercises.forEach(function(e){ exMap[e.id]=e; });
+  var dayMinutes = simulated.map(function(d){ return estimateDayMinutes(d, exMap); });
+  var avgDayMin = dayMinutes.length ? Math.round(dayMinutes.reduce(function(a,b){return a+b;},0) / dayMinutes.length) : 0;
+  var vol = plannedVolume(simulated, exercises, avgSessions);
+  var avgFreq = vol.length ? vol.reduce(function(a,v){return a+v.freq;},0) / vol.length : 0;
+  var minFreqActual = vol.length ? Math.min.apply(null, vol.map(function(v){return v.freq;})) : 0;
+  return { avgDayMin: avgDayMin, avgFreq: avgFreq, minFreqActual: minFreqActual };
 }
 
 function applySwap(oldExId, newExId, program, overrides) {
@@ -1069,19 +1235,40 @@ function applySwap(oldExId, newExId, program, overrides) {
 function proposePlacement(newEx, exercises, program, goal, avgSessions) {
   var withNew = exercises.concat([newEx]);
   var vol = plannedVolume(program, withNew, avgSessions);
-  var cur = vol.find(function(v){return v.muscle===newEx.muscle;});
-  var current = cur ? cur.sets : 0;
+  var newMuscles = allMuscles(newEx);
   var target = goalPreset(goal).targetSets || VOL_MIN;
+  /* Multi-muscle (voir allMuscles) : une machine comme Chest Press ajoute du
+     volume à CHAQUE muscle qu'elle sollicite en même temps, donc "current"
+     retient le muscle le plus en retard des deux (celui qui a le plus besoin
+     de cette machine) plutôt qu'un seul muscle arbitraire — perMuscle garde
+     le détail de chacun pour l'affichage (voir describePlacement). */
+  var perMuscle = newMuscles.map(function(mu){
+    var cur = vol.find(function(v){return v.muscle===mu;});
+    return { muscle: mu, current: cur ? cur.sets : 0, target: target };
+  });
+  var current = perMuscle.length ? Math.min.apply(null, perMuscle.map(function(p){return p.current;})) : 0;
   var daysTraining = program.filter(function(d){ return d.items.some(function(it){
     var ex = withNew.find(function(e){return e.id===it.ex;});
-    return ex && ex.muscle === newEx.muscle;
+    return ex && allMuscles(ex).some(function(mu){ return newMuscles.indexOf(mu)>=0; });
   }); });
   var targets = daysTraining.length > 0 ? daysTraining.slice(0,2)
     : program.slice().sort(function(a,b){return a.items.length-b.items.length;}).slice(0,2);
   var tierDef = tierDefaultsForGoal(goal, exerciseOrderTier(newEx));
   var setsEach = current >= target ? tierDef.sets : tierDef.sets + 1;
   return { targets: targets.map(function(d){return d.key;}), targetLabels: targets.map(function(d){return d.label;}),
-    setsEach: setsEach, min: tierDef.min, max: tierDef.max, rest: tierDef.rest, current: current, target: target };
+    setsEach: setsEach, min: tierDef.min, max: tierDef.max, rest: tierDef.rest, current: current, target: target, perMuscle: perMuscle };
+}
+/* Texte affiché quand on propose où placer une machine qu'on vient d'ajouter
+   (voir proposePlacement) — une ligne simple pour un muscle unique, le détail
+   de chaque muscle quand la machine en sollicite plusieurs (voir allMuscles). */
+function describePlacement(placement) {
+  var pm = placement.perMuscle || [];
+  if (pm.length <= 1) {
+    var only = pm[0] || { muscle:"Ce muscle", current: placement.current, target: placement.target };
+    return only.muscle+" est actuellement à "+only.current+" séries/semaine"+(only.current<only.target?" — en dessous de la cible "+only.target+" séries/semaine visée par ton objectif actuel.":".");
+  }
+  return "Cette machine sollicite "+pm.map(function(p){return p.muscle;}).join(" + ")+", actuellement à "+
+    pm.map(function(p){return p.muscle+" "+p.current+"×/sem"+(p.current<p.target?" (sous la cible "+p.target+")":"");}).join(", ")+".";
 }
 function applyPlacement(newEx, placement, exercises, program) {
   return program.map(function(d){
@@ -1315,7 +1502,7 @@ function withInferredOrderDefaults(state) {
   if ((state.orderInferenceVersion||0) >= ORDER_INFERENCE_VERSION) return state;
   return Object.assign({}, state, {
     orderInferenceVersion: ORDER_INFERENCE_VERSION,
-    exercises: state.exercises.map(function(e){ return Object.assign({}, e, {order: inferOrderTier(e.name, e.muscle)}); }),
+    exercises: state.exercises.map(function(e){ return Object.assign({}, e, {order: inferOrderTier(e.name, allMuscles(e).join(" "))}); }),
     _justMigrated: true,
   });
 }
@@ -1346,7 +1533,18 @@ function withThemeDefault(state) {
   if (!state || !state.profile || state.profile.theme !== undefined) return state;
   return Object.assign({}, state, { profile: Object.assign({ theme: "dark" }, state.profile) });
 }
-function withAllMigrations(state) { return withThemeDefault(withGoalDefault(withBodyFatDefault(withInferredOrderDefaults(withOptionsDefaults(withNutritionDefaults(withLatestProgram(state))))))); }
+/* Ajout ponctuel et additif : profile.gyms/currentGymId (voir OptionsTab >
+   "Mes salles", exerciseAvailableAtGym, et l'adaptation de séance selon la
+   salle dans SeanceTab). Défaut : une seule salle "Salle principale" — comme
+   aucune machine n'a de gymIds tant qu'on n'en assigne pas explicitement
+   (voir exerciseAvailableAtGym), un profil existant garde un comportement
+   identique (tout est "disponible partout") jusqu'à ce qu'il configure
+   plusieurs salles. */
+function withGymsDefault(state) {
+  if (!state || !state.profile || state.profile.gyms !== undefined) return state;
+  return Object.assign({}, state, { profile: Object.assign({ gyms: [{id:"g1", name:"Salle principale"}], currentGymId: "g1" }, state.profile) });
+}
+function withAllMigrations(state) { return withGymsDefault(withThemeDefault(withGoalDefault(withBodyFatDefault(withInferredOrderDefaults(withOptionsDefaults(withNutritionDefaults(withLatestProgram(state)))))))); }
 async function loadInitialState() {
   try {
     var res = await fetch("data/state.json", { cache: "no-store" });
@@ -1381,7 +1579,7 @@ async function doPublish(state, onStatus) {
 function Stepper(props) {
   var value=props.value, onChange=props.onChange, step=props.step||1, min=props.min!=null?props.min:0,
       suffix=props.suffix||"", wide=props.wide;
-  return h("div", {className:"flex items-stretch", style:{display:"flex",alignItems:"stretch",borderRadius:6,overflow:"hidden",border:"1px solid "+C.taupeDim}},
+  return h("div", {className:"flex items-stretch", style:{display:"flex",alignItems:"stretch",borderRadius:6,overflow:"hidden",border:"1px solid "+C.taupeDim,flexShrink:0}},
     h("button", {onClick:function(){onChange(Math.max(min, round((value||0)-step)));}, "aria-label":"Diminuer",
       style:{padding:"0 10px",display:"flex",alignItems:"center",justifyContent:"center",background:C.shroudDeep,color:C.taupe,border:"none"}},
       h(Icon,{name:"minus",size:14})),
@@ -1423,7 +1621,7 @@ function SideToggle(props){
      ne sert pas à loguer une performance différente, juste à noter lequel a
      semblé plus dur ce jour-là si tu veux le repérer. Rien coché = égal. */
   var value=props.value, onChange=props.onChange;
-  return h("div",{style:{display:"flex",gap:4}}, [{k:"L",label:"G+"},{k:null,label:"Égal"},{k:"R",label:"D+"}].map(function(o){
+  return h("div",{style:{display:"flex",gap:4,flexShrink:0}}, [{k:"L",label:"G+"},{k:null,label:"Égal"},{k:"R",label:"D+"}].map(function(o){
     var on = value===o.k;
     return h("button",{key:String(o.k), onClick:function(){onChange(o.k);}, title:o.k?"Côté "+(o.k==="L"?"gauche":"droit")+" plus dur":"Deux côtés égaux",
       style:{padding:"5px 8px",borderRadius:6, background:on?C.steel:C.shroudDeep, color:on?C.ink:C.taupe,
@@ -1506,6 +1704,58 @@ function inferOrderTier(name, muscle){
   if (/biceps|triceps|abdomina/.test(m)) return 3;
   if (/ischio|mollet|fessier|lombaire|deltoides post/.test(m)) return 2;
   return 2;
+}
+/* Ajouté le 5 sept. 2026 (demande : "avoir une bdd pour proposer
+   automatiquement les muscles sollicités") — même principe que le classifieur
+   poly/semi/isolation ci-dessus (mots-clés sur le nom, motifs spécifiques
+   testés avant les génériques pour éviter les faux positifs, ex. "leg curl"
+   avant "curl") mais pour deviner QUELS muscles une machine sollicite,
+   muscle principal (intensité 1) et le cas échéant muscle(s) secondaire(s)
+   (intensité <1, voir muscleWeight) — ex. Chest Press → Pectoraux (1) +
+   Triceps (0.5). Reste une SUGGESTION affichée avec un bouton "Utiliser"
+   dans ManualAdd, jamais appliquée sans confirmation : des mots-clés ne
+   remplacent pas une vérification anatomique précise, et une machine réelle
+   peut s'écarter du cas générique (ex. une Chest Press à prise large sollicite
+   plus les épaules qu'une à prise serrée). Retourne [] si rien ne matche —
+   l'utilisateur choisit alors entièrement à la main, comme avant cet ajout. */
+var MUSCLE_GUESS_RULES = [
+  { test:/leg curl|hamstring curl|flexion des jambes|ischio|nordic/, muscles:[{muscle:"Ischio-jambiers",intensity:1}] },
+  { test:/leg extension|extension.*jambe|quad.*extension/, muscles:[{muscle:"Quadriceps",intensity:1}] },
+  { test:/leg press|presse a cuisses/, muscles:[{muscle:"Quadriceps",intensity:1},{muscle:"Fessiers",intensity:0.5},{muscle:"Ischio-jambiers",intensity:0.3}] },
+  { test:/squat/, muscles:[{muscle:"Quadriceps",intensity:1},{muscle:"Fessiers",intensity:0.7}] },
+  { test:/deadlift|souleve de terre/, muscles:[{muscle:"Ischio-jambiers",intensity:1},{muscle:"Fessiers",intensity:1},{muscle:"Lombaires",intensity:0.5},{muscle:"Dos",intensity:0.5}] },
+  { test:/fente|lunge/, muscles:[{muscle:"Quadriceps",intensity:1},{muscle:"Fessiers",intensity:0.7}] },
+  { test:/calf|mollet/, muscles:[{muscle:"Mollets",intensity:1}] },
+  { test:/glute|fessier|hip thrust|hip bridge/, muscles:[{muscle:"Fessiers",intensity:1}] },
+  { test:/abduction/, muscles:[{muscle:"Fessiers",intensity:1}] },
+  { test:/adduction/, muscles:[{muscle:"Adducteurs",intensity:1}] },
+  { test:/lower back|lombaire|hyperextension|back extension|extension du dos/, muscles:[{muscle:"Lombaires",intensity:1},{muscle:"Fessiers",intensity:0.5}] },
+  { test:/rear delt|deltoide arriere|reverse fly|face pull/, muscles:[{muscle:"Deltoïdes post.",intensity:1},{muscle:"Dos",intensity:0.5}] },
+  { test:/trapez|shrug/, muscles:[{muscle:"Dos",intensity:1}] },
+  { test:/pull-?up|traction|chin-?up|assisted|traction assistee/, muscles:[{muscle:"Dos",intensity:1},{muscle:"Biceps",intensity:0.5}] },
+  { test:/pector|pec deck|butterfly|papillon|ecarte|\bfly\b/, muscles:[{muscle:"Pectoraux",intensity:1}] },
+  { test:/elevation laterale|lateral raise/, muscles:[{muscle:"Épaules",intensity:1}] },
+  { test:/elevation frontale|front raise/, muscles:[{muscle:"Épaules",intensity:1}] },
+  { test:/crunch|abdomina|gainage|sit.?up|rotation du torse/, muscles:[{muscle:"Abdominaux",intensity:1}] },
+  { test:/pushdown|kickback/, muscles:[{muscle:"Triceps",intensity:1}] },
+  { test:/\bdips?\b/, muscles:[{muscle:"Triceps",intensity:1},{muscle:"Pectoraux",intensity:0.5}] },
+  { test:/muscle.?up|burpee/, muscles:[{muscle:"Dos",intensity:1},{muscle:"Pectoraux",intensity:0.5},{muscle:"Triceps",intensity:0.5}] },
+  { test:/pompe|push.?up|pushup/, muscles:[{muscle:"Pectoraux",intensity:1},{muscle:"Triceps",intensity:0.7},{muscle:"Épaules",intensity:0.5}] },
+  { test:/biceps|curl/, muscles:[{muscle:"Biceps",intensity:1}] },
+  { test:/triceps/, muscles:[{muscle:"Triceps",intensity:1}] },
+  { test:/chest press|developpe.*couche|bench press|developpe.*poitrine|developpe.*pectoraux/, muscles:[{muscle:"Pectoraux",intensity:1},{muscle:"Triceps",intensity:0.5}] },
+  { test:/shoulder press|developpe.*epaule/, muscles:[{muscle:"Épaules",intensity:1},{muscle:"Triceps",intensity:0.5}] },
+  { test:/tirage vertical|lat pulldown|pulldown/, muscles:[{muscle:"Dos",intensity:1},{muscle:"Biceps",intensity:0.5}] },
+  { test:/\brow\b|rowing|tirage horizontal|seated row/, muscles:[{muscle:"Dos",intensity:1},{muscle:"Biceps",intensity:0.5}] },
+  { test:/upper back|tronc/, muscles:[{muscle:"Dos",intensity:1}] },
+];
+function guessMuscles(name) {
+  var n = stripAccents(name||"");
+  if (!n) return [];
+  for (var i=0; i<MUSCLE_GUESS_RULES.length; i++) {
+    if (MUSCLE_GUESS_RULES[i].test.test(n)) return MUSCLE_GUESS_RULES[i].muscles;
+  }
+  return [];
 }
 /* Trie une liste d'items/entries de séance par palier d'exercice (1
    polyarticulaire → 2 semi-isolation → 3 isolation), à égalité de palier
@@ -1735,12 +1985,18 @@ function SeanceTab(props) {
       deloadForNextStart=props.deloadForNextStart, setDeloadForNextStart=props.setDeloadForNextStart,
       snoozeDeload=props.snoozeDeload, deloadSuggested=props.deloadSuggested, deloadReason=props.deloadReason,
       updateExerciseOrder=props.updateExerciseOrder, updateExerciseInc=props.updateExerciseInc, persistConfig=props.persistConfig,
-      goal=props.goal;
+      goal=props.goal, profile=props.profile, setProfile=props.setProfile;
   var _p = useState(false), pickerOpen=_p[0], setPickerOpen=_p[1];
   var _fp = useState(""), freePick=_fp[0], setFreePick=_fp[1];
   var _sw = useState(null), swapPending=_sw[0], setSwapPending=_sw[1];
   var _sp = useState(""), sessionPick=_sp[0], setSessionPick=_sp[1];
   var day = program.find(function(d){return d.key === (active ? active.dayKey : nextDayKey);}) || program[0];
+  /* Salle actuellement sélectionnée (voir OptionsTab > "Mes salles",
+     exerciseAvailableAtGym, adaptDayItems) — pilote le filtrage des listes
+     "ajouter une machine" et le remplacement automatique d'une machine
+     programmée indisponible ici. null seulement si le profil n'a pas encore
+     migré (ne devrait jamais arriver, withGymsDefault tourne au chargement). */
+  var currentGymId = (profile && profile.gyms && profile.gyms.length) ? (profile.currentGymId || profile.gyms[0].id) : null;
 
   /* Changer de machine à la volée, "quand j'en ai envie" — pas seulement
      quand l'app détecte un plateau (voir Analyse). Propose la meilleure
@@ -1753,7 +2009,7 @@ function SeanceTab(props) {
     if (!ex) return;
     var cand = suggestSwap(ex.id, exercises, program);
     var rec = cand ? swapRecommendation(ex, cand, program, goal) : null;
-    setSwapPending({ exId: ex.id, oldName: ex.name, muscle: ex.muscle, candidate: cand, rec: rec });
+    setSwapPending({ exId: ex.id, oldName: ex.name, muscles: allMuscles(ex).join(" + "), candidate: cand, rec: rec });
   }
   function setSwapRec(patch){ setSwapPending(Object.assign({}, swapPending, {rec: Object.assign({}, swapPending.rec, patch)})); }
   function confirmSwap(){
@@ -1795,7 +2051,7 @@ function SeanceTab(props) {
           h("button",{onClick:confirmSwap, style:{flex:1,padding:"8px 0",borderRadius:6,background:C.green,color:C.ink,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Remplacer"),
           h("button",{onClick:cancelSwap, style:{flex:1,padding:"8px 0",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:14}}, "Annuler")))
       : h("div",null,
-        h("div",{style:{fontSize:13.5,color:C.bone,lineHeight:1.5,marginBottom:10}}, "Aucune autre machine disponible pour "+swapPending.muscle+" pour remplacer "+swapPending.oldName+"."),
+        h("div",{style:{fontSize:13.5,color:C.bone,lineHeight:1.5,marginBottom:10}}, "Aucune autre machine disponible pour "+swapPending.muscles+" pour remplacer "+swapPending.oldName+"."),
         h("button",{onClick:cancelSwap, style:{width:"100%",padding:"8px 0",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:14}}, "Compris")));
   }
 
@@ -1869,7 +2125,15 @@ function SeanceTab(props) {
 
   function start(dayKey, deload) {
     var d = program.find(function(x){return x.key===dayKey;});
-    var entries = sortedDayItems(d, exMap).map(function(it){
+    /* Adapte les machines de ce jour à la salle actuelle AVANT de figer les
+       entries (voir adaptDayItems) — le programme permanent (d.items) n'est
+       jamais modifié, seule la séance qui démarre l'est, comme pour un
+       remplacement manuel. Fait ICI (pas seulement au rendu) pour que
+       active.entries pointe déjà vers le bon id de machine — sinon le rendu
+       de la séance en cours (sessionItems) et ces entries désignent deux
+       machines différentes et rien ne s'affiche pour cet exercice. */
+    var adaptedItems = adaptDayItems(d.items, exercises, exMap, currentGymId);
+    var entries = sortByExerciseOrder(adaptedItems, function(it){return it.ex;}, exMap).map(function(it){
       var p = prescribe(sessions, it, deload);
       var nSets = p.setsOverride || it.sets;
       /* One row per set, whether the exercise is unilateral or not — you do
@@ -1887,8 +2151,21 @@ function SeanceTab(props) {
   }
 
   if (!active) {
+    /* "Ce qui t'attend" doit montrer la séance TELLE QU'ELLE SE FERA dans la
+       salle actuelle, pas le programme brut — même adaptation que start()
+       (voir adaptDayItems), recalculée à chaque rendu (rien n'est encore
+       figé tant que la séance n'a pas démarré). */
+    var previewItems = sortByExerciseOrder(adaptDayItems(day.items, exercises, exMap, currentGymId), function(it){return it.ex;}, exMap);
     return h("div", null,
       swapCard(),
+      (profile && profile.gyms && profile.gyms.length>1) ? h("div",{style:{marginBottom:16}},
+        h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,marginBottom:6}}, "Salle actuelle"),
+        h("div",{style:{display:"flex",flexWrap:"wrap",gap:6}},
+          profile.gyms.map(function(g){
+            var on = g.id === currentGymId;
+            return h("button",{key:g.id, onClick:function(){setProfile(Object.assign({},profile,{currentGymId:g.id}));},
+              style:{padding:"6px 12px",borderRadius:6,background:on?C.pin:C.shroudDeep,color:on?C.ink:C.taupe,border:"1px solid "+(on?"transparent":C.taupeDim),fontFamily:sansCond,fontSize:12.5,fontWeight:600}}, g.name);
+          }))) : null,
       deloadSuggested ? h(DeloadBanner,{ reason: deloadReason,
         onActivate: function(){ setDeloadForNextStart(true); },
         onSnooze: snoozeDeload }) : null,
@@ -1913,20 +2190,23 @@ function SeanceTab(props) {
           h("button",{onClick:startFreeform, style:{flexShrink:0,padding:"10px 16px",borderRadius:6,color:C.bone,fontFamily:sansCond,fontSize:14,fontWeight:600,border:"1px solid "+C.taupeDim,background:"transparent",whiteSpace:"nowrap"}}, "Démarrer"))),
       h(Section, {title:"Ce qui t'attend"},
         h("div",{style:{borderRadius:10,overflow:"hidden",border:"1px solid "+C.taupeDim}},
-          sortedDayItems(day, exMap).map(function(it,i){
+          previewItems.map(function(it,i){
             var p = prescribe(sessions, it, deloadForNextStart);
             var ex = exMap[it.ex];
-            return h("div",{key:i, style:{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,padding:"12px",background:C.shroudDeep,borderTop:i?"1px solid "+C.shroud:"none"}},
-              h("div",{style:{display:"flex",alignItems:"flex-start",gap:8,minWidth:0}},
-                h(OrderBadge,{order: ex?exerciseOrderTier(ex):null, onChange: (ex && updateExerciseOrder) ? function(v){updateExerciseOrder(ex.id, v);} : undefined}),
-                h("div",{style:{minWidth:0}},
-                  h("div",{style:{fontSize:15,fontWeight:600,lineHeight:1.25}}, ex?ex.name:"Machine supprimée"),
-                  h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe}}, ex?ex.brand:"—"),
-                  (ex && updateExerciseInc) ? h(IncStepper,{value:ex.inc, onChange:function(v){updateExerciseInc(ex.id, v);}}) : null)),
-              h("div",{style:{display:"flex",alignItems:"center",gap:8,flexShrink:0}},
-                h(StackPlate,{weight:p.weight, repMin:it.min, repMax:it.max, sets:p.setsOverride||it.sets, state:p.state}),
-                ex ? h("button",{onClick:function(){requestSwap(ex);}, title:"Changer de machine",
-                  style:{padding:6,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",flexShrink:0}}, h(Icon,{name:"repeat",size:14})) : null));
+            return h("div",{key:i, style:{borderTop:i?"1px solid "+C.shroud:"none",background:C.shroudDeep}},
+              h("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,padding:"12px"}},
+                h("div",{style:{display:"flex",alignItems:"flex-start",gap:8,minWidth:0}},
+                  h(OrderBadge,{order: ex?exerciseOrderTier(ex):null, onChange: (ex && updateExerciseOrder) ? function(v){updateExerciseOrder(ex.id, v);} : undefined}),
+                  h("div",{style:{minWidth:0}},
+                    h("div",{style:{fontSize:15,fontWeight:600,lineHeight:1.25}}, ex?ex.name:"Machine supprimée"),
+                    h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe}}, ex?ex.brand:"—"),
+                    (ex && updateExerciseInc) ? h(IncStepper,{value:ex.inc, onChange:function(v){updateExerciseInc(ex.id, v);}}) : null)),
+                h("div",{style:{display:"flex",alignItems:"center",gap:8,flexShrink:0}},
+                  h(StackPlate,{weight:p.weight, repMin:it.min, repMax:it.max, sets:p.setsOverride||it.sets, state:p.state}),
+                  ex ? h("button",{onClick:function(){requestSwap(ex);}, title:"Changer de machine",
+                    style:{padding:6,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",flexShrink:0}}, h(Icon,{name:"repeat",size:14})) : null)),
+              it.gymSwappedFrom ? h("div",{style:{padding:"0 12px 10px",fontSize:12,color:C.steel}}, "Remplace "+it.gymSwappedFrom+" — indisponible dans cette salle.") : null,
+              it.gymMissing ? h("div",{style:{padding:"0 12px 10px",fontSize:12,color:C.rust}}, "Indisponible dans cette salle et aucune autre machine équivalente trouvée.") : null);
           })
         ))
     );
@@ -1989,7 +2269,7 @@ function SeanceTab(props) {
 
   if (active.freeform) {
     var addedIds = active.entries.map(function(e){return e.ex;});
-    var available = exercises.filter(function(e){return addedIds.indexOf(e.id)===-1;}).slice().sort(function(a,b){return a.name.localeCompare(b.name);});
+    var available = exercises.filter(function(e){return addedIds.indexOf(e.id)===-1 && exerciseAvailableAtGym(e, currentGymId);}).slice().sort(function(a,b){return a.name.localeCompare(b.name);});
     return h("div", null,
       h("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}},
         h("div",null,
@@ -2022,15 +2302,15 @@ function SeanceTab(props) {
           h("div",{style:{background:C.shroud}},
             entry.sets.map(function(s, si){
               return h("div",{key:si, style:{padding:"10px 12px",borderTop:"1px solid "+C.shroudDeep}},
-                h("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:8}},
-                  h("span",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,width:30}}, "S"+(si+1)),
+                h("div",{style:{display:"flex",alignItems:"center",gap:8,rowGap:8,marginBottom:8,flexWrap:"wrap"}},
+                  h("span",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,width:30,flexShrink:0}}, "S"+(si+1)),
                   h(Stepper,{value:s.weight, onChange:function(v){updateSetAndMaybeRest(idx,si,"weight",v,90,ex?ex.name:"Repos");}, step: ex?ex.inc:2.5, suffix:"kg", placeholder:"kg", wide:true}),
                   h(Stepper,{value:s.reps, onChange:function(v){updateSetAndMaybeRest(idx,si,"reps",v,90,ex?ex.name:"Repos");}, step:1, suffix:"rep", placeholder:"rep"}),
                   ex && ex.unilateral ? h(SideToggle,{value:s.weakSide, onChange:function(v){updateSet(idx,si,"weakSide",v);}}) : null,
                   h("button",{onClick:function(){fillNextFreeform(idx,si,90,ex?ex.name:"Repos");}, title:"Recopier sur la série suivante (créée si besoin) et démarrer le repos",
-                    style:{padding:6,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent"}}, h(Icon,{name:"chevronDown",size:14})),
+                    style:{padding:6,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",flexShrink:0}}, h(Icon,{name:"chevronDown",size:14})),
                   h("button",{onClick:function(){removeFreeformSet(idx,si);}, title:"Supprimer cette série",
-                    style:{padding:6,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent"}}, h(Icon,{name:"x",size:14}))),
+                    style:{padding:6,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",flexShrink:0}}, h(Icon,{name:"x",size:14}))),
                 h("div",{style:{display:"flex",alignItems:"center",gap:8,paddingLeft:38}},
                   h("span",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe}}, "Difficulté"),
                   h(RirPicker,{value:s.rir, onChange:function(v){updateSet(idx,si,"rir",v);}})));
@@ -2043,7 +2323,7 @@ function SeanceTab(props) {
         h("select",{value:freePick, onChange:function(e){setFreePick(e.target.value);},
           style:{width:"100%",padding:"8px",borderRadius:6,background:C.shroudDeep,color:C.bone,border:"1px solid "+C.taupeDim,fontFamily:sansBody,fontSize:14}},
           h("option",{value:""}, "Ajouter une machine…"),
-          available.map(function(e){ return h("option",{key:e.id,value:e.id}, e.name+" — "+e.muscle); })),
+          available.map(function(e){ return h("option",{key:e.id,value:e.id}, e.name+" ("+e.brand+") — "+allMuscles(e).join(", ")); })),
         h("button",{onClick:addFreeformExercise, style:{width:"100%",padding:"10px 0",borderRadius:6,background:C.pin,color:C.ink,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Ajouter")),
       h("button",{onClick:finishSession, style:{width:"100%",marginTop:8,padding:"14px 0",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:C.green,color:C.ink,fontFamily:sansCond,fontSize:16,fontWeight:700,border:"none"}},
         h(Icon,{name:"check",size:18}), "Enregistrer la séance"),
@@ -2060,11 +2340,15 @@ function SeanceTab(props) {
      prochaine fois que ce jour tombe. Les machines ajoutées à la volée
      portent leurs propres séries/reps/repos par défaut sur e.adhoc (il n'y
      a pas de "it" de programme pour elles). */
-  var dayItemIds = {}; dayActive.items.forEach(function(it){ dayItemIds[it.ex]=true; });
+  /* Adapté à la salle actuelle (voir adaptDayItems) — mêmes ids que ceux
+     figés dans active.entries par start(), pour que le lookup par it.ex plus
+     bas retrouve bien les séries déjà loguées. */
+  var adaptedDayItems = adaptDayItems(dayActive.items, exercises, exMap, currentGymId);
+  var dayItemIds = {}; adaptedDayItems.forEach(function(it){ dayItemIds[it.ex]=true; });
   var adhocItems = active.entries.filter(function(e){ return e.adhoc && !dayItemIds[e.ex]; })
     .map(function(e){ return { ex:e.ex, sets:e.adhoc.sets, min:e.adhoc.min, max:e.adhoc.max, rest:e.adhoc.rest, adhoc:true }; });
-  var sessionItems = sortByExerciseOrder(sortedDayItems(dayActive, exMap).concat(adhocItems), function(it){return it.ex;}, exMap);
-  var availableToAdd = exercises.filter(function(e){ return !active.entries.some(function(en){return en.ex===e.id;}); }).slice().sort(function(a,b){return a.name.localeCompare(b.name);});
+  var sessionItems = sortByExerciseOrder(sortByExerciseOrder(adaptedDayItems, function(it){return it.ex;}, exMap).concat(adhocItems), function(it){return it.ex;}, exMap);
+  var availableToAdd = exercises.filter(function(e){ return !active.entries.some(function(en){return en.ex===e.id;}) && exerciseAvailableAtGym(e, currentGymId); }).slice().sort(function(a,b){return a.name.localeCompare(b.name);});
 
   return h("div", null,
     swapCard(),
@@ -2098,7 +2382,7 @@ function SeanceTab(props) {
             h(OrderBadge,{order: ex?exerciseOrderTier(ex):null, onChange: (ex && updateExerciseOrder) ? function(v){updateExerciseOrder(ex.id, v);} : undefined}),
             h("div",{style:{minWidth:0}},
               h("div",{style:{fontSize:16,fontWeight:600,lineHeight:1.25}}, ex?ex.name:"Machine supprimée"),
-              h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe}}, (ex?ex.brand:"—")+" · repos "+it.rest+"s"+(isAdhoc?" · ajoutée pour cette séance":"")),
+              h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe}}, (ex?ex.brand:"—")+" · repos "+it.rest+"s"+(isAdhoc?" · ajoutée pour cette séance":"")+(it.gymSwappedFrom?" · remplace "+it.gymSwappedFrom+" (indispo dans cette salle)":"")+(it.gymMissing?" · indisponible dans cette salle":"")),
               (ex && updateExerciseInc) ? h(IncStepper,{value:ex.inc, onChange:function(v){updateExerciseInc(ex.id, v);}}) : null)),
           h("div",{style:{display:"flex",alignItems:"center",gap:8,flexShrink:0}},
             h(StackPlate,{weight:p.weight, repMin:it.min, repMax:it.max, sets:p.setsOverride||it.sets, state:p.state}),
@@ -2111,13 +2395,13 @@ function SeanceTab(props) {
         h("div",{style:{background:C.shroud}},
           entry.sets.map(function(s, si){
             return h("div",{key:si, style:{padding:"10px 12px",borderTop:"1px solid "+C.shroudDeep}},
-              h("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:8}},
-                h("span",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,width:30}}, "S"+(si+1)),
+              h("div",{style:{display:"flex",alignItems:"center",gap:8,rowGap:8,marginBottom:8,flexWrap:"wrap"}},
+                h("span",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,width:30,flexShrink:0}}, "S"+(si+1)),
                 h(Stepper,{value:s.weight, onChange:function(v){updateSetAndMaybeRest(idx,si,"weight",v,it.rest,ex?ex.name:"Repos");}, step: ex?ex.inc:2.5, suffix:"kg", placeholder:"kg", wide:true}),
                 h(Stepper,{value:s.reps, onChange:function(v){updateSetAndMaybeRest(idx,si,"reps",v,it.rest,ex?ex.name:"Repos");}, step:1, suffix:"rep", placeholder:"rep"}),
                 ex && ex.unilateral ? h(SideToggle,{value:s.weakSide, onChange:function(v){updateSet(idx,si,"weakSide",v);}}) : null,
                 h("button",{onClick:function(){fillNext(idx,si,it.rest,ex?ex.name:"Repos");}, title:"Recopier sur la série suivante et démarrer le repos",
-                  style:{padding:6,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent"}}, h(Icon,{name:"chevronDown",size:14}))),
+                  style:{padding:6,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",flexShrink:0}}, h(Icon,{name:"chevronDown",size:14}))),
               h("div",{style:{display:"flex",alignItems:"center",gap:8,paddingLeft:38}},
                 h("span",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe}}, "Difficulté"),
                 h(RirPicker,{value:s.rir, onChange:function(v){updateSet(idx,si,"rir",v);}})));
@@ -2129,7 +2413,7 @@ function SeanceTab(props) {
         h("select",{value:sessionPick, onChange:function(e){setSessionPick(e.target.value);},
           style:{flex:1,padding:"8px",borderRadius:6,background:C.shroud,color:C.bone,border:"1px solid "+C.taupeDim,fontFamily:sansBody,fontSize:14}},
           h("option",{value:""}, "Ajouter une machine à cette séance…"),
-          availableToAdd.map(function(e){ return h("option",{key:e.id,value:e.id}, e.name+" — "+e.muscle); })),
+          availableToAdd.map(function(e){ return h("option",{key:e.id,value:e.id}, e.name+" ("+e.brand+") — "+allMuscles(e).join(", ")); })),
         h("button",{onClick:function(){addToActiveSession(sessionPick);}, style:{padding:"0 16px",borderRadius:6,background:C.pin,color:C.ink,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Ajouter"))),
     h("button",{onClick:finishSession, style:{width:"100%",marginTop:8,padding:"14px 0",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:C.green,color:C.ink,fontFamily:sansCond,fontSize:16,fontWeight:700,border:"none"}},
       h(Icon,{name:"check",size:18}), "Enregistrer la séance"),
@@ -2187,12 +2471,59 @@ function OptionsTab(props){
   var profile=props.profile, setProfile=props.setProfile, program=props.program, exercises=props.exercises, bodyLog=props.bodyLog||[], persistConfig=props.persistConfig;
   function set(patch){ setProfile(Object.assign({}, profile, patch)); }
   var _rp = useState(false), reapplyPrompt=_rp[0], setReapplyPrompt=_rp[1];
+  /* "Mes salles" (voir exerciseAvailableAtGym, adaptDayItems, la section
+     "Mes salles" plus bas) — un profil migré (withGymsDefault) a toujours au
+     moins une salle, ce fallback ne sert qu'en cas de state très ancien pas
+     encore migré au moment du rendu. */
+  var gyms = profile.gyms || [{id:"g1", name:"Salle principale"}];
+  var currentGymId = profile.currentGymId || gyms[0].id;
+  var _ng = useState(""), newGymName=_ng[0], setNewGymName=_ng[1];
+  var _erg = useState(null), editGymId=_erg[0], setEditGymId=_erg[1];
+  var _egn = useState(""), editGymName=_egn[0], setEditGymName=_egn[1];
+  function addGym(){
+    var name = newGymName.trim();
+    if (!name) return;
+    set({ gyms: gyms.concat([{id:"gym"+Date.now(), name:name}]) });
+    setNewGymName("");
+  }
+  function startRenameGym(g){ setEditGymId(g.id); setEditGymName(g.name); }
+  function confirmRenameGym(){
+    var name = editGymName.trim();
+    if (name) set({ gyms: gyms.map(function(g){ return g.id===editGymId ? Object.assign({},g,{name:name}) : g; }) });
+    setEditGymId(null);
+  }
+  /* Supprimer une salle nettoie aussi les gymIds qui la référençaient sur
+     toutes les machines (voir MachinesTab > updateGyms) — sinon un id orphelin
+     reste dans e.gymIds sans jamais plus rien matcher, ce qui n'est pas FAUX
+     (exerciseAvailableAtGym ignore un id inconnu) mais encombre les données
+     pour rien. */
+  function removeGym(id){
+    if (gyms.length<=1) return;
+    var nextGyms = gyms.filter(function(g){return g.id!==id;});
+    set({ gyms: nextGyms, currentGymId: currentGymId===id ? nextGyms[0].id : currentGymId });
+    persistConfig(exercises.map(function(e){ return (e.gymIds && e.gymIds.indexOf(id)>=0) ? Object.assign({},e,{gymIds: e.gymIds.filter(function(x){return x!==id;})}) : e; }), program);
+  }
 
   var exMap = {}; exercises.forEach(function(e){exMap[e.id]=e;});
   var avgSessionMinutes = program.length
     ? Math.round(program.reduce(function(a,d){return a+estimateDayMinutes(d, exMap);},0) / program.length)
     : 0;
   var nut = computeNutrition(profile, avgSessionMinutes);
+  /* Aperçu "combien de séances/semaine pour être opti" — voir
+     previewSessionStats plus haut et la discussion qui l'a motivé.
+     currentSessionPreview = ce que donne TON réglage actuel de séances/
+     semaine ; recommendedSessionPreview = ce que donnerait le milieu de la
+     plage recommendedSessions du preset actuel (GOAL_PRESETS). Comparés
+     dans la Section "Réglages personnels" juste après le champ "Séances par
+     semaine", pour que tu voies le compromis fréquence/durée réel plutôt
+     qu'un repère générique. */
+  var goalNow = profile.goal || "loss_hyper";
+  var currentAvgSessions = avgSessionsPerWeek(profile);
+  var currentSessionPreview = previewSessionStats(program, exercises, goalNow, currentAvgSessions);
+  var recSessions = goalPreset(goalNow).recommendedSessions || {min:4, max:5};
+  var recAvgSessions = (recSessions.min + recSessions.max) / 2;
+  var recSessionPreview = previewSessionStats(program, exercises, goalNow, recAvgSessions);
+  var meetsFreqFloor = currentSessionPreview.minFreqActual >= (goalPreset(goalNow).minFreq||1) - 0.01;
   /* Repère masse maigre pour la cible protéique — voir la Section "Cible
      calorique et protéique" plus bas. On ne redéfinit PAS ce que veut dire
      proteinPerKg (toujours g/kg de poids total, comme depuis le début) :
@@ -2280,6 +2611,26 @@ function OptionsTab(props){
       ) : null
     ),
 
+    h(Section, {title:"Mes salles"},
+      h("p",{style:{fontSize:12,color:C.taupe,lineHeight:1.6,marginBottom:10}},
+        "Si tu t'entraînes dans plusieurs salles, ajoute-les ici puis indique quelle machine est dispo où (onglet Machines, sur chaque machine). La séance du jour et \"Ce qui t'attend\" (onglet Séance) remplacent alors automatiquement une machine indisponible dans la salle sélectionnée par la meilleure équivalente disponible, ou te préviennent si aucune ne l'est."),
+      h("div",{style:{display:"flex",flexDirection:"column",gap:6,marginBottom:10}},
+        gyms.map(function(g){
+          var on = g.id === currentGymId;
+          var editing = editGymId === g.id;
+          return h("div",{key:g.id, style:{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderRadius:8,background:on?C.shroudDeep:C.shroud,border:"1px solid "+(on?C.pin:C.taupeDim)}},
+            editing ? h("div",{style:{flex:1,display:"flex",gap:6}},
+              h("div",{style:{flex:1}}, h(TextField,{value:editGymName, placeholder:"Nom de la salle", onChange:setEditGymName})),
+              h("button",{onClick:confirmRenameGym, style:{padding:"0 10px",borderRadius:6,background:C.pin,color:C.ink,border:"none",fontFamily:sansCond,fontSize:12.5,fontWeight:700}}, "OK"))
+            : h("button",{onClick:function(){set({currentGymId:g.id});}, style:{flex:1,textAlign:"left",background:"transparent",border:"none",color:on?C.pin:C.bone,fontFamily:sansCond,fontSize:14,fontWeight:on?700:500}}, g.name),
+            !editing ? h("button",{onClick:function(){startRenameGym(g);}, style:{padding:"4px 8px",borderRadius:6,color:C.taupe,background:"transparent",border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:11}}, "renommer") : null,
+            (!editing && gyms.length>1) ? h("button",{onClick:function(){removeGym(g.id);}, "aria-label":"Supprimer "+g.name, style:{padding:6,borderRadius:6,color:C.taupe,background:"transparent",border:"none"}}, h(Icon,{name:"x",size:14})) : null);
+        })),
+      h("div",{style:{display:"flex",gap:8}},
+        h("div",{style:{flex:1}}, h(TextField,{value:newGymName, placeholder:"Nom de la salle (ex. Fitness Park Lyon)", onChange:setNewGymName})),
+        h("button",{onClick:addGym, style:{padding:"0 14px",borderRadius:6,background:C.pin,color:C.ink,fontFamily:sansCond,fontSize:13.5,fontWeight:700,border:"none",alignSelf:"flex-start"}}, "Ajouter"))
+    ),
+
     h(Section, {title:"Apparence"},
       h("div",{style:{display:"flex",gap:8}},
         [{k:"dark",label:"Sombre"},{k:"light",label:"Clair"}].map(function(t){ var on = (profile.theme||"dark")===t.k; return h("button",{key:t.k, onClick:function(){set({theme:t.k});},
@@ -2313,7 +2664,15 @@ function OptionsTab(props){
         h("div",{style:{display:"flex",gap:8,alignItems:"center"}},
           h(Stepper,{value:profile.sessionsMin, step:1, min:0, onChange:function(v){set({sessionsMin:v});}}),
           h("span",{style:{color:C.taupe,fontSize:13}},"à"),
-          h(Stepper,{value:profile.sessionsMax, step:1, min:profile.sessionsMin||0, onChange:function(v){set({sessionsMax:v});}})))
+          h(Stepper,{value:profile.sessionsMax, step:1, min:profile.sessionsMin||0, onChange:function(v){set({sessionsMax:v});}}))),
+      h("div",{style:{marginTop:10,padding:"10px 12px",borderRadius:8,background:C.shroudDeep,border:"1px solid "+(meetsFreqFloor?C.taupeDim:C.steel)}},
+        h("div",{style:{fontSize:12.5,color:C.bone,lineHeight:1.55}},
+          "À ta fréquence réglée ("+currentAvgSessions.toFixed(1)+" séances/semaine), chaque muscle est travaillé environ "+currentSessionPreview.avgFreq.toFixed(1)+"×/semaine (minimum "+currentSessionPreview.minFreqActual.toFixed(1)+"×), pour des séances d'environ "+currentSessionPreview.avgDayMin+" min — calculé sur ton catalogue de machines actuel."
+          + (meetsFreqFloor
+            ? " C'est au-dessus du repère fréquence de cet objectif (≥"+goalPreset(goalNow).minFreq+"×/semaine) — pas de changement nécessaire."
+            : " C'est sous le repère fréquence de cet objectif (≥"+goalPreset(goalNow).minFreq+"×/semaine) : pas dramatique en soi, mais tes séances sont d'autant plus longues pour compenser, et les derniers exercices d'une longue séance profitent moins du volume (effet d'ordre/fatigue, voir Nunes et al. 2020/2021). Pour cet objectif, "+recSessions.min+" à "+recSessions.max+" séances/semaine donnerait plutôt ~"+recSessionPreview.avgFreq.toFixed(1)+"×/semaine/muscle avec des séances d'environ "+recSessionPreview.avgDayMin+" min.")),
+        h("p",{style:{fontSize:11,color:C.taupe,lineHeight:1.5,margin:"6px 0 0"}},
+          "Repère indicatif recalculé à chaque changement d'objectif ou de machine — pas une règle stricte (voir GOAL_PRESETS > recommendedSessions dans le code pour le détail du calcul et les sources)."))
     ),
 
     h(Section, {title:"Dépense énergétique de repos (DER)"},
@@ -2463,6 +2822,72 @@ function HistoriqueTab(props){
    création. Il reste ici comme correcteur manuel, utilisable depuis le
    badge en séance et depuis "Matériel disponible" (onglet Machines), pour
    les cas où la devinette automatique tombe à côté. */
+/* Sélection à choix multiples des muscles ciblés par une machine (voir
+   allMuscles) — chips plutôt qu'un <select multiple> natif, peu maniable au
+   doigt sur mobile. value = tableau de noms (sous-ensemble de MUSCLES),
+   onChange reçoit le nouveau tableau complet. */
+/* Sélection à choix multiples des muscles ciblés par une machine (voir
+   allMuscles), AVEC intensité par muscle (voir muscleWeight — "Principal"
+   = poids 1, "Secondaire" = 0.5). value = tableau de noms, intensity = map
+   {muscle: poids}, onChange(value, intensity) reçoit les deux mis à jour
+   ensemble (retirer un muscle nettoie aussi son entrée d'intensité). Chips
+   plutôt qu'un <select multiple> natif, peu maniable au doigt sur mobile. */
+function MusclePicker(props){
+  var value = props.value || [], intensity = props.intensity || {}, onChange = props.onChange;
+  function toggle(m){
+    var has = value.indexOf(m) >= 0;
+    if (has) {
+      var nextV = value.filter(function(x){return x!==m;});
+      var nextI = Object.assign({}, intensity);
+      delete nextI[m];
+      onChange(nextV, nextI);
+    } else {
+      onChange(value.concat([m]), intensity);
+    }
+  }
+  function setLevel(m, w){
+    var nextI = Object.assign({}, intensity);
+    nextI[m] = w;
+    onChange(value, nextI);
+  }
+  return h("div", null,
+    h("div",{style:{display:"flex",flexWrap:"wrap",gap:6,marginBottom:value.length>1?8:0}}, MUSCLES.map(function(m){
+      var on = value.indexOf(m) >= 0;
+      return h("button",{key:m, onClick:function(){toggle(m);},
+        style:{padding:"6px 10px",borderRadius:6,background:on?C.pin:C.shroud,color:on?C.ink:C.taupe,
+          border:"1px solid "+(on?"transparent":C.taupeDim),fontFamily:sansCond,fontSize:12.5,fontWeight:600}}, m);
+    })),
+    value.length>1 ? h("div",{style:{display:"flex",flexDirection:"column",gap:4,marginBottom:6}}, value.map(function(m){
+      var w = intensity[m]!=null ? intensity[m] : 1;
+      return h("div",{key:m, style:{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"5px 8px",borderRadius:6,background:C.shroud}},
+        h("span",{style:{fontSize:12.5,color:C.bone}}, m),
+        h("div",{style:{display:"flex",gap:4}},
+          h("button",{onClick:function(){setLevel(m,1);}, style:{padding:"4px 8px",borderRadius:5,background:w>=1?C.pin:C.shroudDeep,color:w>=1?C.ink:C.taupe,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:11,fontWeight:600}}, "Principal"),
+          h("button",{onClick:function(){setLevel(m,0.5);}, style:{padding:"4px 8px",borderRadius:5,background:w<1?C.pin:C.shroudDeep,color:w<1?C.ink:C.taupe,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:11,fontWeight:600}}, "Secondaire")));
+    })) : null,
+    value.length>1 ? h("p",{style:{fontSize:11,color:C.taupe,lineHeight:1.4,marginBottom:8}},
+      "\"Secondaire\" compte pour moitié dans le volume hebdomadaire de ce muscle — pour un muscle qui participe sans être la cible principale (ex. triceps sur un développé pectoraux).") : null
+  );
+}
+/* Sélection à choix multiples des salles où une machine est disponible (voir
+   exerciseAvailableAtGym). value = tableau d'ids de profile.gyms — vide =
+   "Toutes mes salles" (comportement par défaut, voir exerciseAvailableAtGym).
+   N'a d'utilité que si l'utilisateur a configuré plusieurs salles (voir
+   OptionsTab > "Mes salles") ; les appelants ne l'affichent que dans ce cas. */
+function GymPicker(props){
+  var value = props.value || [], gyms = props.gyms || [], onChange = props.onChange;
+  var allSelected = value.length === 0;
+  return h("div",{style:{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}},
+    h("button",{onClick:function(){onChange([]);},
+      style:{padding:"6px 10px",borderRadius:6,background:allSelected?C.pin:C.shroud,color:allSelected?C.ink:C.taupe,
+        border:"1px solid "+(allSelected?"transparent":C.taupeDim),fontFamily:sansCond,fontSize:12.5,fontWeight:600}}, "Toutes mes salles"),
+    gyms.map(function(g){
+      var on = value.indexOf(g.id) >= 0;
+      return h("button",{key:g.id, onClick:function(){ onChange(on ? value.filter(function(x){return x!==g.id;}) : value.concat([g.id])); },
+        style:{padding:"6px 10px",borderRadius:6,background:on?C.pin:C.shroud,color:on?C.ink:C.taupe,
+          border:"1px solid "+(on?"transparent":C.taupeDim),fontFamily:sansCond,fontSize:12.5,fontWeight:600}}, g.name);
+    }));
+}
 function OrderTierPicker(props){
   var value=props.value, onChange=props.onChange;
   return h("div",{style:{display:"flex",gap:6}}, [1,2,3].map(function(t){
@@ -2474,13 +2899,32 @@ function OrderTierPicker(props){
   }));
 }
 function ManualAdd(props){
-  var onAdd = props.onAdd;
-  var _d = useState({name:"",brand:"",muscle:"Dos",kind:"machine",inc:2.5,unilateral:false}), d=_d[0], setD=_d[1];
+  var onAdd = props.onAdd, profile = props.profile || {};
+  var gyms = profile.gyms || [];
+  var defaultGymIds = (gyms.length>1 && profile.currentGymId) ? [profile.currentGymId] : [];
+  var _d = useState({name:"",brand:"",muscles:[],muscleIntensity:{},kind:"machine",inc:2.5,unilateral:false,gymIds:defaultGymIds}), d=_d[0], setD=_d[1];
+  var canAdd = d.name.trim() && d.muscles.length>0;
+  /* Suggestion auto d'après le nom (voir guessMuscles) — jamais appliquée
+     toute seule, juste proposée avec un bouton "Utiliser" tant que la
+     sélection actuelle ne correspond pas déjà à la suggestion. */
+  var suggestion = d.name.trim() ? guessMuscles(d.name) : [];
+  var suggestionMuscles = suggestion.map(function(s){return s.muscle;});
+  var suggestionMatches = suggestion.length>0 && suggestionMuscles.length===d.muscles.length && suggestionMuscles.every(function(m){return d.muscles.indexOf(m)>=0;});
+  function useSuggestion(){
+    var intensity = {}; suggestion.forEach(function(s){ intensity[s.muscle] = s.intensity; });
+    setD(Object.assign({}, d, { muscles: suggestionMuscles, muscleIntensity: intensity }));
+  }
   return h("div",{style:{borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.taupeDim}},
     h(TextField,{value:d.name, placeholder:"Nom (ex. Tirage vertical)", onChange:function(v){setD(Object.assign({},d,{name:v}));}}),
     h(TextField,{value:d.brand, placeholder:"Marque (ex. Technogym)", onChange:function(v){setD(Object.assign({},d,{brand:v}));}}),
-    h(Select,{value:d.muscle, onChange:function(v){setD(Object.assign({},d,{muscle:v}));}},
-      MUSCLES.map(function(m){ return h("option",{key:m,value:m},m); })),
+    h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,marginBottom:4}}, "Muscle(s) sollicité(s) — plusieurs si la machine en travaille plusieurs (ex. Chest Press = pectoraux + triceps)"),
+    (suggestion.length>0 && !suggestionMatches) ? h("div",{style:{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8,padding:"6px 8px",borderRadius:6,background:C.shroud,border:"1px solid "+C.taupeDim}},
+      h("span",{style:{fontSize:11.5,color:C.taupe}}, "D'après le nom : "+suggestion.map(function(s){return s.muscle+(s.intensity<1?" (secondaire)":"");}).join(", ")),
+      h("button",{onClick:useSuggestion, style:{padding:"4px 8px",borderRadius:5,background:C.pin,color:C.ink,border:"none",fontFamily:sansCond,fontSize:11,fontWeight:700}}, "Utiliser")) : null,
+    h(MusclePicker,{value:d.muscles, intensity:d.muscleIntensity, onChange:function(v,i){setD(Object.assign({},d,{muscles:v, muscleIntensity:i}));}}),
+    gyms.length>1 ? h("div",null,
+      h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,marginBottom:4}}, "Disponible dans"),
+      h(GymPicker,{value:d.gymIds, gyms:gyms, onChange:function(v){setD(Object.assign({},d,{gymIds:v}));}})) : null,
     h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}},
       Object.keys(KIND_LABEL).map(function(k){ var on=d.kind===k; return h("button",{key:k, onClick:function(){setD(Object.assign({},d,{kind:k}));},
         style:{padding:"8px 4px",borderRadius:6,background:on?C.pin:C.shroud,color:on?C.ink:C.taupe,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:12,fontWeight:600,lineHeight:1.25}}, KIND_LABEL[k]); })),
@@ -2492,8 +2936,8 @@ function ManualAdd(props){
       h(Stepper,{value:d.inc, step:0.5, min:0.5, suffix:"kg", onChange:function(v){setD(Object.assign({},d,{inc:v}));}})),
     h("p",{style:{fontSize:11.5,color:C.taupe,lineHeight:1.5,marginBottom:10}},
       "Le palier poly/semi/isolation est déterminé automatiquement à partir du nom — reconnaît aussi les exercices de callisthénie/street workout (tractions, pompes, dips, muscle-up, fentes, gainage...), pas que les noms de machines — modifiable ensuite via le petit rond numéroté en séance ou dans la liste ci-dessous si besoin. Sans lest ajouté, laisse le poids à 0 kg au moment de logger une série et progresse via les répétitions."),
-    h("button",{onClick:function(){ if (d.name.trim()) onAdd(Object.assign({},d,{name:d.name.trim(), brand:d.brand.trim()||"—", order: inferOrderTier(d.name, d.muscle)})); },
-      style:{width:"100%",padding:"10px 0",borderRadius:6,background:C.pin,color:C.ink,fontFamily:sansCond,fontSize:15,fontWeight:700,border:"none"}}, "Ajouter au matériel"));
+    h("button",{onClick:function(){ if (canAdd) onAdd(Object.assign({},d,{name:d.name.trim(), brand:d.brand.trim()||"—", muscle:d.muscles[0], order: inferOrderTier(d.name, d.muscles.join(" "))})); },
+      style:{width:"100%",padding:"10px 0",borderRadius:6,background:canAdd?C.pin:C.shroud,color:canAdd?C.ink:C.taupe,fontFamily:sansCond,fontSize:15,fontWeight:700,border:"none"}}, "Ajouter au matériel"));
 }
 function AddToDay(props){
   var day=props.day, exercises=props.exercises, program=props.program, persistConfig=props.persistConfig, goal=props.goal;
@@ -2509,7 +2953,7 @@ function AddToDay(props){
     h("select",{value:pick, onChange:function(e){setPick(e.target.value);},
       style:{flex:1,padding:"8px",borderRadius:6,background:C.shroudDeep,color:C.bone,border:"1px solid "+C.taupeDim,fontFamily:sansBody,fontSize:14}},
       h("option",{value:""}, "Ajouter un exercice…"),
-      exercises.map(function(e){ return h("option",{key:e.id,value:e.id}, e.name+" — "+e.muscle); })),
+      exercises.map(function(e){ return h("option",{key:e.id,value:e.id}, e.name+" ("+e.brand+") — "+allMuscles(e).join(", ")); })),
     h("button",{onClick:add, style:{padding:"0 16px",borderRadius:6,background:C.pin,color:C.ink,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Ajouter"));
 }
 function MachinesTab(props){
@@ -2521,6 +2965,8 @@ function MachinesTab(props){
   var _c=useState(null), confirmDel=_c[0], setConfirmDel=_c[1];
   var _n=useState(null), notice=_n[0], setNotice=_n[1];
   var _pr=useState(null), proposal=_pr[0], setProposal=_pr[1];
+  var _em=useState(null), editMuscles=_em[0], setEditMuscles=_em[1];
+  var _egf=useState(null), editGymFor=_egf[0], setEditGymFor=_egf[1];
 
   function usage(exId){
     return { days: program.filter(function(d){return d.items.some(function(it){return it.ex===exId;});}).map(function(d){return d.label;}),
@@ -2530,7 +2976,7 @@ function MachinesTab(props){
     var out = removeWithSubstitution(exId, exercises, program);
     persistConfig(out.exercises, out.program);
     setConfirmDel(null);
-    setNotice({ gone: out.gone.name, muscle: out.gone.muscle, report: out.report });
+    setNotice({ gone: out.gone.name, muscles: allMuscles(out.gone).join(" + "), report: out.report });
   }
   function handleAdd(raw){
     var newEx = Object.assign({}, raw, { id: "u"+Date.now() });
@@ -2549,8 +2995,24 @@ function MachinesTab(props){
   function updateOrder(exId, order){
     persistConfig(exercises.map(function(e){ return e.id===exId ? Object.assign({},e,{order:order}) : e; }), program);
   }
+  /* Corrige/complète les muscles (et leur intensité) ciblés par une machine
+     déjà dans le matériel — même schéma que updateOrder ci-dessus (voir
+     MusclePicker). */
+  function updateMuscles(exId, muscles, intensity) {
+    if (!muscles || !muscles.length) return;
+    persistConfig(exercises.map(function(e){ return e.id===exId ? Object.assign({},e,{muscle:muscles[0], muscles:muscles, muscleIntensity:intensity||{}}) : e; }), program);
+  }
+  /* Corrige les salles où une machine est disponible (voir
+     exerciseAvailableAtGym, GymPicker) — gymIds peut être vide ("toutes les
+     salles"), contrairement à updateMuscles pas de garde ici. */
+  function updateGyms(exId, gymIds) {
+    persistConfig(exercises.map(function(e){ return e.id===exId ? Object.assign({},e,{gymIds:gymIds}) : e; }), program);
+  }
   var vol = plannedVolume(program, exercises, avgSessions);
-  var byMuscle = {}; exercises.forEach(function(e){ (byMuscle[e.muscle]=byMuscle[e.muscle]||[]).push(e); });
+  /* Une machine multi-muscle (voir allMuscles) apparaît dans CHAQUE section
+     muscle qu'elle sollicite ci-dessous — cohérent avec le fait qu'elle
+     compte pour le volume de chacun (voir plannedVolume). */
+  var byMuscle = {}; exercises.forEach(function(e){ allMuscles(e).forEach(function(mu){ (byMuscle[mu]=byMuscle[mu]||[]).push(e); }); });
 
   return h("div", null,
     notice ? h("div",{style:{marginBottom:16,borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.pin}},
@@ -2559,13 +3021,13 @@ function MachinesTab(props){
         h("div",{style:{fontFamily:sansCond,fontSize:15,fontWeight:600}}, notice.gone+" retirée")),
       notice.report.length===0 ? h("div",{style:{fontSize:13,color:C.taupe}}, "Elle n'était dans aucune séance — rien à remplacer.")
         : notice.report.map(function(r,i){ return h("div",{key:i, style:{fontSize:13, color:r.to?C.bone:C.rust, lineHeight:1.5, marginBottom:3}},
-            r.to ? (r.day+" : remplacée par "+r.to+", "+r.sets+" séries conservées.") : (r.day+" : aucune autre machine pour "+notice.muscle+" — tu perds "+r.sets+" séries. Ajoute du matériel ou reporte-les ailleurs.")); }),
+            r.to ? (r.day+" : remplacée par "+r.to+", "+r.sets+" séries conservées.") : (r.day+" : aucune autre machine pour "+notice.muscles+" — tu perds "+r.sets+" séries. Ajoute du matériel ou reporte-les ailleurs.")); }),
       h("button",{onClick:function(){setNotice(null);}, style:{marginTop:8,padding:"6px 12px",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:13}}, "Compris")) : null,
 
     proposal ? h("div",{style:{marginBottom:16,borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.green}},
       h("div",{style:{fontFamily:sansCond,fontSize:15,fontWeight:600,marginBottom:6}}, "Où mettre "+proposal.newEx.name+" ?"),
       h("div",{style:{fontSize:13,color:C.taupe,lineHeight:1.5,marginBottom:10}},
-        proposal.newEx.muscle+" est actuellement à "+proposal.placement.current+" séries/semaine"+(proposal.placement.current<proposal.placement.target?" — en dessous de la cible "+proposal.placement.target+" séries/semaine visée par ton objectif actuel.":".")+" Proposition : "+proposal.placement.setsEach+" séries dans "+proposal.placement.targetLabels.join(" et ")+"."),
+        describePlacement(proposal.placement)+" Proposition : "+proposal.placement.setsEach+" séries dans "+proposal.placement.targetLabels.join(" et ")+"."),
       h("div",{style:{display:"flex",gap:8}},
         h("button",{onClick:acceptPlacement, style:{flex:1,padding:"8px 0",borderRadius:6,background:C.green,color:C.ink,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Ajouter aux séances"),
         h("button",{onClick:function(){setProposal(null);}, style:{flex:1,padding:"8px 0",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:14}}, "Garder en réserve"))) : null,
@@ -2576,7 +3038,7 @@ function MachinesTab(props){
           background:mode==="manual"?C.pin:C.shroudDeep, color:mode==="manual"?C.ink:C.bone, border:"1px solid "+C.taupeDim,
           fontFamily:sansCond,fontSize:14.5,fontWeight:600, marginBottom:12}},
         h(Icon,{name:"plus",size:16}), "Ajouter une machine, une poulie ou un poids libre"),
-      mode==="manual" ? h(ManualAdd,{onAdd:handleAdd}) :
+      mode==="manual" ? h(ManualAdd,{onAdd:handleAdd, profile:profile}) :
         h("p",{style:{fontSize:13.5,color:C.taupe,lineHeight:1.55}},
           "Trois machines sont marquées « à vérifier » : tirage vertical, traction assistée, tirage horizontal. Renomme-les depuis la liste ci-dessous une fois que tu as vérifié la vraie machine sur place, ou supprime-les si elles n'existent pas.")),
 
@@ -2633,7 +3095,8 @@ function MachinesTab(props){
           h("div",{style:{fontFamily:sansCond,fontSize:13,color:C.pin,marginBottom:4}}, muscle),
           list.map(function(e){
             var stall = stallInfo(sessions, e.id), u = usage(e.id), pending = confirmDel===e.id;
-            var alt = exercises.find(function(x){return x.id!==e.id && x.muscle===e.muscle;});
+            var eMuscles = allMuscles(e);
+            var alt = exercises.find(function(x){return x.id!==e.id && allMuscles(x).some(function(mu){return eMuscles.indexOf(mu)>=0;});});
             return h("div",{key:e.id, style:{marginBottom:4,borderRadius:8,overflow:"hidden",background:C.shroudDeep,border:"1px solid "+(pending?C.rust:(e.order?C.shroud:C.rust))}},
               h("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 12px",gap:8}},
                 h("div",{style:{minWidth:0}},
@@ -2646,10 +3109,20 @@ function MachinesTab(props){
                     style:{padding:6,borderRadius:6,color:pending?C.rust:C.taupeDim,background:"transparent",border:"none"}}, h(Icon,{name:"trash",size:15})))),
               h("div",{style:{padding:"0 12px 10px"}},
                 !e.order ? h("div",{style:{fontSize:11,color:C.rust,marginBottom:4}}, "Ordre non défini — choisis un palier ci-dessous.") : null,
-                h(OrderTierPicker,{value:exerciseOrderTier(e), onChange:function(v){updateOrder(e.id, v);}})),
+                h(OrderTierPicker,{value:exerciseOrderTier(e), onChange:function(v){updateOrder(e.id, v);}}),
+                h("button",{onClick:function(){setEditMuscles(editMuscles===e.id?null:e.id);},
+                  style:{marginTop:8,padding:0,color:C.taupe,background:"transparent",border:"none",fontFamily:sansCond,fontSize:11.5,textDecoration:"underline",textAlign:"left"}},
+                  "Muscles : "+eMuscles.map(function(mu){ var w=muscleWeight(e,mu); return mu+(w<1?" (secondaire)":""); }).join(", ")+(editMuscles===e.id?" (fermer)":" (modifier)")),
+                editMuscles===e.id ? h("div",{style:{marginTop:6}},
+                  h(MusclePicker,{value:eMuscles, intensity:e.muscleIntensity||{}, onChange:function(v,i){ updateMuscles(e.id, v, i); }})) : null,
+                (profile.gyms && profile.gyms.length>1) ? h("button",{onClick:function(){setEditGymFor(editGymFor===e.id?null:e.id);},
+                  style:{marginTop:8,padding:0,color:C.taupe,background:"transparent",border:"none",fontFamily:sansCond,fontSize:11.5,textDecoration:"underline",textAlign:"left"}},
+                  "Salle(s) : "+((e.gymIds&&e.gymIds.length)?e.gymIds.map(function(id){ var g=profile.gyms.find(function(x){return x.id===id;}); return g?g.name:id; }).join(", "):"toutes")+(editGymFor===e.id?" (fermer)":" (modifier)")) : null,
+                (profile.gyms && profile.gyms.length>1 && editGymFor===e.id) ? h("div",{style:{marginTop:6}},
+                  h(GymPicker,{value:e.gymIds||[], gyms:profile.gyms, onChange:function(v){updateGyms(e.id, v);}})) : null),
               pending ? h("div",{style:{padding:"0 12px 12px",borderTop:"1px solid "+C.shroud}},
                 h("p",{style:{fontSize:13,color:C.bone,lineHeight:1.5,margin:"8px 0"}},
-                  (u.days.length>0 ? (alt ? "Utilisée dans "+u.days.join(" et ")+". Sera remplacée par "+alt.name+", mêmes séries." : "Utilisée dans "+u.days.join(" et ")+". Aucune autre machine pour "+e.muscle+" — ces séries seront perdues.") : "Pas utilisée dans tes séances.")
+                  (u.days.length>0 ? (alt ? "Utilisée dans "+u.days.join(" et ")+". Sera remplacée par "+alt.name+", mêmes séries." : "Utilisée dans "+u.days.join(" et ")+". Aucune autre machine pour "+eMuscles.join(" + ")+" — ces séries seront perdues.") : "Pas utilisée dans tes séances.")
                   + (u.logged>0 ? (" "+u.logged+" séance"+(u.logged>1?"s":"")+" enregistrée"+(u.logged>1?"s":"")+" — l'historique est conservé.") : "")),
                 h("div",{style:{display:"flex",gap:8}},
                   h("button",{onClick:function(){handleDelete(e.id);}, style:{flex:1,padding:"8px 0",borderRadius:6,background:C.rust,color:C.bone,fontFamily:sansCond,fontSize:14,fontWeight:600,border:"none"}}, "Supprimer"),
@@ -2699,7 +3172,7 @@ function AnalyseTab(props){
 
   var setsByMuscle = useMemo(function(){
     var m = {};
-    last28.forEach(function(s){ s.entries.forEach(function(e){ var ex=exMap[e.ex]; if(!ex) return; m[ex.muscle]=(m[ex.muscle]||0)+e.sets.length; }); });
+    last28.forEach(function(s){ s.entries.forEach(function(e){ var ex=exMap[e.ex]; if(!ex) return; allMuscles(ex).forEach(function(mu){ m[mu]=(m[mu]||0)+e.sets.length*muscleWeight(ex,mu); }); }); });
     return Object.keys(m).map(function(muscle){ return {muscle:muscle, sets: Math.round((m[muscle]/4)*10)/10}; }).sort(function(a,b){return b.sets-a.sets;});
   }, [sessions]);
 
@@ -2992,7 +3465,8 @@ function App(props){
         active:state.active, setActive:setActive, finishSession:finishSession, startRestTimer:startRestTimer,
         deloadForNextStart:state.deloadForNextStart, setDeloadForNextStart:setDeloadForNextStart,
         snoozeDeload:snoozeDeload, deloadSuggested: !state.active && deloadSuggested, deloadReason:deloadReason,
-        updateExerciseOrder:updateExerciseOrder, updateExerciseInc:updateExerciseInc, persistConfig:persistConfig, goal:state.profile.goal }) : null,
+        updateExerciseOrder:updateExerciseOrder, updateExerciseInc:updateExerciseInc, persistConfig:persistConfig, goal:state.profile.goal,
+        profile:state.profile, setProfile:setProfile }) : null,
       tab==="programme" ? h(ProgrammeTab,{ program:state.program, exercises:state.exercises, profile:state.profile, setProfile:setProfile }) : null,
       tab==="historique" ? h(HistoriqueTab,{ sessions:state.sessions, exMap:exMap, program:state.program, deleteSession:deleteSession }) : null,
       tab==="machines" ? h(MachinesTab,{ exercises:state.exercises, program:state.program, persistConfig:persistConfig, sessions:state.sessions, updateExerciseInc:updateExerciseInc, goal:state.profile.goal, profile:state.profile }) : null,
