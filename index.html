@@ -461,8 +461,22 @@ var KIND_LABEL = { machine: "Machine guidée", cable: "Poulie", free: "Poids lib
    d'équipement (KIND_LABEL) plutôt que sur un tiret vide. "?" (marque "à
    vérifier", voir bestCandidate > verified) reste affiché tel quel — ce
    n'est pas la même chose qu'une marque volontairement absente. */
-function hasBrand(ex) { return !!(ex && ex.brand && ex.brand !== "—"); }
-function brandLabel(ex) { if (!ex) return "—"; return hasBrand(ex) ? ex.brand : (KIND_LABEL[ex.kind] || "—"); }
+/* Corrigé le 6 sept. 2026 — les machines du catalogue de départ dont la
+   marque reste à confirmer portent brand:"?" (un placeholder, pas une
+   marque). hasBrand les considérait comme renseignées, et la ligne sous le
+   nom de la machine affichait donc un "?" tout seul dans "Ce qui t'attend",
+   dans la séance en cours et dans Machines — illisible, et rien n'indiquait
+   qu'il s'agissait d'une info manquante et non d'un bug. Tous les
+   placeholders usuels sont maintenant traités comme "pas de marque", ce qui
+   fait retomber l'affichage sur le type de matériel ("Machine guidée",
+   "Poulie"...), une information vraie et utile. */
+var BRAND_PLACEHOLDERS = { "?":1, "-":1, "–":1, "—":1, "n/a":1, "na":1, "?????":1 };
+function hasBrand(ex) {
+  if (!ex || !ex.brand) return false;
+  var b = String(ex.brand).trim();
+  return b !== "" && !BRAND_PLACEHOLDERS[b.toLowerCase()];
+}
+function brandLabel(ex) { if (!ex) return "—"; return hasBrand(ex) ? ex.brand : (KIND_LABEL[ex.kind] || "Machine guidée"); }
 
 /* ============================================================
    ICONS — small hand-drawn stroke icons (no external icon lib
@@ -2118,7 +2132,7 @@ var SPLIT_TEMPLATES = [
     days:[{label:"Full A",g:["all"]},{label:"Full B",g:["all"]},{label:"Full C",g:["all"]}] },
   { k:"upper_lower", label:"Haut / Bas", sessions:"4 séances/semaine",
     summary:"Le haut du corps un jour, le bas le lendemain.",
-    why:"Le meilleur compromis à 4 séances : chaque muscle revient 2 fois par semaine, avec assez de place dans la séance pour du volume par muscle. C'est le découpage actuel de ton programme.",
+    why:"Le meilleur compromis à 4 séances : chaque muscle revient 2 fois par semaine, avec assez de place dans la séance pour du volume par muscle.",
     days:[{label:"Haut A",g:["upper","core"]},{label:"Bas A",g:["lower"]},{label:"Haut B",g:["upper"]},{label:"Bas B",g:["lower","core"]}] },
   { k:"ppl", label:"Push / Pull / Legs", sessions:"3 séances/semaine",
     summary:"Poussée (pecs, épaules, triceps), tirage (dos, biceps), jambes.",
@@ -2253,6 +2267,27 @@ function minRecoveryGap(program, exercises){
     if (gap < min) min = gap;
   }
   return min;
+}
+/* Ajouté le 6 sept. 2026 — l'écran "Type de split" expliquait longuement
+   qu'aucun découpage n'est supérieur à un autre, listait les alternatives et
+   proposait "Changer"... sans jamais NOMMER celui qui est actif. Pour le
+   savoir il fallait ouvrir le sélecteur et repérer celui qui portait la
+   pastille. Le découpage n'est stocké nulle part (le programme est la seule
+   source de vérité, et il reste modifiable jour par jour dans "Composer les
+   séances") : on le retrouve donc en comparant les libellés de jours du
+   programme à ceux de chaque modèle. Si rien ne correspond — programme
+   remanié à la main — on le dit au lieu d'inventer un nom. */
+function detectSplitKind(program){
+  if (!program || !program.length) return null;
+  var labels = program.map(function(d){ return String(d.label||"").toLowerCase().trim(); });
+  for (var i=0;i<SPLIT_TEMPLATES.length;i++){
+    var t = SPLIT_TEMPLATES[i];
+    if (t.days.length !== labels.length) continue;
+    var want = t.days.map(function(d){ return String(d.label).toLowerCase().trim(); });
+    var same = want.every(function(w,j){ return w === labels[j]; });
+    if (same) return t;
+  }
+  return null;
 }
 function evaluateSplits(exercises, goal, avgSessions, muscleFocus, gymId, profile){
   return SPLIT_TEMPLATES.map(function(tpl){
@@ -2490,18 +2525,28 @@ var TRAINING_KCAL_COEF = { M: 0.0713, F: 0.0637, DEFAULT: 0.0675 };
    by "steps" mode and is derived from the actual program (estimateDayMinutes
    averaged across days), passed in by the caller. */
 function computeNutrition(profile, avgSessionMinutes) {
+  /* BUG CORRIGÉ le 6 sept. 2026 (audit des cas limites) : le champ Poids est
+     effaçable (le Stepper renvoie null sur un champ vidé), et tous les calculs
+     qui en dépendent — kcal des pas, kcal d'entraînement, protéines par kg —
+     produisaient alors NaN. L'appli affichait donc "NaN kcal" et "NaN g" au
+     lieu de dire ce qui manque. Le poids est traité comme la taille ou le sexe
+     : sans lui, on ne calcule pas, et l'interface affiche déjà le message
+     "Renseigne ..." prévu pour ce cas (voir OptionsTab). Le mode "Cible fixe"
+     reste calculable puisqu'il ne dépend ni du poids ni de la DER. */
+  var weight = (typeof profile.weightKg === "number" && isFinite(profile.weightKg) && profile.weightKg > 0)
+    ? profile.weightKg : null;
   var bmr = (!profile.useBmrFormula && profile.bmrMeasured)
     ? profile.bmrMeasured
-    : (profile.heightCm && profile.age && profile.sex ? mifflinBMR(profile.weightKg, profile.heightCm, profile.age, profile.sex) : null);
+    : ((weight && profile.heightCm && profile.age && profile.sex) ? mifflinBMR(weight, profile.heightCm, profile.age, profile.sex) : null);
   var mode = profile.targetMode || (profile.manualTarget ? "manual" : "deficit");
   var target, proteinG, tdee, breakdown = null;
 
   if (mode === "steps") {
-    if (!bmr) return null;
-    var stepsKcal = Math.round((profile.dailySteps||0) * profile.weightKg * KCAL_PER_STEP_PER_KG);
+    if (!bmr || !weight) return null;
+    var stepsKcal = Math.round((profile.dailySteps||0) * weight * KCAL_PER_STEP_PER_KG);
     var avgSessions = ((profile.sessionsMin||0) + (profile.sessionsMax||0)) / 2;
     var coef = profile.sex === "F" ? TRAINING_KCAL_COEF.F : profile.sex === "M" ? TRAINING_KCAL_COEF.M : TRAINING_KCAL_COEF.DEFAULT;
-    var trainingKcal = Math.round((avgSessionMinutes||0) * profile.weightKg * coef * avgSessions / 7);
+    var trainingKcal = Math.round((avgSessionMinutes||0) * weight * coef * avgSessions / 7);
     tdee = bmr + stepsKcal + trainingKcal;
     breakdown = { stepsKcal: stepsKcal, trainingKcal: trainingKcal, avgSessions: avgSessions, avgSessionMinutes: avgSessionMinutes||0 };
   } else {
@@ -2515,15 +2560,19 @@ function computeNutrition(profile, avgSessionMinutes) {
     target = profile.manualTargetKcal;
     proteinG = profile.manualProteinG;
   } else {
-    if (!bmr) return null;
+    if (!bmr || !weight) return null;
     target = tdee - (profile.deficitKcal||0);
-    proteinG = Math.round(profile.weightKg * profile.proteinPerKg);
+    proteinG = Math.round(weight * profile.proteinPerKg);
   }
   var proteinKcal = proteinG * 4;
   var fatG = Math.round(target * 0.25 / 9);
   var fatKcal = fatG * 9;
   var carbKcal = Math.max(0, target - proteinKcal - fatKcal);
   var carbG = Math.round(carbKcal / 4);
+  /* Garde-fou : si une valeur reste non calculable (cible fixe laissée vide,
+     par exemple), on renvoie null plutôt qu'un objet truffé de NaN — l'appel
+     affiche alors son message "il manque une information" au lieu de "NaN". */
+  if (!isFinite(target) || !isFinite(proteinG)) return null;
   return { bmr: bmr?Math.round(bmr):null, tdee: tdee?Math.round(tdee):null, target: Math.round(target), proteinG: proteinG, fatG: fatG, carbG: carbG, breakdown: breakdown };
 }
 
@@ -2552,7 +2601,7 @@ var PROGRAM_VERSION = 3;
    recommitée à la main — contrairement au lien Artifact qui se met à jour
    tout seul". Change cette date à chaque publication notable pour que la
    comparaison soit possible côté utilisateur. */
-var APP_BUILD = "2026-09-06s";
+var APP_BUILD = "2026-09-06u";
 
 function seedState() {
   return {
@@ -3202,6 +3251,19 @@ var EFFORT_OPTS = [
   { v:1, label:"Correct", sub:"encore 1-2 reps possibles" },
   { v:0, label:"Dur", sub:"à l'échec ou presque" },
 ];
+/* Traduit un RIR (reps en réserve) vers le vocabulaire que l'appli utilise
+   PARTOUT ailleurs — ajouté le 6 sept. 2026 : l'Historique affichait "1.0 en
+   réserve", un chiffre brut que l'appli a justement choisi de ne jamais
+   demander à l'utilisateur (voir la note sur RirPicker : estimer "encore 3 ou
+   5 reps ?" est peu fiable, "facile / correct / dur" l'est beaucoup plus).
+   Afficher le chiffre à la relecture contredisait ce choix et n'aidait
+   personne. On retient le libellé dont le seuil est le plus proche. */
+function effortLabelForRir(r){
+  if (r == null || !isFinite(r)) return null;
+  var best = null, bestD = Infinity;
+  EFFORT_OPTS.forEach(function(o){ var d = Math.abs(o.v - r); if (d < bestD) { bestD = d; best = o; } });
+  return best ? best.label.toLowerCase() : null;
+}
 function RirPicker(props) {
   var value=props.value, onChange=props.onChange;
   return h("div",{style:{display:"flex",gap:6,flexWrap:"wrap"}}, EFFORT_OPTS.map(function(o){
@@ -3851,6 +3913,26 @@ function Select(props){
    volume hebdomadaire directement sur chaque ligne de "Volume prévu par
    semaine", pour qu'on voie d'un coup d'œil de quel côté du repère on est.
    Omis : barre identique à avant. */
+function volumeBarMax(rows, goal, profile){
+  /* Échelle commune aux barres de volume (Machines > "Volume prévu par
+     semaine" et Analyse > "Séries réellement faites par semaine"). Corrigé le
+     6 sept. 2026 : l'échelle était figée à max(VOL_MAX*1.3, 20) = 26 séries,
+     sans rapport avec la cible affichée. Pour une cible de 12, le repère de
+     cible tombait à 46% de la largeur et TOUTES les barres se tassaient dans
+     la moitié gauche — la seule chose qu'on cherche à lire (l'écart à la
+     cible) était donc compressée dans le tiers le moins lisible de la ligne.
+     L'échelle suit maintenant les données réellement affichées : le plus
+     grand des (valeurs, cibles) de la liste, +15% de marge pour que le repère
+     de cible ne colle jamais au bord. Elle reste COMMUNE à toutes les lignes
+     de la liste, sinon les muscles ne seraient plus comparables entre eux. */
+  var mf = (profile && profile.muscleFocus) || {};
+  var base = goalPreset(goal).targetSets || VOL_MIN;
+  var top = 0;
+  (rows||[]).forEach(function(v){
+    top = Math.max(top, v.sets||0, base * focusMultiplier(mf, v.muscle));
+  });
+  return Math.max(6, top * 1.15);
+}
 function Bar(props){ // simple horizontal magnitude bar (used for volume rows)
   var value=props.value, max=props.max, tone=props.tone, marker=props.marker;
   var pct = Math.max(2, Math.min(100, (value/max)*100));
@@ -4363,7 +4445,32 @@ function SeanceTab(props) {
               it.gymSwappedFrom ? h("div",{style:{padding:"0 12px 10px",fontSize:12,color:C.steel}}, "Remplace "+it.gymSwappedFrom+" — indisponible dans cette salle.") : null,
               it.gymMissing ? h("div",{style:{padding:"0 12px 10px",fontSize:12,color:C.rust}}, "Indisponible dans cette salle et aucune autre machine équivalente trouvée.") : null);
           })
-        ))
+        ),
+        /* Ajouté le 6 sept. 2026 — la pastille ronde devant chaque machine
+           affiche son PALIER (1 poly / 2 semi / 3 isolation), et son seul
+           explicatif était un attribut title, c'est-à-dire une infobulle au
+           SURVOL : inaccessible sur un téléphone, où il n'y a pas de curseur.
+           Résultat, la colonne se lisait "1, 2, 2, 2, 2, 3, 3, 3" à l'endroit
+           exact où l'œil attend une numérotation d'exercices — donc comme un
+           compteur cassé. La légende est maintenant écrite sous la liste. */
+        h("p",{style:{fontSize:12.5,color:C.taupe,marginTop:6,lineHeight:1.5}},
+          "La pastille devant chaque machine, c'est son palier, pas son numéro : ",
+          h("strong",{style:{color:C.bone,fontWeight:600}},"1"), " polyarticulaire (plusieurs articulations, le plus lourd — à faire tant que tu es frais), ",
+          h("strong",{style:{color:C.bone,fontWeight:600}},"2"), " semi-isolation, ",
+          h("strong",{style:{color:C.bone,fontWeight:600}},"3"), " isolation (un seul muscle — à garder pour la fin). La séance est déjà triée dans cet ordre ; touche une pastille pour corriger le palier d'une machine."),
+        /* La couleur du bloc de charge n'était expliquée nulle part sur cet
+           écran (6 sept. 2026) : vert et ambre se lisaient comme décoratifs
+           alors qu'ils portent la seule consigne du jour — monter ou tenir. */
+        h("p",{style:{fontSize:12.5,color:C.taupe,marginTop:6,lineHeight:1.5}},
+          "Le poids affiché est déjà celui à mettre aujourd'hui — sa couleur dit ce qui a changé depuis ta dernière séance sur cette machine. ",
+          h("strong",{style:{color:C.green,fontWeight:600}},"Vert"),
+          " : l'appli a monté la charge, soit parce que toutes tes séries ont atteint le haut de la fourchette de reps, soit parce que tu as fini avec 3 répétitions ou plus en réserve (dans ce cas elle monte de deux crans d'un coup). ",
+          h("strong",{style:{color:C.rust,fontWeight:600}},"Rouge"),
+          " : deux séances de suite sous la fourchette, on redescend d'un cran. ",
+          h("strong",{style:{color:C.pin,fontWeight:600}},"Ambre"),
+          " : même charge, l'objectif est de gagner une répétition. ",
+          h("strong",{style:{color:C.steel,fontWeight:600}},"Bleu"),
+          " : semaine de décharge (~80% de la charge, une série de moins). Un « — » à la place du poids : machine jamais faite, commence léger en gardant 2 reps en réserve."))
     );
   }
 
@@ -4677,6 +4784,17 @@ function ProgrammeTab(props){
         splitOpen ? "Fermer" : "Changer")},
       splitDone ? h("div",{style:{marginBottom:10,padding:"9px 10px",borderRadius:8,background:C.shroudDeep,borderLeft:"3px solid "+C.green,fontSize:12.5,color:C.green,lineHeight:1.5}},
         "Programme reconstruit en « "+splitDone+" ». Les séries ont été recalculées selon ton objectif et ton ordre de priorité.") : null,
+      /* Le découpage ACTIF, nommé en premier (6 sept. 2026) — voir
+         detectSplitKind : l'écran ne le disait nulle part. */
+      (function(cur){
+        return h("div",{style:{marginBottom:10,padding:"10px 12px",borderRadius:8,background:C.shroudDeep,border:"1px solid "+C.taupeDim}},
+          h("div",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe,marginBottom:2,letterSpacing:.3}}, "DÉCOUPAGE ACTUEL"),
+          h("div",{style:{fontFamily:sansCond,fontSize:19,fontWeight:700,color:C.pin,lineHeight:1.15}},
+            cur ? cur.label : "Programme personnalisé"),
+          h("div",{style:{fontSize:12.5,color:C.taupe,marginTop:3,lineHeight:1.45}},
+            cur ? (cur.summary+" "+program.length+" jours en rotation.")
+                : ("Tes "+program.length+" jours ne correspondent plus à un modèle type — tu les as remaniés dans « Composer les séances » (onglet Machines). C'est parfaitement valable : le volume par muscle continue d'être calculé et équilibré normalement.")));
+      })(detectSplitKind(program)),
       /* Réglage ajouté le 6 sept. 2026 : enchaîner ses séances ou les espacer
          change complètement quel split convient — c'est même le seul cas où le
          découpage compte pour une raison autre que la fréquence (voir
@@ -4760,6 +4878,10 @@ function OptionsTab(props){
   var _ng = useState(""), newGymName=_ng[0], setNewGymName=_ng[1];
   var _erg = useState(null), editGymId=_erg[0], setEditGymId=_erg[1];
   var _egn = useState(""), editGymName=_egn[0], setEditGymName=_egn[1];
+  /* Ajouté EN DERNIER volontairement (6 sept. 2026) : les tests de rendu
+     d'Options remplacent useState par index d'appel, ajouter ce hook plus
+     haut décalerait tous les autres. */
+  var _mfo = useState(false), focusOpen=_mfo[0], setFocusOpen=_mfo[1];
   function addGym(){
     var name = newGymName.trim();
     if (!name) return;
@@ -4908,7 +5030,23 @@ function OptionsTab(props){
      sessionMinutesMax. Le score d'optimisation (voir optimizationScore)
      baisse alors pour ce muscle plutôt que l'appli ne rogne quoi que ce soit
      en silence — voir sa note du 6 sept. 2026. */
-  function applyGoal(g){ set(Object.assign({goal:g, targetMode:"steps", manualTarget:false}, goalPreset(g).nutrition)); setReapplyPrompt(true); }
+  /* Changé le 6 sept. 2026 (signalement : "quand je change perte de poids +
+     hypertrophie à force, ni le programme ni la séance suivante ne changent
+     [...] à chaque fois que je change un paramètre tout doit changer").
+     C'était exact : applyGoal n'appliquait que la partie NUTRITION et laissait
+     le programme intact derrière un bandeau "Optimiser mes séances" qu'il
+     fallait penser à confirmer. L'objectif est pourtant le réglage qui change
+     le PLUS de choses (cible de séries/semaine, fourchettes de répétitions,
+     temps de repos, bornes de séries par exercice) — c'était le dernier
+     réglage à ne pas s'appliquer tout seul, alors que l'équilibrage, le temps,
+     l'ordre de priorité et le type de split le font déjà.
+     Passe donc par le même chemin que les autres : profil ET programme mis à
+     jour dans le même geste, y compris la prochaine séance puisqu'elle est
+     lue depuis le programme. */
+  function applyGoal(g){
+    applyBalanceOrTimeChange(Object.assign({goal:g, targetMode:"steps", manualTarget:false}, goalPreset(g).nutrition));
+    setReapplyPrompt(false);
+  }
   /* Utilise optPick.n (voir pickOptimalAvgSessions) plutôt que le simple
      milieu de fourchette avgSessionsPerWeek(profile) — la fréquence
      réellement appliquée à chaque machine tient maintenant compte à la fois
@@ -4931,7 +5069,12 @@ function OptionsTab(props){
   function applyBalanceOrTimeChange(patch) {
     var newProfile = Object.assign({}, profile, patch);
     var mf = ("muscleFocus" in patch) ? patch.muscleFocus : muscleFocus;
-    var pick = pickOptimalAvgSessions(program, exercises, goalNow,
+    /* Le NOUVEL objectif, pas l'ancien — sans ça, changer d'objectif
+       d'entraînement recalculait le programme avec les repères du précédent
+       (corrigé le 6 sept. 2026 en même temps que l'application immédiate du
+       changement d'objectif, voir applyGoal). */
+    var goalTarget = newProfile.goal || goalNow;
+    var pick = pickOptimalAvgSessions(program, exercises, goalTarget,
       newProfile.sessionsMin, newProfile.sessionsMax,
       newProfile.sessionMinutesMin||0, newProfile.sessionMinutesMax||90, mf);
     setProfile(newProfile);
@@ -4943,7 +5086,7 @@ function OptionsTab(props){
        persistConfig, lui, relirait state.profile — encore l'ANCIEN à cet
        instant (setProfile ci-dessus n'est pas encore appliqué au rendu), et
        écraserait donc ce calcul par un calcul basé sur le réglage précédent. */
-    persistConfig(exercises, applyGoalToProgram(program, exercises, goalNow, pick.n, mf, newProfile), {reoptimize:false});
+    persistConfig(exercises, applyGoalToProgram(program, exercises, goalTarget, pick.n, mf, newProfile), {reoptimize:false});
   }
   var totalItems = program.reduce(function(a,d){return a+d.items.length;},0);
   /* "Priorité par muscle" (demande du 5 sept. 2026 : "choisir la proportion
@@ -5124,9 +5267,24 @@ function OptionsTab(props){
       h("p",{style:{fontSize:12,color:C.taupe,lineHeight:1.5,marginTop:2}},
         "Indépendamment de cet ordre, l'appli retire aussi les séries devenues inutiles : si un muscle dépasse déjà sa cible parce qu'il est sollicité en secondaire sur beaucoup de machines (le triceps sur toutes les poussées, par exemple), les séries en trop sont retirées de ses machines dédiées tant qu'aucun autre muscle ne repasse sous sa cible.")),
 
-    usedMuscles.length ? h(Section, {title:"Priorité par muscle"},
+    /* Repliée par défaut le 6 sept. 2026 — ces 16 lignes de réglage (une par
+       muscle, presque toujours toutes à 1×) occupaient à elles seules près de
+       1 700 px au MILIEU de l'onglet Options, entre "Ordre de priorité" et la
+       nutrition : sur un téléphone, tout ce qui suit se trouvait derrière un
+       mur de compteurs identiques qu'on ne touche presque jamais. Le résumé
+       replié dit en une ligne s'il y a quelque chose à voir, et la section
+       s'ouvre d'office quand un réglage a effectivement été personnalisé. */
+    usedMuscles.length ? h(Section, {title:"Priorité par muscle",
+      right: h("button",{onClick:function(){setFocusOpen(!(focusOpen||muscleFocusCustomized));},
+        "aria-expanded":(focusOpen||muscleFocusCustomized)?"true":"false",
+        style:{padding:"5px 10px",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:12}},
+        (focusOpen||muscleFocusCustomized) ? "Fermer" : "Régler")},
       h("p",{style:{fontSize:12,color:C.taupe,lineHeight:1.6,marginBottom:10}},
-        "Par défaut (1×, \"équilibré\") chaque muscle vise le même volume hebdomadaire pour cet objectif. Augmente la priorité d'un muscle pour lui donner plus de volume que les autres, ou baisse-la pour lui en donner moins — les séries déjà prévues par le palier poly/semi/isolation de chaque machine restent un plancher dans tous les cas : une priorité basse retire seulement le supplément ajouté au-delà, jamais l'existant."),
+        muscleFocusCustomized
+          ? ("Réglages en cours : "+usedMuscles.filter(function(mu){return focusMultiplier(muscleFocus,mu)!==1;})
+              .map(function(mu){return mu+" "+focusMultiplier(muscleFocus,mu)+"×";}).join(", ")+". Tous les autres muscles visent le volume standard de ton objectif.")
+          : "Tous les muscles visent le même volume hebdomadaire (1×, équilibré). Ouvre pour donner plus — ou moins — de volume à un muscle en particulier ; les séries déjà prévues par le palier poly/semi/isolation de chaque machine restent un plancher dans tous les cas, une priorité basse ne retire que le supplément ajouté au-delà."),
+      !(focusOpen||muscleFocusCustomized) ? null :
       h("div",{style:{display:"flex",flexDirection:"column",gap:8,marginBottom:muscleFocusCustomized?10:0}},
         usedMuscles.map(function(mu){
           var w = focusMultiplier(muscleFocus, mu);
@@ -5134,24 +5292,22 @@ function OptionsTab(props){
             h("span",{style:{fontSize:13.5,color: w!==1?C.pin:C.bone,fontWeight: w!==1?700:500}}, mu),
             h(Stepper,{value:w, step:0.5, min:0.25, suffix:"×", onChange:function(v){ setMuscleFocusFor(mu, v); }}));
         })),
-      muscleFocusCustomized ? h("button",{onClick:resetMuscleFocus,
+      muscleFocusCustomized ? h("button",{onClick:function(){ setFocusOpen(false); resetMuscleFocus(); },
         style:{width:"100%",padding:"8px 0",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:13,fontWeight:600}}, "Tout équilibrer (remettre 1× partout)") : null
     ) : null,
 
-    reapplyPrompt ? h("div",{style:{borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.pin,marginTop:-6,marginBottom:14}},
-      h("div",{style:{fontSize:13,color:C.bone,lineHeight:1.5,marginBottom:10}},
-        "Optimiser tes "+totalItems+" exercices déjà en place pour \""+((GOALS.find(function(g){return g.k===profile.goal;})||{}).label||"")+"\", à un rythme de "+optPick.n.toFixed(1)+" séances/semaine"
-        +(optPick.inWindow
-          ? " (dans ta fourchette de "+profile.sessionMinutesMin+"–"+profile.sessionMinutesMax+" min/séance)"
-          : " (le plus proche possible de ta fourchette de "+profile.sessionMinutesMin+"–"+profile.sessionMinutesMax+" min/séance — aucune fréquence entre "+profile.sessionsMin+" et "+profile.sessionsMax+" séances/semaine ne l'atteint exactement sur ton catalogue actuel)")
-        +(optPick.meetsFreq ? ", en respectant le repère fréquence de cet objectif" : ", même si le repère fréquence de cet objectif reste hors d'atteinte dans cette fourchette")
-        +". Ça remplace le réglage de CHAQUE machine par le repère de son palier (poly/semi/isolation) pour ce rythme, "
-        +(muscleFocusCustomized ? "en tenant compte de tes priorités par muscle réglées ci-dessus" : "en répartissant le volume équitablement entre tous les muscles sollicités")
-        +" (voir Machines > \"Volume prévu par semaine\") — écrase donc les ajustements que tu as pu faire à la main entre-temps."),
-      h("div",{style:{display:"flex",gap:8}},
-        h("button",{onClick:reapplyGoalToProgram, style:{flex:1,padding:"9px 0",borderRadius:6,background:C.pin,color:C.ink,fontFamily:sansCond,fontSize:13.5,fontWeight:700,border:"none"}}, "Optimiser mes séances"),
-        h("button",{onClick:function(){setReapplyPrompt(false);}, style:{flex:1,padding:"9px 0",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:13.5}}, "Non merci"))
-    ) : null,
+    /* Le bandeau de confirmation "Optimiser mes séances" a été retiré le
+       6 sept. 2026 : plus aucun réglage ne le déclenchait, puisque tous
+       s'appliquent désormais immédiatement (objectif compris, voir applyGoal).
+       L'action reste disponible en permanence ici — elle sert à repartir des
+       repères calculés quand on a modifié des séries à la main et qu'on veut
+       revenir au calcul de l'appli. */
+    h("div",{style:{marginTop:-6,marginBottom:14}},
+      h("button",{onClick:reapplyGoalToProgram,
+        style:{width:"100%",padding:"9px 0",borderRadius:6,color:C.bone,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:13.5,fontWeight:600}},
+        "Recalculer toutes mes séances maintenant"),
+      h(InfoTip,{label:"Quand est-ce utile ?"},
+        "Normalement jamais : chaque réglage (objectif, priorité par muscle, séances, temps, ordre de priorité, type de split, ajout ou retrait d'une machine) recalcule déjà tes séances tout seul. Ce bouton sert au cas où tu as ajusté des séries À LA MAIN dans Machines > « Composer les séances » et que tu veux revenir aux repères calculés par l'appli — il remplace le réglage de chacune de tes "+totalItems+" machines par celui de son palier (poly/semi/isolation) pour ton objectif « "+((GOALS.find(function(g){return g.k===profile.goal;})||{}).label||"")+" », à "+optPick.n.toFixed(1)+" séances/semaine"+(optPick.inWindow?" (dans ta fourchette de temps)":" (au plus proche de ta fourchette de temps)")+". Tes retouches manuelles sont donc écrasées.")),
 
     h(Section, {title:"Dépense énergétique de repos (DER)"},
       h("div",{style:{padding:"10px 12px",borderRadius:8,background:C.shroudDeep,border:"1px solid "+C.taupeDim,marginBottom:10}},
@@ -5221,7 +5377,9 @@ function OptionsTab(props){
         h(StatCard,{label:"Glucides", value:nut.carbG+" g"}),
         nut.breakdown ? h(StatCard,{label:"Pas (~"+(profile.dailySteps||0)+"/j)", value:nut.breakdown.stepsKcal+" kcal"}) : null,
         nut.breakdown ? h(StatCard,{label:"Entraînement (~"+nut.breakdown.avgSessionMinutes+" min × "+nut.breakdown.avgSessions.toFixed(1)+"/sem)", value:nut.breakdown.trainingKcal+" kcal"}) : null
-      ) : h("div",{style:{fontSize:13,color:C.rust,marginTop:10}}, "Renseigne taille + sexe (ou une DER mesurée) pour calculer tes cibles."),
+      ) : h("div",{style:{fontSize:13,color:C.rust,marginTop:10}},
+        !profile.weightKg ? "Renseigne ton poids ci-dessus pour calculer tes cibles."
+          : "Renseigne taille + sexe (ou une DER mesurée) pour calculer tes cibles."),
 
       (nut && leanKg) ? h("div",{style:{marginTop:10,padding:"10px 12px",borderRadius:8,background:C.shroudDeep,border:"1px solid "+C.taupeDim}},
         h("div",{style:{fontSize:12,color:C.taupe,lineHeight:1.6}},
@@ -5270,24 +5428,25 @@ function HistoriqueTab(props){
       h("div",{style:{fontFamily:sansCond,fontSize:17,fontWeight:600,marginBottom:6}}, "Rien d'enregistré"),
       h("div",{style:{fontSize:14,color:C.taupe,lineHeight:1.5}}, "Enregistre une séance et elle apparaîtra ici. C'est aussi ce qui alimente la progression automatique."));
   }
-  return h("div", null, done.map(function(s){
+  return h(Section, {title: done.length+" séance"+(done.length>1?"s":"")+" enregistrée"+(done.length>1?"s":"")}, done.map(function(s){
     var day = program.find(function(d){return d.key===s.dayKey;});
     var tonnage = s.entries.reduce(function(a,e){ return a + e.sets.reduce(function(b,x){ return b + (x.weight||0)*(x.reps||0); },0); },0);
     var rirs = []; s.entries.forEach(function(e){ e.sets.forEach(function(x){ if (x.rir!=null) rirs.push(x.rir); }); });
-    var avgRir = rirs.length ? (rirs.reduce(function(a,b){return a+b;},0)/rirs.length).toFixed(1) : null;
+    var avgRir = rirs.length ? (rirs.reduce(function(a,b){return a+b;},0)/rirs.length) : null;
+    var effortWord = effortLabelForRir(avgRir);
     var isOpen = open===s.id;
     return h("div",{key:s.id, style:{marginBottom:8,borderRadius:10,overflow:"hidden",border:"1px solid "+C.taupeDim}},
       h("button",{onClick:function(){setOpen(isOpen?null:s.id);}, style:{width:"100%",padding:"12px",display:"flex",alignItems:"center",justifyContent:"space-between",background:C.shroudDeep,border:"none",textAlign:"left"}},
         h("div",null,
           h("div",{style:{fontFamily:sansCond,fontSize:16,fontWeight:600,color:day?day.accent:C.bone}}, (day?day.label:s.dayKey)+(s.deload?" · décharge":"")),
           h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe}},
-            new Date(s.date).toLocaleDateString("fr-FR",{weekday:"short",day:"numeric",month:"short"}) + " · " + Math.round(tonnage).toLocaleString("fr-FR") + " kg" + (avgRir!=null?" · "+avgRir+" en réserve":""))),
+            new Date(s.date).toLocaleDateString("fr-FR",{weekday:"short",day:"numeric",month:"short"}) + " · " + Math.round(tonnage).toLocaleString("fr-FR") + " kg" + (effortWord?" · ressenti "+effortWord:""))),
         h(Icon,{name:isOpen?"chevronDown":"chevronRight", size:17, color:C.taupe})),
       isOpen ? h("div",{style:{background:C.shroud}},
         s.entries.map(function(e,i){ var ex=exMap[e.ex]; return h("div",{key:i, style:{padding:"8px 12px",borderTop:"1px solid "+C.shroudDeep}},
           h("div",{style:{fontSize:14,fontWeight:600}}, ex?ex.name:"Machine supprimée"),
           h("div",{style:{fontSize:13.5,color:C.taupe,fontVariantNumeric:"tabular-nums"}},
-            e.sets.map(function(x){ return x.weight+"×"+x.reps+(ex&&ex.trackBy==="time"?"s":"")+(x.rir!=null?" ("+x.rir+")":"")+(x.weakSide?" ["+(x.weakSide==="L"?"G+dur":"D+dur")+"]":""); }).join("   "))); }),
+            e.sets.map(function(x){ return x.weight+"×"+x.reps+(ex&&ex.trackBy==="time"?"s":"")+(x.rir!=null?" ("+effortLabelForRir(x.rir)+")":"")+(x.weakSide?" ["+(x.weakSide==="L"?"G+dur":"D+dur")+"]":""); }).join("   "))); }),
         h("div",{style:{padding:"8px 12px",borderTop:"1px solid "+C.shroudDeep}},
           h("button",{onClick:function(){deleteSession(s.id);}, style:{display:"flex",alignItems:"center",gap:5,color:C.rust,fontFamily:sansCond,fontSize:13,background:"transparent",border:"none"}},
             h(Icon,{name:"trash",size:13}), "Supprimer cette séance"))
@@ -5759,7 +5918,7 @@ function MachinesTab(props){
            "Priorité par muscle"), et le repère blanc sur la barre matérialise
            cette cible. VOL_MIN reste utilisé comme plancher de sécurité
            absolu, VOL_MAX comme plafond indicatif. */
-        vol.map(function(v,i){
+        (function(volBarMax){ return vol.map(function(v,i){
           var muTarget = (goalPreset(goal).targetSets||VOL_MIN) * focusMultiplier((profile && profile.muscleFocus)||{}, v.muscle);
           var ratio = muTarget>0 ? v.sets/muTarget : 1;
           var below = v.sets < VOL_MIN || ratio < 0.7;
@@ -5781,8 +5940,8 @@ function MachinesTab(props){
                 v.sets.toFixed(1),
                 h("span",{style:{color:C.taupe,fontWeight:500}}, " / "+Math.round(muTarget*10)/10)),
               h("span",{style:{fontFamily:sansBody,fontSize:11.5,fontVariantNumeric:"tabular-nums",color:lowFreq?C.steel:C.taupe,flexShrink:0,whiteSpace:"nowrap"}}, "· "+v.freq.toFixed(1)+"×/sem")),
-            h("div",{style:{display:"flex"}}, h(Bar,{value:v.sets, max:Math.max(VOL_MAX*1.3,20), tone:tone, marker:muTarget})));
-        })),
+            h("div",{style:{display:"flex"}}, h(Bar,{value:v.sets, max:volBarMax, tone:tone, marker:muTarget})));
+        }); })(volumeBarMax(vol, goal, profile))),
       h("p",{style:{fontSize:12.5,color:C.taupe,marginTop:6,lineHeight:1.5}},
         "Chaque ligne : séries prévues / cible du muscle, le trait clair sur la barre marquant cette cible. Calculé sur "+avgSessions.toFixed(1)+" séances/semaine (ton réglage actuel — voir Options > \"Séances par semaine\"). Cible pour ton objectif actuel (\""+((GOALS.find(function(g){return g.k===(goal||"loss_hyper");})||{}).label||"")+"\") : ~"+goalPreset(goal).targetSets+" séries/semaine/muscle (voir GOAL_PRESETS — basé sur Pelland et al. 2025 pour l'hypertrophie/perte de gras, Androulakis-Korakakis et al. 2021 pour la force), ajustée muscle par muscle si tu as réglé une \"Priorité par muscle\" dans Options. Vert = cible atteinte (≥95%), bleu = en approche, rouge = sous 70% de la cible ou sous le plancher de sécurité "+VOL_MIN+" séries, ambre = au-delà de "+VOL_MAX+" séries. La colonne \"×/sem\" est une estimation du nombre de séances où ce muscle est sollicité — "+(goalPreset(goal).minFreq>=2?"vise au moins "+goalPreset(goal).minFreq+"×/semaine pour bien répartir ce volume (repère pratique, pas un effet magique de la fréquence elle-même — voir la note plus haut) ; en bleu si en dessous.":"la fréquence compte moins pour cet objectif (voir la note sur la force), pas de seuil strict ici.")+" Se met à jour dès que tu ajoutes/retires une machine, changes d'objectif, ou changes ta fréquence dans Options.")),
 
@@ -5854,7 +6013,7 @@ function MachinesTab(props){
               h("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 12px",gap:8}},
                 h("div",{style:{minWidth:0}},
                   h("div",{style:{fontSize:14,fontWeight:500,lineHeight:1.25}}, e.name+(e.unilateral?" · unilatéral":"")),
-                  h("div",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe}}, (hasBrand(e)?e.brand+" · ":"")+KIND_LABEL[e.kind]),
+                  h("div",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe}}, (hasBrand(e)?e.brand+" · ":"")+(KIND_LABEL[e.kind]||"Machine guidée")),
                   updateExerciseInc ? h(IncStepper,{value:e.inc, onChange:function(v){updateExerciseInc(e.id, v);}}) : null),
                 h("div",{style:{display:"flex",alignItems:"center",gap:8,flexShrink:0}},
                   stall ? h(Icon,{name:"alert",size:15,color:C.rust}) : null,
@@ -6036,12 +6195,27 @@ function AnalyseTab(props){
     h(Section,{title:"Séries réellement faites par semaine"},
       h("div",{style:{borderRadius:10,padding:"10px 12px",background:C.shroudDeep,border:"1px solid "+C.taupeDim}},
         setsByMuscle.length===0 ? h("div",{style:{fontSize:13,color:C.taupe,padding:"8px 0"}}, "Pas encore de séance dans les 28 derniers jours.") :
-        setsByMuscle.map(function(v,i){ var low=v.sets<VOL_MIN, high=v.sets>VOL_MAX;
-          return h("div",{key:v.muscle, style:{display:"flex",alignItems:"center",gap:10,padding:"6px 0",borderTop:i?"1px solid "+C.shroud:"none"}},
-            h("span",{style:{fontSize:13,width:110,flexShrink:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}, v.muscle),
-            h(Bar,{value:v.sets, max:Math.max(VOL_MAX*1.3,20), tone: low?C.rust:high?C.pin:C.green}),
-            h("span",{style:{fontSize:13,fontWeight:600,fontVariantNumeric:"tabular-nums",width:44,textAlign:"right"}}, v.sets)); })),
-      h("p",{style:{fontSize:12.5,color:C.taupe,marginTop:6,lineHeight:1.5}}, "À comparer au volume prévu dans l'onglet Machines. L'écart, c'est l'assiduité.")),
+        /* Aligné le 6 sept. 2026 sur "Volume prévu par semaine" (onglet
+           Machines), qui avait déjà été corrigé pour les deux mêmes défauts :
+           la barre était la colonne la plus étroite de la ligne alors que
+           c'est le seul élément visuel, et sa couleur suivait la bande fixe
+           5-20 séries sans rapport avec la cible de l'objectif — un muscle à
+           5,4 séries pour une cible de 12 s'affichait donc en VERT. Ici c'est
+           d'autant plus trompeur qu'on lit du volume RÉELLEMENT fait : c'est
+           précisément l'écart à la cible qu'on vient chercher. */
+        (function(volBarMax){ return setsByMuscle.map(function(v,i){
+          var muTarget = (goalPreset(goal).targetSets||VOL_MIN) * focusMultiplier((profile && profile.muscleFocus)||{}, v.muscle);
+          var ratio = muTarget>0 ? v.sets/muTarget : 1;
+          var tone = (v.sets<VOL_MIN || ratio<0.7) ? C.rust : ratio<0.95 ? C.steel : v.sets>VOL_MAX ? C.pin : C.green;
+          return h("div",{key:v.muscle, style:{padding:"7px 0",borderTop:i?"1px solid "+C.shroud:"none"}},
+            h("div",{style:{display:"flex",alignItems:"baseline",gap:8,marginBottom:5}},
+              h("span",{style:{fontSize:13,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}, v.muscle),
+              h("span",{style:{fontSize:13.5,fontWeight:600,fontVariantNumeric:"tabular-nums",color:tone,flexShrink:0,whiteSpace:"nowrap"}},
+                v.sets.toFixed(1),
+                h("span",{style:{color:C.taupe,fontWeight:500}}, " / "+Math.round(muTarget*10)/10))),
+            h("div",{style:{display:"flex"}}, h(Bar,{value:v.sets, max:volBarMax, tone:tone, marker:muTarget}))); }); })(volumeBarMax(setsByMuscle, goal, profile))),
+      h("p",{style:{fontSize:12.5,color:C.taupe,marginTop:6,lineHeight:1.5}},
+        "Séries réellement faites / cible de ton objectif, le trait clair marquant cette cible. À comparer au volume PRÉVU dans l'onglet Machines : l'écart entre les deux, c'est l'assiduité — un muscle bas ici alors qu'il est bien prévu là-bas signale surtout des séances manquées ou écourtées.")),
 
     h(Section,{title:"Charge totale par séance"},
       h("div",{style:{borderRadius:10,padding:"6px 8px",background:C.shroudDeep,border:"1px solid "+C.taupeDim}},
