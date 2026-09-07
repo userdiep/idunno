@@ -476,6 +476,18 @@ function hasBrand(ex) {
   var b = String(ex.brand).trim();
   return b !== "" && !BRAND_PLACEHOLDERS[b.toLowerCase()];
 }
+/* Formulations de la fusion de deux lignes d'une même journée — voir
+   adaptDayItems, qui pose le marqueur dans item.gymMergedFrom. */
+function mergedNote(mark){
+  if (mark === "__SAME__") return "Cette machine est enregistrée deux fois dans ton matériel, sans rien qui les distingue — les séries des deux lignes sont réunies ici. Si ce sont bien deux machines différentes, précise leur marque dans l'onglet Machines.";
+  if (String(mark).indexOf("__ALT__") === 0) return "Tu as aussi la version " + String(mark).slice(7) + " de cette machine, dans une autre salle : elle n'est pas ici, ses séries sont reprises sur celle-ci. Rien à corriger.";
+  return "Reprend aussi les séries de " + mark + ", indisponible dans cette salle et sans équivalent libre — même muscle, inutile de chercher une autre machine.";
+}
+function mergedNoteShort(mark){
+  if (mark === "__SAME__") return "machine en double, séries réunies";
+  if (String(mark).indexOf("__ALT__") === 0) return "reprend les séries de la version " + String(mark).slice(7) + " (autre salle)";
+  return "reprend les séries de " + mark;
+}
 function brandLabel(ex) { if (!ex) return "—"; return hasBrand(ex) ? ex.brand : (KIND_LABEL[ex.kind] || "Machine guidée"); }
 
 /* ============================================================
@@ -869,17 +881,229 @@ function suggestSwap(exId, exercises, program) {
    rien n'était. Sans salle sélectionnée (gymId falsy) ou sans aucune machine
    avec des gymIds restreints, retourne les items inchangés — comportement
    identique à avant cette fonctionnalité pour qui n'utilise qu'une salle. */
+/* Nom de machine "normalisé" pour comparer deux entrées du matériel :
+   accents et casse ignorés, mention entre parenthèses retirée ("Tirage
+   Vertical (à vérifier)" et "Tirage vertical" sont la même machine), reste
+   de la ponctuation réduit à des espaces. */
+function normalizedExName(name){
+  return stripAccents(name).replace(/\([^)]*\)/g," ").replace(/[^a-z0-9]+/g," ").trim();
+}
+/* Deux entrées portant le même nom sont-elles la MÊME machine ?
+   Précision ajoutée le 7 sept. 2026 après retour de l'utilisateur : « je
+   préfère garder les 2 machines parce que c'est pas la même marque et ça
+   fait pas exactement pareil entre 2 salles ». C'est un cas parfaitement
+   légitime — "Tirage vertical" est un nom générique, chaque salle a le sien,
+   les charges et les réglages ne se transposent pas d'une marque à l'autre,
+   et il est normal de vouloir un historique séparé. Deux marques réelles et
+   différentes = deux machines, on n'y touche pas. En revanche, si l'une des
+   deux n'a pas de marque (placeholder "à vérifier" du catalogue de départ,
+   champ laissé vide), rien ne permet de les distinguer : c'est probablement
+   la même machine saisie deux fois. */
+function sameMachineLikely(a, b){
+  if (!a || !b) return false;
+  if (normalizedExName(a.name) !== normalizedExName(b.name)) return false;
+  if (hasBrand(a) && hasBrand(b)) return stripAccents(a.brand) === stripAccents(b.brand);
+  return true;
+}
+/* Machines du matériel qui portent le même nom normalisé — voir
+   adaptDayItems et l'encadré "Doublons" de l'onglet Machines. */
+function duplicateExerciseGroups(exercises){
+  var by = {};
+  (exercises||[]).forEach(function(e){
+    var k = normalizedExName(e.name);
+    if (!k) return;
+    if (!by[k]) by[k] = [];
+    by[k].push(e);
+  });
+  return Object.keys(by).filter(function(k){ return by[k].length > 1; }).map(function(k){ return by[k]; });
+}
+/* Adapte la journée à la salle où l'on est : une machine indisponible ici est
+   remplacée par la meilleure équivalente disponible.
+
+   CORRIGÉ le 7 sept. 2026 sur signalement (capture de l'écran Séance) : la
+   version précédente traitait chaque ligne isolément, sans jamais regarder ce
+   que la journée contenait déjà. Deux conséquences, toutes deux visibles à
+   l'écran.
+
+   1. Le remplaçant choisi pouvait DÉJÀ être dans la journée : on se retrouvait
+      avec la même machine deux fois, dont une portant "Remplace X".
+   2. Si le matériel contient deux entrées pour la MÊME machine — cas typique :
+      garder "Tirage Vertical (à vérifier)" du catalogue de départ ET ajouter à
+      la main le vrai "Tirage vertical" de sa salle, ce qui est exactement ce
+      qui s'est produit — l'entrée fantôme n'était rattachée à aucune salle,
+      donc jugée indisponible, donc remplacée par une TROISIÈME machine de dos.
+      L'écran affichait alors "Upper Back — remplace Tirage vertical" juste
+      au-dessus de "Tirage vertical", ce qui se contredit tout seul.
+
+   L'ordre de résolution est maintenant : (a) si une machine du même nom est
+   disponible ici, c'est la même machine, on fusionne les séries dedans ;
+   (b) sinon on cherche une équivalente qui n'est pas déjà dans la journée ;
+   (c) sinon, si la journée couvre déjà ce muscle principal, on y fusionne les
+   séries plutôt que d'afficher une ligne fantôme ; (d) sinon seulement, on
+   signale la machine comme introuvable ici. Les fusions sont plafonnées à
+   MAX_SETS_PER_EXERCISE, et annoncées à l'écran. */
+/* Fusionne deux entrées du matériel qui désignent la MÊME machine (voir
+   duplicateExerciseGroups). keepId absorbe dropId : les salles des deux sont
+   réunies (une liste vide veut dire "partout", elle l'emporte donc), toutes
+   les références du programme basculent sur keepId, et si un jour se
+   retrouvait avec la machine deux fois les séries sont additionnées puis
+   plafonnées à MAX_SETS_PER_EXERCISE. L'historique n'est PAS réécrit : c'est
+   un journal de ce qui a été fait, on n'y touche pas — c'est pour ça que
+   l'écran conseille de garder l'entrée qui a déjà des séances derrière elle. */
+/* Sous-ensemble des homonymes qu'il vaut VRAIMENT la peine de signaler :
+   ceux que rien ne distingue (voir sameMachineLikely). Deux "Tirage vertical"
+   de marques différentes ne sont plus signalés du tout. */
+function likelyDuplicateGroups(exercises){
+  var out = [];
+  duplicateExerciseGroups(exercises).forEach(function(g){
+    g.forEach(function(a, i){
+      var grp = [a];
+      g.forEach(function(b, j){ if (j>i && sameMachineLikely(a,b)) grp.push(b); });
+      if (grp.length > 1 && !out.some(function(prev){ return prev.indexOf(a) >= 0; })) out.push(grp);
+    });
+  });
+  return out;
+}
+function mergeDuplicateExercises(keepId, dropId, exercises, program){
+  var keep = exercises.filter(function(e){return e.id===keepId;})[0];
+  var drop = exercises.filter(function(e){return e.id===dropId;})[0];
+  if (!keep || !drop || keepId===dropId) return { exercises: exercises, program: program };
+  var gymIds;
+  if (!keep.gymIds || !keep.gymIds.length || !drop.gymIds || !drop.gymIds.length) gymIds = [];
+  else {
+    gymIds = keep.gymIds.slice();
+    drop.gymIds.forEach(function(g){ if (gymIds.indexOf(g)<0) gymIds.push(g); });
+  }
+  var nextExercises = exercises
+    .filter(function(e){ return e.id!==dropId; })
+    .map(function(e){ return e.id===keepId ? Object.assign({}, e, {gymIds: gymIds}) : e; });
+  var nextProgram = (program||[]).map(function(d){
+    var seen = null, items = [];
+    d.items.forEach(function(it){
+      var id = it.ex===dropId ? keepId : it.ex;
+      if (id===keepId && seen) {
+        seen.sets = Math.min(MAX_SETS_PER_EXERCISE, (seen.sets||0) + (it.sets||0));
+        return;
+      }
+      var copy = Object.assign({}, it, {ex:id});
+      if (id===keepId) seen = copy;
+      items.push(copy);
+    });
+    return Object.assign({}, d, {items: items});
+  });
+  return { exercises: nextExercises, program: nextProgram };
+}
 function adaptDayItems(items, exercises, exMap, gymId) {
   if (!gymId) return items;
-  return items.map(function(it){
+  var taken = {};
+  var nameCount = {};
+  items.forEach(function(it){
     var ex = exMap[it.ex];
-    if (!ex || exerciseAvailableAtGym(ex, gymId)) return it;
-    var exM = allMuscles(ex);
-    var candidates = exercises.filter(function(x){ return x.id!==ex.id && exerciseAvailableAtGym(x, gymId) && allMuscles(x).some(function(mu){ return exM.indexOf(mu)>=0; }); });
-    var sub = bestCandidate(candidates, exerciseOrderTier(ex), exM);
-    if (sub) return Object.assign({}, it, { ex: sub.id, gymSwappedFrom: ex.name });
-    return Object.assign({}, it, { gymMissing: true });
+    if (!ex) return;
+    if (exerciseAvailableAtGym(ex, gymId)) taken[ex.id] = true;
+    var k = normalizedExName(ex.name);
+    if (k) nameCount[k] = (nameCount[k]||0) + 1;
   });
+  var out = items.map(function(it){
+    var ex = exMap[it.ex];
+    if (!ex || exerciseAvailableAtGym(ex, gymId)) return Object.assign({}, it);
+    /* La journée contient DÉJÀ une autre entrée du même nom : c'est la même
+       machine en double dans le matériel, pas une machine à remplacer. On ne
+       cherche donc aucun substitut — la passe de fusion plus bas réunit les
+       deux lignes en une. Sans cette priorité, on partait chercher une
+       troisième machine du même muscle et on affichait "Upper Back — remplace
+       Tirage vertical" juste au-dessus du vrai Tirage vertical. */
+    var key = normalizedExName(ex.name);
+    if (key && nameCount[key] > 1) return Object.assign({}, it, { _absent: ex });
+    var exM = allMuscles(ex);
+    var candidates = exercises.filter(function(x){
+      return x.id!==ex.id && !taken[x.id] && exerciseAvailableAtGym(x, gymId)
+        && allMuscles(x).some(function(mu){ return exM.indexOf(mu)>=0; });
+    });
+    var sub = bestCandidate(candidates, exerciseOrderTier(ex), exM);
+    if (sub) { taken[sub.id] = true; return Object.assign({}, it, { ex: sub.id, gymSwappedFrom: ex.name }); }
+    return Object.assign({}, it, { _absent: ex });
+  });
+  /* Fusions, dans cet ordre :
+     (a) HOMONYMES — deux lignes qui désignent la même machine, qu'elles
+         soient disponibles ou non. Le cas se produit dès qu'il y a un doublon
+         dans le matériel, et il prend deux formes selon la façon dont le
+         doublon a été rattaché aux salles : soit une des deux entrées n'est
+         dispo nulle part ici et se faisait remplacer par une TROISIÈME
+         machine du même muscle, soit les deux sont dispo et la machine
+         apparaissait bêtement deux fois de suite. Les deux se règlent
+         pareil : une seule ligne, les séries additionnées.
+     (b) machine absente sans remplaçant libre, mais dont le muscle principal
+         est déjà couvert dans la journée : on y fusionne les séries plutôt
+         que d'afficher une ligne inutilisable. */
+  var kept = [];
+  var hostByName = {};
+  out.forEach(function(o){
+    var ex = o._absent || exMap[o.ex];
+    var key = ex ? normalizedExName(ex.name) : "";
+    var host = key ? hostByName[key] : null;
+    if (!host && o._absent) {
+      var mu = allMuscles(o._absent)[0];
+      kept.forEach(function(c){
+        if (host) return;
+        var ce = exMap[c.ex]; if (!ce) return;
+        if (allMuscles(ce)[0] === mu) host = c;
+      });
+    }
+    if (host) {
+      /* Laquelle des deux entrées survit ? Celle qui est RÉELLEMENT
+         disponible ici — sinon la séance serait enregistrée sur l'entrée
+         fantôme et l'historique de la machine se couperait en deux. Le
+         placeholder du catalogue de départ, rattaché à aucune des salles
+         d'aujourd'hui, cède donc sa place à la vraie machine même s'il
+         apparaissait en premier dans la journée. */
+      var hostEx = host._absent || exMap[host.ex];
+      /* Score de "c'est celle-là, la vraie" : explicitement rattachée à la
+         salle où l'on est (2) > disponible partout, donc sans rattachement
+         (1) > pas dispo ici (0) ; à égalité, celle qui porte une vraie marque
+         plutôt qu'un placeholder du catalogue de départ. */
+      function realness(e, item){
+        if (!e) return -1;
+        var sc = 0;
+        if (item && (item._absent || item.gymMissing)) sc = 0;
+        else if (e.gymIds && e.gymIds.length) sc = e.gymIds.indexOf(gymId)>=0 ? 2 : 0;
+        else sc = 1;
+        return sc + (hasBrand(e) ? 0.5 : 0);
+      }
+      var absorbed;
+      if (realness(ex, o) > realness(hostEx, host)) {
+        absorbed = hostEx;
+        host.ex = o.ex;
+        delete host._absent;
+        delete host.gymMissing;
+        delete host.gymSwappedFrom;
+      } else {
+        absorbed = ex;
+      }
+      host.sets = Math.min(MAX_SETS_PER_EXERCISE, (host.sets||0) + (o.sets||0));
+      var keptEx = exMap[host.ex];
+      /* Trois formulations distinctes, parce que ce sont trois situations
+         différentes et que les confondre induit en erreur (corrigé le
+         7 sept. 2026) :
+         - vrai doublon (rien ne distingue les deux entrées) → à ranger ;
+         - même nom mais marque différente → l'équivalent d'une autre salle,
+           parfaitement légitime, il n'y a RIEN à corriger ;
+         - machine sans équivalent libre, repli sur le même muscle. */
+      var label = null;
+      if (absorbed) {
+        if (keptEx && sameMachineLikely(absorbed, keptEx)) label = "__SAME__";
+        else if (keptEx && normalizedExName(absorbed.name) === normalizedExName(keptEx.name))
+          label = "__ALT__" + (hasBrand(absorbed) ? absorbed.brand : "sans marque");
+        else label = absorbed.name;
+      }
+      if (label) host.gymMergedFrom = host.gymMergedFrom ? (host.gymMergedFrom + ", " + label) : label;
+      return; /* la ligne en trop disparaît */
+    }
+    if (o._absent) { delete o._absent; o.gymMissing = true; }
+    if (key) hostByName[key] = o;
+    kept.push(o);
+  });
+  return kept;
 }
 /* Séries/reps/repos à proposer quand on remplace oldEx par newEx dans le
    programme, quel que soit l'endroit d'où vient la demande (bouton "Changer
@@ -2601,7 +2825,7 @@ var PROGRAM_VERSION = 3;
    recommitée à la main — contrairement au lien Artifact qui se met à jour
    tout seul". Change cette date à chaque publication notable pour que la
    comparaison soit possible côté utilisateur. */
-var APP_BUILD = "2026-09-06u";
+var APP_BUILD = "2026-09-07b";
 
 function seedState() {
   return {
@@ -4443,6 +4667,7 @@ function SeanceTab(props) {
                   h(StackPlate,{weight:p.weight, repMin:it.min, repMax:it.max, sets:p.setsOverride||it.sets, state:p.state, unit:unitLabel(ex)==="s"?"s":"", block:true}),
                   (ex && updateExerciseInc) ? h(IncStepper,{value:ex.inc, onChange:function(v){updateExerciseInc(ex.id, v);}}) : null)),
               it.gymSwappedFrom ? h("div",{style:{padding:"0 12px 10px",fontSize:12,color:C.steel}}, "Remplace "+it.gymSwappedFrom+" — indisponible dans cette salle.") : null,
+              it.gymMergedFrom ? h("div",{style:{padding:"0 12px 10px",fontSize:12,color:C.steel}}, mergedNote(it.gymMergedFrom)) : null,
               it.gymMissing ? h("div",{style:{padding:"0 12px 10px",fontSize:12,color:C.rust}}, "Indisponible dans cette salle et aucune autre machine équivalente trouvée.") : null);
           })
         ),
@@ -4642,7 +4867,7 @@ function SeanceTab(props) {
             h(OrderBadge,{order: ex?exerciseOrderTier(ex):null, onChange: (ex && updateExerciseOrder) ? function(v){updateExerciseOrder(ex.id, v);} : undefined}),
             h("div",{style:{flex:1,minWidth:0}},
               h("div",{style:{fontSize:16.5,fontWeight:600,lineHeight:1.25}}, ex?ex.name:"Machine supprimée"),
-              h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,marginTop:1}}, brandLabel(ex)+" · repos "+it.rest+"s"+(isAdhoc?" · ajoutée pour cette séance":"")+(it.gymSwappedFrom?" · remplace "+it.gymSwappedFrom+" (indispo dans cette salle)":"")+(it.gymMissing?" · indisponible dans cette salle":""))),
+              h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,marginTop:1}}, brandLabel(ex)+" · repos "+it.rest+"s"+(isAdhoc?" · ajoutée pour cette séance":"")+(it.gymSwappedFrom?" · remplace "+it.gymSwappedFrom+" (indispo dans cette salle)":"")+(it.gymMergedFrom?" · "+mergedNoteShort(it.gymMergedFrom):"")+(it.gymMissing?" · indisponible dans cette salle":""))),
             h("div",{style:{display:"flex",alignItems:"center",gap:6,flexShrink:0}},
               ex ? h("button",{onClick:function(){requestSwap(ex);}, title:"Changer de machine",
                 style:{padding:7,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent"}}, h(Icon,{name:"repeat",size:14})) : null,
@@ -5593,6 +5818,15 @@ function TrackByPicker(props){
 }
 function ManualAdd(props){
   var onAdd = props.onAdd, profile = props.profile || {};
+  /* Ajouté le 7 sept. 2026 : rien n'empêchait de créer une machine portant un
+     nom déjà pris. C'est le piège tendu par les trois machines "(à vérifier)"
+     du catalogue de départ — l'écran invite à les RENOMMER une fois la vraie
+     machine identifiée, mais il est bien plus naturel d'ajouter la sienne et
+     de laisser le placeholder derrière. On se retrouve alors avec deux
+     entrées pour une seule machine, dont une rattachée à aucune salle : la
+     séance affiche un remplacement absurde ("Upper Back — remplace Tirage
+     vertical") juste au-dessus du vrai Tirage vertical. */
+  var existing = props.exercises || [];
   var gyms = profile.gyms || [];
   var defaultGymIds = (gyms.length>1 && profile.currentGymId) ? [profile.currentGymId] : [];
   var _d = useState({name:"",brand:"",muscles:[],muscleIntensity:{},kind:"machine",inc:2.5,unilateral:false,gymIds:defaultGymIds}), d=_d[0], setD=_d[1];
@@ -5618,6 +5852,11 @@ function ManualAdd(props){
     }
     setD(next);
   }
+  var twin = (function(){
+    var k = normalizedExName(d.name);
+    if (!k) return null;
+    return existing.filter(function(e){ return normalizedExName(e.name) === k; })[0] || null;
+  })();
   var suggestion = d.name.trim() ? guessMuscles(d.name) : [];
   var suggestionMuscles = suggestion.map(function(s){return s.muscle;});
   var suggestionMatches = suggestion.length>0 && suggestionMuscles.length===d.muscles.length && suggestionMuscles.every(function(m){return d.muscles.indexOf(m)>=0;});
@@ -5629,6 +5868,12 @@ function ManualAdd(props){
   return h("div",{style:{borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.taupeDim}},
     h(TextField,{value:d.name, placeholder:"Nom (ex. Tirage vertical)", onChange:setName}),
     h(TextField,{value:d.brand, placeholder:"Marque (optionnel — laisse vide pour haltères, street workout, gainage...)", onChange:function(v){setD(Object.assign({},d,{brand:v}));}}),
+    /* Simple avertissement, jamais un blocage (corrigé le 7 sept. 2026 : la
+       première version interdisait l'ajout, ce qui empêchait le cas
+       parfaitement normal de deux salles ayant chacune "leur" tirage
+       vertical, de marques différentes). */
+    twin ? h("div",{style:{marginBottom:8,padding:"8px 10px",borderRadius:6,background:C.shroud,borderLeft:"3px solid "+C.steel,fontSize:12,color:C.bone,lineHeight:1.5}},
+      "« "+twin.name+" » existe déjà dans ton matériel"+(hasBrand(twin)?", en "+twin.brand:", sans marque renseignée")+". Si c'est une AUTRE machine — l'équivalent d'une autre salle, une autre marque — ajoute-la sans problème : renseigne la marque et la salle ci-dessous, elles garderont chacune leur historique de charges. Si c'est la même, ferme ce formulaire et modifie l'existante dans la liste (nom, marque, salles).") : null,
     h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,marginBottom:4}}, "Muscle(s) sollicité(s) — plusieurs si la machine en travaille plusieurs (ex. Chest Press = pectoraux + triceps)"),
     (suggestion.length>0 && suggestionMatches && !touched) ? h("div",{style:{marginBottom:8,padding:"6px 8px",borderRadius:6,background:C.shroud,border:"1px solid "+C.taupeDim,fontSize:11.5,color:C.taupe,lineHeight:1.45}},
       "Muscles déduits du nom, secondaires compris. Modifie-les ci-dessous si besoin — l'appli ne les changera plus ensuite.") : null,
@@ -5653,7 +5898,8 @@ function ManualAdd(props){
     h("p",{style:{fontSize:11.5,color:C.taupe,lineHeight:1.5,marginBottom:10}},
       "Le palier poly/semi/isolation est déterminé automatiquement à partir du nom — reconnaît aussi les exercices de callisthénie/street workout (tractions, pompes, dips, muscle-up, fentes, gainage...), pas que les noms de machines — modifiable ensuite via le petit rond numéroté en séance ou dans la liste ci-dessous si besoin. Sans lest ajouté, laisse le poids à 0 kg au moment de logger une série et progresse via les répétitions (ou via le temps tenu pour du gainage/planche, détecté automatiquement — voir \"Suivi\" dans la liste ci-dessous si besoin de corriger)."),
     h("button",{onClick:function(){ if (canAdd) onAdd(Object.assign({},d,{name:d.name.trim(), brand:d.brand.trim(), muscle:d.muscles[0], order: inferOrderTier(d.name, d.muscles.join(" ")), trackBy: inferTrackBy(d.name)})); },
-      style:{width:"100%",padding:"10px 0",borderRadius:6,background:canAdd?C.pin:C.shroud,color:canAdd?C.ink:C.taupe,fontFamily:sansCond,fontSize:15,fontWeight:700,border:"none"}}, "Ajouter au matériel"));
+      style:{width:"100%",padding:"10px 0",borderRadius:6,background:canAdd?C.pin:C.shroud,color:canAdd?C.ink:C.taupe,fontFamily:sansCond,fontSize:15,fontWeight:700,border:"none"}},
+      "Ajouter au matériel"));
 }
 function AddToDay(props){
   var day=props.day, exercises=props.exercises, program=props.program, persistConfig=props.persistConfig, goal=props.goal;
@@ -5771,6 +6017,32 @@ function MachinesTab(props){
      être dans aucune séance. */
   var completion = suggestProgramCompletion(program, exercises, goal, avgSessions, (profile && profile.muscleFocus) || {}, profile && profile.currentGymId);
   var unmapped = unmappedExercises(exercises); // machines dont l'appli ne peut pas deviner les muscles (voir unmappedExercises)
+  /* Doublons du matériel (7 sept. 2026) — le blocage dans ManualAdd empêche
+     d'en créer de nouveaux, mais ne répare pas ceux déjà enregistrés sur le
+     téléphone. On les liste ici avec, pour chaque entrée, ce qui permet de
+     décider laquelle garder : ses salles et son nombre de séances faites. */
+  var dupGroups = likelyDuplicateGroups(exercises).map(function(g){
+    return g.map(function(e){
+      return { ex: e, done: historyFor(sessions||[], e.id).length,
+               gymNames: (e.gymIds||[]).map(function(id){
+                 var gy=((profile&&profile.gyms)||[]).filter(function(x){return x.id===id;})[0]; return gy?gy.name:null;
+               }).filter(Boolean) };
+    }).sort(function(a,b){
+      /* Celle à garder d'abord (bouton mis en avant) : l'historique tranche,
+         sinon la machine rattachée à la salle où l'on est, sinon celle qui
+         porte une vraie marque plutôt qu'un placeholder du catalogue. */
+      if (a.done !== b.done) return b.done - a.done;
+      var cur = profile && profile.currentGymId;
+      var ag = cur && (a.ex.gymIds||[]).indexOf(cur)>=0 ? 1 : 0;
+      var bg = cur && (b.ex.gymIds||[]).indexOf(cur)>=0 ? 1 : 0;
+      if (ag !== bg) return bg - ag;
+      return (hasBrand(b.ex)?1:0) - (hasBrand(a.ex)?1:0);
+    });
+  });
+  function mergeDup(keepId, dropId){
+    var out = mergeDuplicateExercises(keepId, dropId, exercises, program);
+    persistConfig(out.exercises, out.program);
+  }
   /* Muscles sans machine dédiée : la cause structurelle du déséquilibre
      résiduel, impossible à corriger en redistribuant des séries (voir
      musclesWithoutPrimary). */
@@ -5834,7 +6106,7 @@ function MachinesTab(props){
           background:mode==="manual"?C.pin:C.shroudDeep, color:mode==="manual"?C.ink:C.bone, border:"1px solid "+C.taupeDim,
           fontFamily:sansCond,fontSize:14.5,fontWeight:600, marginBottom:12}},
         h(Icon,{name:"plus",size:16}), "Ajouter une machine, une poulie ou un poids libre"),
-      mode==="manual" ? h(ManualAdd,{onAdd:handleAdd, profile:profile}) :
+      mode==="manual" ? h(ManualAdd,{onAdd:handleAdd, profile:profile, exercises:exercises}) :
         h("p",{style:{fontSize:13.5,color:C.taupe,lineHeight:1.55}},
           "Trois machines sont marquées « à vérifier » : tirage vertical, traction assistée, tirage horizontal. Renomme-les depuis la liste ci-dessous une fois que tu as vérifié la vraie machine sur place, ou supprime-les si elles n'existent pas.")),
 
@@ -5993,6 +6265,27 @@ function MachinesTab(props){
          de la laisser silencieusement incomplète (son volume est alors compté
          sur un seul muscle), on la signale ici pour que tu la complètes à la
          main via la ligne "Muscles" de sa fiche. */
+      dupGroups.length ? h("div",{style:{marginBottom:12,padding:"10px 11px",borderRadius:8,background:C.shroudDeep,borderLeft:"3px solid "+C.rust}},
+        h("div",{style:{fontFamily:sansCond,fontSize:13,fontWeight:600,color:C.bone,marginBottom:3}}, dupGroups.length>1 ? "Machines en double" : "Machine en double"),
+        h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.55,marginBottom:8}},
+          "Ces entrées portent le même nom et rien ne permet de les distinguer — au moins l'une des deux n'a pas de marque renseignée. Deux possibilités, à toi de trancher : ce sont bien DEUX machines (l'équivalent d'une autre salle, une autre marque) et il n'y a alors rien à corriger ici — renseigne juste leur marque et leur salle dans la liste ci-dessous, et cet encadré disparaîtra ; ou c'est la même machine saisie deux fois, et dans ce cas garde-en une : l'autre est absorbée, ses salles et ses séries passent sur celle que tu gardes, ton historique n'est pas touché."),
+        dupGroups.map(function(g,gi){
+          return h("div",{key:gi, style:{marginTop:gi?10:0}},
+            g.map(function(c,ci){
+              return h("div",{key:c.ex.id, style:{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderTop:ci?"1px solid "+C.shroud:"none"}},
+                h("div",{style:{flex:1,minWidth:0}},
+                  h("div",{style:{fontSize:13.5,fontWeight:600,color:C.bone}}, c.ex.name),
+                  h("div",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe,marginTop:1}},
+                    brandLabel(c.ex)
+                    +" · "+(c.done ? c.done+" séance"+(c.done>1?"s":"")+" faite"+(c.done>1?"s":"") : "jamais utilisée")
+                    +" · "+(c.gymNames.length ? c.gymNames.join(", ") : "toutes les salles"))),
+                h("button",{onClick:function(){
+                    g.forEach(function(o){ if (o.ex.id!==c.ex.id) mergeDup(c.ex.id, o.ex.id); });
+                  },
+                  style:{flexShrink:0,padding:"7px 10px",borderRadius:6,background:ci===0?C.pin:"transparent",color:ci===0?C.ink:C.taupe,
+                    border:ci===0?"none":"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:12,fontWeight:700}}, "Garder celle-ci"));
+            }));
+        })) : null,
       unmapped.length ? h("div",{style:{marginBottom:12,padding:"10px 11px",borderRadius:8,background:C.shroudDeep,borderLeft:"3px solid "+C.steel}},
         h("div",{style:{fontFamily:sansCond,fontSize:13,fontWeight:600,color:C.bone,marginBottom:3}}, "Muscles à vérifier"),
         h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.55}},
