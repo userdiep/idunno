@@ -69,7 +69,12 @@ a{color:#F0A62E;}
 "use strict";
 var h = React.createElement;
 var useState = React.useState, useEffect = React.useEffect, useMemo = React.useMemo,
-    useCallback = React.useCallback, useRef = React.useRef;
+    useCallback = React.useCallback, useRef = React.useRef,
+    /* useLayoutEffect s'exécute AVANT que le navigateur ne peigne : c'est ce
+       qu'il faut pour restaurer une position de défilement, sinon on voit
+       l'onglet s'afficher en haut puis sauter. Repli sur useEffect pour les
+       tests, dont le React stubé n'expose pas forcément les deux. */
+    useLayoutEffect = React.useLayoutEffect || React.useEffect;
 
 /* ============================================================
    PALETTE — machine shroud charcoal, taupe cap, selector-pin amber,
@@ -541,7 +546,16 @@ function historyFor(sessions, exId) {
     .sort(function(a,b){ return new Date(a.date)-new Date(b.date); });
 }
 var INC_CACHE = {};
-function itemInc(item){ return INC_CACHE[item.ex] != null ? INC_CACHE[item.ex] : 2.5; }
+/* Le plus petit incrément de charge de la machine. La MACHINE elle-même fait
+   foi quand on l'a sous la main (c'est le cas partout où prescribe est
+   appelé) ; INC_CACHE n'est plus qu'un repli pour les quelques endroits qui
+   ne manipulent qu'un item de programme. Renforcé le 7 sept. 2026 : quand ce
+   cache n'était pas encore rempli, tout retombait silencieusement sur 2,5 kg
+   et proposait des charges introuvables sur une colonne à pas de 5. */
+function itemInc(item, ex){
+  if (ex && typeof ex.inc === "number" && isFinite(ex.inc) && ex.inc > 0) return ex.inc;
+  return INC_CACHE[item.ex] != null ? INC_CACHE[item.ex] : 2.5;
+}
 function round(n){ return Math.round(n*2)/2; }
 
 function prescribeBase(sessions, item, ex) {
@@ -560,18 +574,18 @@ function prescribeBase(sessions, item, ex) {
   var avgRir = rirs.length ? rirs.reduce(function(a,b){return a+b;},0)/rirs.length : null;
 
   if (avgRir != null && avgRir >= 3) {
-    var jump = itemInc(item) * 2;
+    var jump = itemInc(item, ex) * 2;
     return { weight: round(w+jump), targetReps: item.min, state: "up",
       note: "Tu as fini à " + avgRir.toFixed(1) + " reps en réserve — trop léger. On monte de " + jump + " kg d'un coup." };
   }
   if (atW.length >= item.sets && atW.every(function(s){return s.reps>=item.max;})) {
-    return { weight: round(w+itemInc(item)), targetReps: item.min, note: "Toutes les séries au plafond — on monte la charge.", state: "up" };
+    return { weight: round(w+itemInc(item, ex)), targetReps: item.min, note: "Toutes les séries au plafond — on monte la charge.", state: "up" };
   }
   if (atW.some(function(s){return s.reps<item.min;}) && hist.length >= 2) {
     var prev = hist[hist.length-2].entry.sets.filter(function(s){return s.weight!=null;});
     var pw = Math.max.apply(null, prev.map(function(s){return s.weight;}));
     if (pw === w && prev.some(function(s){return s.reps<item.min;})) {
-      return { weight: round(Math.max(itemInc(item), w-itemInc(item))), targetReps: item.min, note: "Deux séances sous la fourchette — on redescend d'un cran.", state: "down" };
+      return { weight: round(Math.max(itemInc(item, ex), w-itemInc(item, ex))), targetReps: item.min, note: "Deux séances sous la fourchette — on redescend d'un cran.", state: "down" };
     }
   }
   var next = Math.min(item.max, Math.min.apply(null, atW.map(function(s){return s.reps;})) + 1);
@@ -859,13 +873,24 @@ function removeWithSubstitution(exId, exercises, program) {
    muscle (see allMuscles), that isn't already used anywhere in the program
    (see bestCandidate for what "best" means here). Returns null if nothing
    suitable exists. */
-function suggestSwap(exId, exercises, program) {
+function suggestSwap(exId, exercises, program, gymId) {
   var ex = exercises.find(function(e){return e.id===exId;});
   if (!ex) return null;
   var usedIds = {};
   program.forEach(function(d){ d.items.forEach(function(it){ usedIds[it.ex]=true; }); });
   var exMuscles = allMuscles(ex);
-  var candidates = exercises.filter(function(e){ return e.id!==exId && !usedIds[e.id] && allMuscles(e).some(function(mu){ return exMuscles.indexOf(mu)>=0; }); });
+  /* gymId ajouté le 7 sept. 2026 — BUG signalé : "quand je change une machine
+     pendant une séance la nouvelle machine n'apparaît pas même quand j'appuie
+     sur remplacer". Reproduit : avec plusieurs salles, le remplaçant proposé
+     pouvait être une machine ABSENTE de la salle où l'on se trouve. Elle
+     entrait bien dans le programme et dans la séance, puis adaptDayItems la
+     remplaçait aussitôt par une autre pour cause d'indisponibilité, et la
+     ligne disparaissait purement et simplement de l'écran (7 machines -> 6).
+     On ne propose donc que ce qui est réellement utilisable ici. */
+  var candidates = exercises.filter(function(e){
+    return e.id!==exId && !usedIds[e.id] && exerciseAvailableAtGym(e, gymId)
+      && allMuscles(e).some(function(mu){ return exMuscles.indexOf(mu)>=0; });
+  });
   return bestCandidate(candidates, exerciseOrderTier(ex), exMuscles);
 }
 /* Ajouté le 5 sept. 2026 (demande : "adapter les séances selon quelle salle
@@ -2620,6 +2645,207 @@ function suggestProgramCompletion(program, exercises, goal, avgSessions, muscleF
   return out;
 }
 
+/* Remet le PROGRAMME en cohérence avec la liste des machines, après un ajout
+   ou un retrait (demande du 7 sept. 2026 : "quand j'enlève une machine ou
+   ajoute une machine faut que le programme se mette à jour directement pour
+   correspondre et être le plus opti avec la liste rafraîchie des machines
+   possibles").
+
+   Ce qui existait avant ne faisait qu'une PARTIE du travail, et jamais tout
+   seul :
+   - à l'ajout, la machine entrait dans le matériel mais restait hors des
+     séances tant qu'on n'avait pas repéré et validé la carte "où la placer" —
+     donc une machine ajoutée puis oubliée ne servait à rien ;
+   - au retrait, removeWithSubstitution remplaçait la machine par une seule
+     équivalente en gardant le même nombre de séries, sans jamais reconsidérer
+     l'ensemble : si le retrait laissait un muscle sous sa cible alors qu'une
+     machine du matériel dormait hors programme, personne ne faisait le
+     rapprochement (c'est le rôle de suggestProgramCompletion, qui n'était
+     proposé qu'à la main dans l'onglet Machines) ;
+   - persistConfig, lui, ne recalculait que les SÉRIES, jamais la composition.
+
+   Les trois étapes sont maintenant enchaînées automatiquement : on retire les
+   lignes devenues orphelines, on comble les muscles sous la cible avec les
+   machines disponibles qui ne servaient pas, puis on redistribue les séries.
+   La STRUCTURE des jours (leur nombre, leurs libellés, le découpage choisi)
+   n'est jamais touchée : ajouter une machine ne doit pas transformer un
+   Haut/Bas en PPL dans le dos de l'utilisateur — changer de découpage reste
+   une action explicite dans l'onglet Programme. */
+/* Note du programme selon les MÊMES poids que l'optimiseur de séries (voir
+   UNDER_W / OVER_W dans _applyGoalToProgramRaw) : écart relatif au carré,
+   manque pénalisé plus lourdement que l'excès quand l'objectif d'entraînement
+   est la priorité n°1, à égalité quand c'est l'équilibrage. Plus bas = mieux.
+   Sert à décider si ajouter une machine améliore vraiment le programme. */
+function programBalancePenalty(program, exercises, goal, avgSessions, muscleFocus, profile) {
+  var order = priorityOrderOf(profile);
+  var balanceFirst = priorityRank(order, "balance") < priorityRank(order, "goal");
+  var UNDER_W = balanceFirst ? 1.0 : 3.0, OVER_W = balanceFirst ? 1.0 : 0.5;
+  var base = goalPreset(goal).targetSets || VOL_MIN;
+  var total = 0;
+  plannedVolume(program, exercises, avgSessions).forEach(function(v){
+    var target = base * focusMultiplier(muscleFocus || {}, v.muscle);
+    if (!(target > 0)) return;
+    var d = (v.sets - target) / target;
+    total += d < 0 ? UNDER_W*d*d : OVER_W*d*d;
+  });
+  return total;
+}
+/* Rééquilibre les séries de la SÉANCE EN COURS quand sa composition change
+   (demande du 7 sept. 2026 : "il faudrait que quand j'ajoute une machine
+   pendant la séance, le programme puisse s'adapter en fonction de la machine
+   mise pour opti même la séance en cours").
+
+   Avant, ajouter une machine en séance lui collait simplement les séries par
+   défaut de son palier et ne touchait à rien d'autre : ajouter un poste de
+   triceps aux 4 séries de triceps déjà prévues en faisait 7, soit un tiers de
+   volume en plus sur ce muscle sans que personne l'ait demandé. Ce qu'on veut,
+   c'est le MÊME volume par muscle, réparti sur les machines réellement
+   présentes — c'est justement l'intérêt d'ajouter une machine : mieux répartir,
+   pas en faire plus.
+
+   `targetsByMuscle` est le volume pondéré de la séance AVANT le changement :
+   on ne recalcule pas une cible hebdomadaire ici, on conserve ce que la séance
+   valait déjà.
+
+   GARDE-FOU PRINCIPAL (précisé par l'utilisateur le 7 sept. 2026 : "sauf pour
+   les machines avec déjà des séries complétées") : une machine sur laquelle au
+   moins une série est saisie est FIGÉE — ni plus, ni moins. On ne renégocie
+   pas du travail déjà fait, et on ne vient pas rallonger un exercice qu'on est
+   en train de finir. Seules les machines pas encore entamées absorbent le
+   changement. Conséquence assumée : si tout est déjà commencé, la nouvelle
+   machine s'ajoute sans rien rééquilibrer — c'est le comportement correct,
+   il n'y a plus rien à répartir.
+
+   Mêmes poids que le reste de l'appli : un manque coûte six fois plus cher
+   qu'un excès (voir UNDER_W/OVER_W dans _applyGoalToProgramRaw). */
+function rebalanceSessionSets(entries, exercises, targetsByMuscle) {
+  var exMap = {}; (exercises||[]).forEach(function(e){ exMap[e.id]=e; });
+  var refs = (entries||[]).map(function(e){
+    var ex = exMap[e.ex];
+    var all = e.sets || [];
+    var logged = all.filter(function(s){ return s && (s.weight!=null || s.reps!=null); }).length;
+    var touched = logged > 0;           /* machine déjà entamée -> intouchable */
+    var n = Math.max(1, all.length);
+    return { ex: ex, logged: logged, touched: touched,
+      muscles: ex ? allMuscles(ex).map(function(mu){ return {mu:mu, w:muscleWeight(ex,mu)}; }) : [],
+      n: n,
+      /* Plancher à 2 séries pour une machine pas encore entamée, et non les 3
+         de MIN_SETS_PER_EXERCISE : ce minimum-là vient de Krieger 2010 et vaut
+         pour un exercice PROGRAMMÉ sur la semaine, alors qu'ici on répartit le
+         volume d'une seule séance sans le changer. L'imposer à 3 gonflerait
+         mécaniquement la séance — 4 séries de triceps réparties sur deux
+         machines deviendraient 6. À 2, la répartition tombe juste (2+2) au lieu
+         du 1+3 bancal qu'un plancher à 1 laissait passer. */
+      lo: touched ? n : Math.min(2, MAX_SETS_PER_EXERCISE),
+      hi: touched ? n : MAX_SETS_PER_EXERCISE };
+  });
+  var keys = Object.keys(targetsByMuscle || {});
+  function penalty(){
+    var got = {};
+    refs.forEach(function(r){ r.muscles.forEach(function(m){ got[m.mu] = (got[m.mu]||0) + r.n*m.w; }); });
+    var total = 0;
+    keys.forEach(function(mu){
+      var t = targetsByMuscle[mu];
+      if (!(t > 0)) return;
+      var d = ((got[mu]||0) - t) / t;
+      total += d < 0 ? 3.0*d*d : 0.5*d*d;
+    });
+    return total;
+  }
+  var best = penalty();
+  for (var round = 0; round < 200; round++) {
+    var bestGain = 1e-9, bestI = -1, bestD = 0;
+    refs.forEach(function(r, i){
+      [-1, 1].forEach(function(d){
+        var n2 = r.n + d;
+        if (n2 < r.lo || n2 > r.hi) return;
+        var old = r.n; r.n = n2; var pen = penalty(); r.n = old;
+        if (best - pen > bestGain) { bestGain = best - pen; bestI = i; bestD = d; }
+      });
+    });
+    if (bestI < 0) break;
+    refs[bestI].n += bestD;
+    best = penalty();
+  }
+  return refs.map(function(r){ return r.n; });
+}
+/* Volume pondéré par muscle d'une liste d'entrées de séance, à partir du
+   nombre de séries PRÉVUES (longueur du tableau), pas des séries faites. */
+function sessionVolumeByMuscle(entries, exercises) {
+  var exMap = {}; (exercises||[]).forEach(function(e){ exMap[e.id]=e; });
+  var out = {};
+  (entries||[]).forEach(function(e){
+    var ex = exMap[e.ex]; if (!ex) return;
+    var n = (e.sets||[]).length;
+    allMuscles(ex).forEach(function(mu){ out[mu] = (out[mu]||0) + n*muscleWeight(ex, mu); });
+  });
+  return out;
+}
+/* Redimensionne les séries d'une entrée sans jamais toucher à ce qui est déjà
+   saisi : on complète par des lignes vides, on ne retire QUE des lignes vides,
+   et toujours par la fin. */
+function resizeEntrySets(entry, n) {
+  var sets = (entry.sets || []).slice();
+  while (sets.length < n) sets.push({weight:null, reps:null, rir:null, weakSide:null});
+  while (sets.length > n) {
+    var last = sets[sets.length-1];
+    if (last && (last.weight!=null || last.reps!=null)) break;
+    sets.pop();
+  }
+  return Object.assign({}, entry, { sets: sets });
+}
+function reflowProgramForCatalogue(program, exercises, goal, avgSessions, muscleFocus, gymId, profile) {
+  var known = {}; (exercises||[]).forEach(function(e){ known[e.id] = true; });
+  var prog = (program||[]).map(function(d){
+    return Object.assign({}, d, { items: d.items.filter(function(it){ return known[it.ex]; }) });
+  });
+  /* Comblement itératif, mais SOUS CONDITION (corrigé avant publication, la
+     première version ajoutait aveuglément toutes les machines proposées).
+     Mesuré sur le programme livré, ce remplissage aveugle échangeait 6 séries
+     de manque comblé contre 13 séries d'excès et +12 min par séance : chaque
+     machine ajoutée impose son plancher de MIN_SETS_PER_EXERCISE séries, et
+     ses muscles SECONDAIRES font déborder des muscles déjà à leur cible.
+     Une machine n'est donc retenue que si, une fois les séries redistribuées,
+     elle améliore réellement la note du programme — et on s'arrête au premier
+     refus, les suivantes étant classées comme moins utiles.
+     Chaque candidate est évaluée sur le programme APRÈS redistribution des
+     séries, sinon on comparerait un programme optimisé à un programme brut. */
+  var score = function(pr){
+    return programBalancePenalty(applyGoalToProgram(pr, exercises, goal, avgSessions, muscleFocus, profile),
+      exercises, goal, avgSessions, muscleFocus, profile);
+  };
+  /* Si "temps par séance et nombre de séances" passe AVANT l'objectif dans
+     l'ordre de priorité (Options), une machine en plus ne doit pas faire
+     déborder la fourchette de temps : trimToTimeBudget sait rogner des séries
+     mais pas descendre sous MIN_SETS_PER_EXERCISE, donc chaque machine ajoutée
+     coûte un plancher incompressible. On refuse alors explicitement ce qui
+     dépasse le maximum réglé — c'est ce que cette priorité promet. */
+  var order = priorityOrderOf(profile);
+  var timeFirst = profile && priorityRank(order,"time") < priorityRank(order,"goal");
+  var maxMin = (profile && profile.sessionMinutesMax != null) ? profile.sessionMinutesMax : null;
+  var exMap = {}; (exercises||[]).forEach(function(e){ exMap[e.id] = e; });
+  function longestDay(pr){
+    return pr.reduce(function(a,d){ return Math.max(a, estimateDayMinutes(d, exMap)); }, 0);
+  }
+  var best = score(prog);
+  var baseLongest = longestDay(applyGoalToProgram(prog, exercises, goal, avgSessions, muscleFocus, profile));
+  for (var round = 0; round < 8; round++) {
+    var sugg = suggestProgramCompletion(prog, exercises, goal, avgSessions, muscleFocus, gymId);
+    if (!sugg || !sugg.length) break;
+    var cand = applyPlacement(sugg[0].ex, sugg[0].placement, exercises, prog);
+    if (cand === prog) break;
+    var applied = applyGoalToProgram(cand, exercises, goal, avgSessions, muscleFocus, profile);
+    var candScore = programBalancePenalty(applied, exercises, goal, avgSessions, muscleFocus, profile);
+    if (!(candScore < best - 1e-9)) break;
+    if (timeFirst && maxMin != null) {
+      var lg = longestDay(applied);
+      if (lg > maxMin && lg > baseLongest + 0.001) break;
+      baseLongest = Math.max(baseLongest, lg);
+    }
+    prog = cand; best = candScore;
+  }
+  return prog;
+}
 /* ============================================================
    RECALIBRAGE AUTOMATIQUE APRÈS SÉANCE — demande du 5 sept. 2026 : "après
    chaque séance libre, l'application met en équilibre selon les objectifs
@@ -2825,7 +3051,7 @@ var PROGRAM_VERSION = 3;
    recommitée à la main — contrairement au lien Artifact qui se met à jour
    tout seul". Change cette date à chaque publication notable pour que la
    comparaison soit possible côté utilisateur. */
-var APP_BUILD = "2026-09-07b";
+var APP_BUILD = "2026-09-07g";
 
 function seedState() {
   return {
@@ -3447,18 +3673,43 @@ function Stepper(props) {
       suffix=props.suffix||"", wide=props.wide, compact=props.compact;
   var ph = props.placeholder||"";
   if (ph && suffix && ph === suffix) ph = "";
-  var padX = compact ? 8 : 10;
-  return h("div", {className:"flex items-stretch", style:{display:"flex",alignItems:"stretch",borderRadius:6,overflow:"hidden",border:"1px solid "+C.taupeDim,flexShrink:0,minHeight:44}},
+  var padX = props.flex ? 6 : (compact ? 8 : 10);
+  /* `flex` (7 sept. 2026) — le compteur peut RÉTRÉCIR au lieu d'imposer sa
+     largeur. Signalé sur capture : "regarde la flèche à droite est rognée".
+     Dans une ligne de série (S1 · poids · reps · flèche de recopie), les deux
+     compteurs étaient en flexShrink:0 avec une saisie de largeur fixe : passé
+     une certaine étroitesse d'écran, la ligne débordait, le marginLeft:auto de
+     la flèche n'avait plus de place à distribuer, et la carte (overflow:hidden)
+     coupait le bouton. Ça ne se voyait ni sur mon écran de test ni sur un
+     iPhone standard, seulement sur les téléphones un peu plus étroits ou avec
+     une police système agrandie. */
+  var flexible = props.flex;
+  var box = {display:"flex",alignItems:"stretch",borderRadius:6,overflow:"hidden",border:"1px solid "+C.taupeDim,minHeight:44};
+  if (flexible) { box.flex = "1 1 0"; box.minWidth = 0; } else { box.flexShrink = 0; }
+  return h("div", {className:"flex items-stretch", style:box},
     h("button", {onClick:function(){onChange(Math.max(min, round((value||0)-step)));}, "aria-label":"Diminuer",
-      style:{padding:"0 "+padX+"px",display:"flex",alignItems:"center",justifyContent:"center",background:C.shroudDeep,color:C.taupe,border:"none"}},
+      style:{padding:"0 "+padX+"px",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",background:C.shroudDeep,color:C.taupe,border:"none"}},
       h(Icon,{name:"minus",size:14})),
     h("input", {type:"number", className:"stepper-input", inputMode:"decimal", value: value==null?"":value, placeholder:ph,
       onChange:function(e){ onChange(e.target.value===""?null:parseFloat(e.target.value)); },
-      style:{width: wide?58:46, background:C.shroud, color:C.bone, fontFamily:sansBody, fontSize:18, fontWeight:600,
-        fontVariantNumeric:"tabular-nums", border:"none", textAlign:"center", outline:"none", minWidth:0}}),
-    suffix ? h("span",{style:{display:"flex",alignItems:"center",paddingRight:6,background:C.shroud,color:C.taupe,fontSize:11}},suffix) : null,
+      style:Object.assign({background:C.shroud, color:C.bone, fontFamily:sansBody, fontSize: flexible?16.5:18, fontWeight:600,
+        fontVariantNumeric:"tabular-nums", border:"none", textAlign:"center", outline:"none", minWidth:0},
+        /* minWidth sur la SAISIE : en mode flexible, c'est le chiffre qui doit
+           survivre au rétrécissement, pas les décorations. Sans ce plancher, à
+           320 px la case tombait à ~22 px et "42,5" disparaissait purement et
+           simplement — le pire résultat possible, puisque c'est la seule chose
+           qu'on vient lire. Ordre de sacrifice : le suffixe d'abord, puis rien
+           d'autre. */
+        flexible ? {flex:"1 1 0", width:"100%", minWidth:36, paddingRight:2} : {width: wide?58:46})}),
+    /* En mode `flex`, le suffixe ("kg", "rep") est la dernière largeur
+       incompressible du compteur : sur un écran de 320 px il suffisait à
+       pousser le bouton "+" hors du cadre, qui le coupait (overflow:hidden).
+       Il peut maintenant se réduire — au pire il s'efface, alors que le "+"
+       doit toujours rester touchable. */
+    suffix ? h("span",{style:Object.assign({display:"flex",alignItems:"center",paddingRight:6,background:C.shroud,color:C.taupe,fontSize:11},
+      flexible ? {minWidth:0, overflow:"hidden"} : {})},suffix) : null,
     h("button", {onClick:function(){onChange(round((value||0)+step));}, "aria-label":"Augmenter",
-      style:{padding:"0 "+padX+"px",display:"flex",alignItems:"center",justifyContent:"center",background:C.shroudDeep,color:C.taupe,border:"none"}},
+      style:{padding:"0 "+padX+"px",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",background:C.shroudDeep,color:C.taupe,border:"none"}},
       h(Icon,{name:"plus",size:14}))
   );
 }
@@ -4424,7 +4675,7 @@ function SeanceTab(props) {
      qu'on puisse continuer à logger dessus tout de suite. */
   function requestSwap(ex){
     if (!ex) return;
-    var cand = suggestSwap(ex.id, exercises, program);
+    var cand = suggestSwap(ex.id, exercises, program, currentGymId);
     var rec = cand ? swapRecommendation(ex, cand, program, goal) : null;
     setSwapPending({ exId: ex.id, oldName: ex.name, muscles: allMuscles(ex).join(" + "), candidate: cand, rec: rec });
   }
@@ -4495,7 +4746,18 @@ function SeanceTab(props) {
      jour tombe. Marche aussi bien pour une machine du programme que pour une
      ajoutée à la volée ci-dessous (voir addToActiveSession). */
   function removeFromActiveSession(idx) {
-    setActive(Object.assign({}, active, { entries: active.entries.filter(function(e,i){return i!==idx;}) }));
+    var before = sessionVolumeByMuscle(active.entries, exercises);
+    var kept = active.entries.filter(function(e,i){return i!==idx;});
+    setActive(Object.assign({}, active, { entries: rebalancedEntries(kept, before) }));
+  }
+  /* Applique rebalanceSessionSets à une liste d'entrées et réécrit la taille
+     des tableaux de séries (voir resizeEntrySets). Utilisé à l'ajout comme au
+     retrait d'une machine en cours de séance : dans les deux cas le volume par
+     muscle de la séance doit rester celui d'avant, réparti sur les machines
+     réellement présentes. */
+  function rebalancedEntries(entries, targetsByMuscle) {
+    var counts = rebalanceSessionSets(entries, exercises, targetsByMuscle);
+    return entries.map(function(e, i){ return resizeEntrySets(e, counts[i]); });
   }
   /* Ajouter une machine à la séance programmée en cours, pour cette séance
      seulement — sans toucher au programme (contrairement à "Ajouter du
@@ -4512,7 +4774,13 @@ function SeanceTab(props) {
     var tierDef = tierDefaultsForGoal(goal, ex?exerciseOrderTier(ex):2);
     var sets = Array.from({length:tierDef.sets}, function(){ return {weight:null, reps:null, rir:null, weakSide:null}; });
     var newEntry = { ex: exId, sets: sets, adhoc: { min: tierDef.min, max: tierDef.max, rest: tierDef.rest, sets: tierDef.sets } };
-    setActive(Object.assign({}, active, { entries: active.entries.concat([newEntry]) }));
+    /* Cible = ce que la séance valait AVANT l'ajout (voir rebalanceSessionSets).
+       Ajouter une machine sert à mieux RÉPARTIR le volume du jour, pas à en
+       faire plus : sans ça, ajouter un poste de triceps aux 4 séries déjà
+       prévues en faisait 7. Les machines déjà entamées ne bougent pas. */
+    var before = sessionVolumeByMuscle(active.entries, exercises);
+    var next = rebalancedEntries(active.entries.concat([newEntry]), before);
+    setActive(Object.assign({}, active, { entries: next }));
     setSessionPick("");
   }
   function addFreeformSet(idx) {
@@ -4773,45 +5041,83 @@ function SeanceTab(props) {
         var note = lastTimeNote(entry.ex);
         return h("div",{key:idx, style:{marginBottom:12,borderRadius:10,overflow:"hidden",border:"1px solid "+C.taupeDim}},
           h("div",{style:{padding:"12px",display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12,background:C.shroudDeep}},
-            h("div",{style:{display:"flex",alignItems:"flex-start",gap:8,minWidth:0}},
+            /* Repris le 7 sept. 2026 sur le modèle de la séance programmée,
+               qui est le seul écran de l'appli réellement mis au point pour un
+               téléphone. Trois différences ici : la marque brute (ex.brand)
+               affichait le placeholder "?" du catalogue au lieu du type de
+               matériel ; les muscles n'apparaissaient nulle part alors qu'en
+               séance libre on choisit ses machines au fil de l'eau, sans
+               programme pour rappeler ce qu'on travaille ; et le pas de charge
+               occupait une troisième ligne à lui tout seul. */
+            h("div",{style:{display:"flex",alignItems:"flex-start",gap:8,minWidth:0,flex:1}},
               h(OrderBadge,{order: ex?exerciseOrderTier(ex):null, onChange: (ex && updateExerciseOrder) ? function(v){updateExerciseOrder(ex.id, v);} : undefined}),
-              h("div",{style:{minWidth:0}},
+              h("div",{style:{minWidth:0,flex:1}},
                 h("div",{style:{fontSize:16,fontWeight:600,lineHeight:1.25}}, ex?ex.name:"Machine supprimée"),
-                h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe}}, ex?ex.brand:"—"),
-                (ex && updateExerciseInc) ? h(IncStepper,{value:ex.inc, onChange:function(v){updateExerciseInc(ex.id, v);}}) : null)),
+                h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},
+                  brandLabel(ex)+(ex?" · "+allMuscles(ex).join(", "):"")),
+                (ex && updateExerciseInc) ? h("div",{style:{marginTop:7}}, h(IncStepper,{value:ex.inc, onChange:function(v){updateExerciseInc(ex.id, v);}})) : null)),
             h("button",{onClick:function(){removeFreeformEntry(idx);}, title:"Retirer cet exercice",
               style:{padding:6,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",flexShrink:0}}, h(Icon,{name:"x",size:14}))),
           note ? h("div",{style:{padding:"8px 12px",background:C.shroudDeep,borderTop:"1px solid "+C.shroud}},
             h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.45}}, note)) : null,
           h("div",{style:{background:C.shroud}},
             entry.sets.map(function(s, si){
-              return h("div",{key:si, style:{padding:"10px 12px",borderTop:"1px solid "+C.shroudDeep}},
-                h("div",{style:{display:"flex",alignItems:"center",gap:8,rowGap:8,marginBottom:8,flexWrap:"wrap"}},
-                  h("span",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,width:30,flexShrink:0}}, "S"+(si+1)),
-                  h(Stepper,{value:s.weight, onChange:function(v){updateSetAndMaybeRest(idx,si,"weight",v,90,ex?ex.name:"Repos");}, step: ex?ex.inc:2.5, suffix:"kg", placeholder:"kg", wide:true}),
-                  h(Stepper,{value:s.reps, onChange:function(v){updateSetAndMaybeRest(idx,si,"reps",v,90,ex?ex.name:"Repos");}, step:(ex&&ex.trackBy==="time")?5:1, suffix:unitLabel(ex), placeholder:unitLabel(ex)}),
+              /* Ligne de série refaite le 7 sept. 2026 sur le même modèle que la
+                 séance programmée. Avant, SIX éléments se disputaient une seule
+                 ligne à 390 px — S1, poids, reps, côté faible (G+/Égal/D+),
+                 recopie, suppression — et le "+" des compteurs sortait carrément
+                 de son cadre : il ne restait qu'une trentaine de pixels par
+                 champ, "rep" était tronqué en "re", et le chiffre saisi n'était
+                 même plus visible. Les réglages OPTIONNELS (ressenti, côté le
+                 plus dur) descendent maintenant sur une deuxième ligne qui
+                 n'apparaît qu'une fois la série commencée, exactement comme en
+                 séance programmée. Le libellé "Difficulté" disparaît : le
+                 bandeau en haut de séance l'explique déjà, et il coûtait ici
+                 60 px de largeur. */
+              var started = s.weight!=null || s.reps!=null;
+              return h("div",{key:si, style:{padding:"8px 12px",borderTop:"1px solid "+C.shroudDeep}},
+                /* La séance libre porte UN bouton de plus que la séance
+                   programmée sur cette ligne (supprimer la série, qui n'a pas
+                   d'équivalent quand le nombre de séries vient du programme).
+                   Sur un écran de 320 px, ces quelques pixels suffisaient à
+                   faire déborder la ligne : espacement et boutons resserrés
+                   d'autant, en gardant les 44 px de hauteur tactile. */
+                /* Répartition finale (7 sept. 2026), arbitrée en mesurant à
+                   320 px : la séance libre a deux boutons d'action là où la
+                   séance programmée n'en a qu'un, et à cette largeur ils ne
+                   tiennent pas sur la ligne des chiffres sans écraser les
+                   chiffres eux-mêmes — or c'est la seule chose qu'on vient
+                   lire. La recopie descend donc sur la deuxième ligne, où elle
+                   est de toute façon à sa place : elle veut dire "j'ai fini
+                   cette série", au même titre que le ressenti qu'on note juste
+                   à côté. Ne reste sur la première ligne que la suppression,
+                   utile même sur une série vide. */
+                h("div",{style:{display:"flex",alignItems:"center",gap:6,minWidth:0}},
+                  h("span",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,width:20,flexShrink:0}}, "S"+(si+1)),
+                  h(Stepper,{value:s.weight, onChange:function(v){updateSetAndMaybeRest(idx,si,"weight",v,90,ex?ex.name:"Repos");}, step: ex?ex.inc:2.5, suffix:"kg", placeholder:"kg", compact:true, flex:true}),
+                  h(Stepper,{value:s.reps, onChange:function(v){updateSetAndMaybeRest(idx,si,"reps",v,90,ex?ex.name:"Repos");}, step:(ex&&ex.trackBy==="time")?5:1, suffix:unitLabel(ex), placeholder:unitLabel(ex), compact:true, flex:true}),
+                  h("button",{onClick:function(){removeFreeformSet(idx,si);}, title:"Supprimer cette série", "aria-label":"Supprimer la série "+(si+1),
+                    style:{padding:"11px 6px",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",flexShrink:0}}, h(Icon,{name:"x",size:14}))),
+                started ? h("div",{style:{display:"flex",alignItems:"center",gap:8,rowGap:6,flexWrap:"wrap",paddingLeft:26,marginTop:7}},
+                  h(RirPicker,{value:s.rir, onChange:function(v){updateSet(idx,si,"rir",v);}}),
                   ex && ex.unilateral ? h(SideToggle,{value:s.weakSide, onChange:function(v){updateSet(idx,si,"weakSide",v);}}) : null,
-                  h("button",{onClick:function(){fillNextFreeform(idx,si,90,ex?ex.name:"Repos");}, title:"Recopier sur la série suivante (créée si besoin) et démarrer le repos",
-                    style:{padding:6,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",flexShrink:0}}, h(Icon,{name:"chevronDown",size:14})),
-                  h("button",{onClick:function(){removeFreeformSet(idx,si);}, title:"Supprimer cette série",
-                    style:{padding:6,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",flexShrink:0}}, h(Icon,{name:"x",size:14}))),
-                h("div",{style:{display:"flex",alignItems:"center",gap:8,paddingLeft:38}},
-                  h("span",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe}}, "Difficulté"),
-                  h(RirPicker,{value:s.rir, onChange:function(v){updateSet(idx,si,"rir",v);}})));
+                  h("button",{onClick:function(){fillNextFreeform(idx,si,90,ex?ex.name:"Repos");}, title:"Recopier sur la série suivante (créée si besoin) et démarrer le repos", "aria-label":"Recopier sur la série suivante",
+                    style:{marginLeft:"auto",padding:"8px 10px",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",flexShrink:0,display:"flex",alignItems:"center",gap:5,fontFamily:sansCond,fontSize:11.5}},
+                    h(Icon,{name:"chevronDown",size:13}), "Série suivante")) : null);
             }),
             h("div",{style:{padding:"10px 12px",borderTop: entry.sets.length ? "1px solid "+C.shroudDeep : "none"}},
               h("button",{onClick:function(){addFreeformSet(idx);}, style:{width:"100%",padding:"8px 0",borderRadius:6,color:C.bone,fontFamily:sansCond,fontSize:13.5,fontWeight:600,border:"1px dashed "+C.taupeDim,background:"transparent"}}, "+ Série"))
           ));
       }),
-      h("div",{style:{padding:"12px",display:"flex",flexDirection:"column",gap:8,borderRadius:10,border:"1px solid "+C.taupeDim,marginBottom:16}},
+      h("div",{style:{padding:"12px",display:"flex",flexDirection:"column",gap:8,borderRadius:10,border:"1px solid "+C.taupeDim,marginBottom:16,minWidth:0}},
         h("select",{value:freePick, onChange:function(e){setFreePick(e.target.value);},
-          style:{width:"100%",padding:"8px",borderRadius:6,background:C.shroudDeep,color:C.bone,border:"1px solid "+C.taupeDim,fontFamily:sansBody,fontSize:14}},
+          style:{width:"100%",minWidth:0,padding:"8px",borderRadius:6,background:C.shroudDeep,color:C.bone,border:"1px solid "+C.taupeDim,fontFamily:sansBody,fontSize:14}},
           h("option",{value:""}, "Ajouter une machine…"),
           available.map(function(e){ return h("option",{key:e.id,value:e.id}, e.name+" ("+brandLabel(e)+") — "+allMuscles(e).join(", ")); })),
         h("button",{onClick:addFreeformExercise, style:{width:"100%",padding:"10px 0",borderRadius:6,background:C.pin,color:C.ink,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Ajouter")),
       h("button",{onClick:finishSession, style:{width:"100%",marginTop:8,padding:"14px 0",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:C.green,color:C.ink,fontFamily:sansCond,fontSize:16,fontWeight:700,border:"none"}},
         h(Icon,{name:"check",size:18}), "Enregistrer la séance"),
-      h("p",{style:{fontSize:12.5,color:C.taupe,marginTop:8,lineHeight:1.5}}, "Les séries vides ou les exercices sans série sont ignorés à l'enregistrement. Cette séance est suivie dans l'historique et alimente la progression de charge de chaque machine, exactement comme une séance normale.")
+      h("p",{style:{fontSize:12.5,color:C.taupe,marginTop:8,lineHeight:1.5}}, "Les séries vides sont ignorées. Cette séance compte comme une séance normale : historique et progression de charge.")
     );
   }
 
@@ -4831,6 +5137,32 @@ function SeanceTab(props) {
   var dayItemIds = {}; adaptedDayItems.forEach(function(it){ dayItemIds[it.ex]=true; });
   var adhocItems = active.entries.filter(function(e){ return e.adhoc && !dayItemIds[e.ex]; })
     .map(function(e){ return { ex:e.ex, sets:e.adhoc.sets, min:e.adhoc.min, max:e.adhoc.max, rest:e.adhoc.rest, adhoc:true }; });
+  /* FILET DE SÉCURITÉ (7 sept. 2026) — une séance en cours ne doit JAMAIS
+     perdre une machine en silence. Les lignes affichées venaient du programme
+     adapté à la salle, et le rendu retrouvait les séries par
+     active.entries.find(e => e.ex === it.ex) ; si aucune entrée ne
+     correspondait, la carte faisait `return null` et la machine s'évaporait.
+     C'est ce qui se produisait après un remplacement dont la nouvelle machine
+     n'existait pas dans la salle courante (voir suggestSwap). La cause est
+     corrigée, mais la conséquence — une machine qui disparaît en pleine
+     séance, avec les séries déjà saisies — est trop grave pour ne dépendre
+     que d'elle : toute entrée sans ligne se voit maintenant fabriquer la
+     sienne, à partir de son réglage de programme s'il existe, sinon des
+     repères de son palier. Une fois la séance commencée, active.entries fait
+     foi sur ce qui est affiché. */
+  var shownIds = {}; adaptedDayItems.forEach(function(it){ shownIds[it.ex]=true; });
+  adhocItems.forEach(function(it){ shownIds[it.ex]=true; });
+  var orphanItems = active.entries.filter(function(e){ return !shownIds[e.ex] && exMap[e.ex]; })
+    .map(function(e){
+      var fromProgram = null;
+      dayActive.items.forEach(function(it){ if (it.ex===e.ex) fromProgram = it; });
+      if (fromProgram) return Object.assign({}, fromProgram);
+      var td = tierDefaultsForGoal(goal, exerciseOrderTier(exMap[e.ex]));
+      var a = e.adhoc || {};
+      return { ex:e.ex, sets: a.sets!=null?a.sets:(e.sets?e.sets.length:td.sets),
+        min: a.min!=null?a.min:td.min, max: a.max!=null?a.max:td.max, rest: a.rest!=null?a.rest:td.rest };
+    });
+  adhocItems = adhocItems.concat(orphanItems);
   var sessionItems = sortByExerciseOrder(sortByExerciseOrder(adaptedDayItems, function(it){return it.ex;}, exMap).concat(adhocItems), function(it){return it.ex;}, exMap);
   var availableToAdd = exercises.filter(function(e){ return !active.entries.some(function(en){return en.ex===e.id;}) && exerciseAvailableAtGym(e, currentGymId); }).slice().sort(function(a,b){return a.name.localeCompare(b.name);});
 
@@ -4874,7 +5206,13 @@ function SeanceTab(props) {
               h("button",{onClick:function(){removeFromActiveSession(idx);}, title:"Retirer de cette séance (le programme n'est pas modifié)",
                 style:{padding:7,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent"}}, h(Icon,{name:"x",size:14})))),
           h("div",{style:{display:"flex",alignItems:"center",gap:10,marginTop:9,paddingLeft:27,flexWrap:"wrap",rowGap:8}},
-            h(StackPlate,{weight:p.weight, repMin:it.min, repMax:it.max, sets:p.setsOverride||it.sets, state:p.state, unit:unitLabel(ex)==="s"?"s":"", block:true}),
+            /* Le nombre de séries affiché en objectif suit les lignes
+               RÉELLEMENT présentes (7 sept. 2026) : depuis que la séance se
+               rééquilibre quand on y ajoute ou retire une machine, il ne
+               correspond plus forcément au programme figé. entry.sets.length
+               est la seule source de vérité de ce qu'on va faire aujourd'hui,
+               et vaut déjà setsOverride||it.sets au démarrage (voir start). */
+            h(StackPlate,{weight:p.weight, repMin:it.min, repMax:it.max, sets:entry.sets.length, state:p.state, unit:unitLabel(ex)==="s"?"s":"", block:true}),
             (ex && updateExerciseInc) ? h(IncStepper,{value:ex.inc, onChange:function(v){updateExerciseInc(ex.id, v);}}) : null)),
         h("div",{style:{padding:"8px 12px",background:C.shroudDeep,borderTop:"1px solid "+C.shroud}},
           h("div",{style:{fontSize:12.5,color:p.state==="up"?C.green:p.state==="down"?C.rust:p.state==="deload"?C.steel:C.taupe,lineHeight:1.45}}, p.note)),
@@ -4892,22 +5230,31 @@ function SeanceTab(props) {
                facultatif). */
             var started = s.weight!=null || s.reps!=null;
             return h("div",{key:si, style:{padding:"8px 12px",borderTop:"1px solid "+C.shroudDeep}},
-              h("div",{style:{display:"flex",alignItems:"center",gap:7}},
-                h("span",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,width:22,flexShrink:0}}, "S"+(si+1)),
-                h(Stepper,{value:s.weight, onChange:function(v){updateSetAndMaybeRest(idx,si,"weight",v,it.rest,ex?ex.name:"Repos");}, step: ex?ex.inc:2.5, suffix:"kg", wide:true, compact:true}),
-                h(Stepper,{value:s.reps, onChange:function(v){updateSetAndMaybeRest(idx,si,"reps",v,it.rest,ex?ex.name:"Repos");}, step:(ex&&ex.trackBy==="time")?5:1, suffix:unitLabel(ex), compact:true}),
-                h("button",{onClick:function(){fillNext(idx,si,it.rest,ex?ex.name:"Repos");}, title:"Recopier sur la série suivante et démarrer le repos",
-                  style:{padding:"11px 8px",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",flexShrink:0,marginLeft:"auto"}}, h(Icon,{name:"chevronDown",size:14}))),
-              started ? h("div",{style:{display:"flex",alignItems:"center",gap:8,rowGap:6,flexWrap:"wrap",paddingLeft:29,marginTop:7}},
+              /* Même métrique que la séance libre (gap 6, colonne S 20 px,
+                 bouton resserré) — mesuré à 320 px, où 2 px suffisaient à
+                 faire sortir le "+" du compteur de son cadre. */
+              h("div",{style:{display:"flex",alignItems:"center",gap:6,minWidth:0}},
+                h("span",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,width:20,flexShrink:0}}, "S"+(si+1)),
+                h(Stepper,{value:s.weight, onChange:function(v){updateSetAndMaybeRest(idx,si,"weight",v,it.rest,ex?ex.name:"Repos");}, step: ex?ex.inc:2.5, suffix:"kg", compact:true, flex:true}),
+                h(Stepper,{value:s.reps, onChange:function(v){updateSetAndMaybeRest(idx,si,"reps",v,it.rest,ex?ex.name:"Repos");}, step:(ex&&ex.trackBy==="time")?5:1, suffix:unitLabel(ex), compact:true, flex:true}),
+                h("button",{onClick:function(){fillNext(idx,si,it.rest,ex?ex.name:"Repos");}, title:"Recopier sur la série suivante et démarrer le repos", "aria-label":"Recopier sur la série suivante",
+                  style:{padding:"11px 6px",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",flexShrink:0}}, h(Icon,{name:"chevronDown",size:14}))),
+              started ? h("div",{style:{display:"flex",alignItems:"center",gap:8,rowGap:6,flexWrap:"wrap",paddingLeft:26,marginTop:7}},
                 h(RirPicker,{value:s.rir, onChange:function(v){updateSet(idx,si,"rir",v);}}),
                 ex && ex.unilateral ? h(SideToggle,{value:s.weakSide, onChange:function(v){updateSet(idx,si,"weakSide",v);}}) : null) : null);
           })
         ));
     }),
     h("div",{style:{marginBottom:12,borderRadius:10,overflow:"hidden",border:"1px solid "+C.taupeDim}},
-      h("div",{style:{padding:"12px",display:"flex",gap:8,background:C.shroudDeep}},
+      /* minWidth:0 (7 sept. 2026) — un <select> prend par défaut la largeur de
+         sa PLUS LONGUE option ("Développé du Tronc (Life Fitness) — Pectoraux,
+         Épaules, Triceps"...), et flex:1 seul ne le fait pas rétrécir en
+         dessous de cette largeur intrinsèque. La ligne débordait donc de 170 à
+         280 px selon l'écran, poussant le bouton "Ajouter" hors de la carte —
+         à TOUTES les largeurs de téléphone, jusqu'à 430 px. */
+      h("div",{style:{padding:"12px",display:"flex",gap:8,background:C.shroudDeep,minWidth:0}},
         h("select",{value:sessionPick, onChange:function(e){setSessionPick(e.target.value);},
-          style:{flex:1,padding:"8px",borderRadius:6,background:C.shroud,color:C.bone,border:"1px solid "+C.taupeDim,fontFamily:sansBody,fontSize:14}},
+          style:{flex:"1 1 0",minWidth:0,padding:"8px",borderRadius:6,background:C.shroud,color:C.bone,border:"1px solid "+C.taupeDim,fontFamily:sansBody,fontSize:14}},
           h("option",{value:""}, "Ajouter une machine à cette séance…"),
           availableToAdd.map(function(e){ return h("option",{key:e.id,value:e.id}, e.name+" ("+brandLabel(e)+") — "+allMuscles(e).join(", ")); })),
         h("button",{onClick:function(){addToActiveSession(sessionPick);}, style:{padding:"0 16px",borderRadius:6,background:C.pin,color:C.ink,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Ajouter"))),
@@ -5939,19 +6286,36 @@ function MachinesTab(props){
   }
   function handleDelete(exId){
     var out = removeWithSubstitution(exId, exercises, program);
-    persistConfig(out.exercises, out.program);
+    persistConfig(out.exercises, out.program, {reflow:true});
     setConfirmDel(null);
     setNotice({ gone: out.gone.name, muscles: allMuscles(out.gone).join(" + "), report: out.report });
   }
+  /* Une machine ajoutée entre DIRECTEMENT dans les séances (7 sept. 2026 :
+     "quand j'ajoute une machine faut que le programme se mette à jour
+     directement"). Avant, elle rejoignait le matériel mais restait hors
+     programme tant qu'on n'avait pas validé une carte "Où mettre X ?" — une
+     machine ajoutée puis oubliée ne servait donc à rien, alors que l'appli
+     savait exactement où la mettre. La carte reste affichée, mais comme un
+     COMPTE RENDU de ce qui vient d'être fait, avec un bouton pour revenir en
+     arrière si on préfère la garder en réserve. */
   function handleAdd(raw){
     var newEx = Object.assign({}, raw, { id: "u"+Date.now() });
+    var withNew = exercises.concat([newEx]);
     var placement = proposePlacement(newEx, exercises, program, goal, avgSessions);
-    persistConfig(exercises.concat([newEx]), program);
+    var placed = applyPlacement(newEx, placement, withNew, program);
+    persistConfig(withNew, placed, {reflow:true});
     setMode(null);
-    setProposal({ newEx: newEx, placement: placement });
+    setProposal({ newEx: newEx, placement: placement, before: program });
   }
-  function acceptPlacement(){
-    persistConfig(exercises, applyPlacement(proposal.newEx, proposal.placement, exercises, program));
+  /* Retour en arrière : la machine RESTE dans le matériel (on ne l'a pas
+     ajoutée par erreur), elle sort seulement des séances. */
+  function undoPlacement(){
+    if (!proposal) return;
+    var id = proposal.newEx.id;
+    var back = program.map(function(d){
+      return Object.assign({}, d, { items: d.items.filter(function(it){ return it.ex !== id; }) });
+    });
+    persistConfig(exercises, back);
     setProposal(null);
   }
   /* Corrige/ajuste le palier poly/semi/isolation d'une machine déjà dans le
@@ -6093,12 +6457,13 @@ function MachinesTab(props){
       h("button",{onClick:function(){setNotice(null);}, style:{marginTop:8,padding:"6px 12px",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:13}}, "Compris")) : null,
 
     proposal ? h("div",{style:{marginBottom:16,borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.green}},
-      h("div",{style:{fontFamily:sansCond,fontSize:15,fontWeight:600,marginBottom:6}}, "Où mettre "+proposal.newEx.name+" ?"),
+      h("div",{style:{fontFamily:sansCond,fontSize:15,fontWeight:600,marginBottom:6,color:C.green}}, proposal.newEx.name+" est dans ton programme"),
       h("div",{style:{fontSize:13,color:C.taupe,lineHeight:1.5,marginBottom:10}},
-        describePlacement(proposal.placement)+" Proposition : "+proposal.placement.setsEach+" séries dans "+proposal.placement.targetLabels.join(" et ")+"."),
+        describePlacement(proposal.placement)+" Ajoutée à "+proposal.placement.targetLabels.join(" et ")+"."
+        +" Toutes les séries de ton programme ont été redistribuées pour en tenir compte."),
       h("div",{style:{display:"flex",gap:8}},
-        h("button",{onClick:acceptPlacement, style:{flex:1,padding:"8px 0",borderRadius:6,background:C.green,color:C.ink,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Ajouter aux séances"),
-        h("button",{onClick:function(){setProposal(null);}, style:{flex:1,padding:"8px 0",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:14}}, "Garder en réserve"))) : null,
+        h("button",{onClick:function(){setProposal(null);}, style:{flex:1,padding:"8px 0",borderRadius:6,background:C.green,color:C.ink,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Parfait"),
+        h("button",{onClick:undoPlacement, style:{flex:1,padding:"8px 0",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:14}}, "Garder en réserve"))) : null,
 
     h(Section, {title:"Ajouter du matériel"},
       h("button",{onClick:function(){setMode(mode==="manual"?null:"manual");},
@@ -6546,6 +6911,36 @@ function AnalyseTab(props){
 function App(props){
   var initial = props.initialState;
   var _tab = useState("seance"), tab=_tab[0], setTab=_tab[1];
+  /* Position de défilement mémorisée PAR ONGLET (7 sept. 2026, demande :
+     "faut remettre la page où on était précédemment quand on change
+     d'onglet"). Avant, le défilement était celui de la fenêtre, partagé par
+     tous les onglets : on quittait Machines à 3 000 px pour arriver au milieu
+     de Séance, et en revenant sur Machines on repartait d'où l'autre onglet
+     s'était arrêté. Volontairement gardé en mémoire vive et pas dans
+     localStorage : rouvrir l'appli le lendemain doit repartir du haut, c'est
+     seulement la navigation entre onglets qu'on veut continue. */
+  var scrollMemo = useRef({});
+  var pendingScroll = useRef(null);
+  function goToTab(k){
+    var y = 0;
+    try { y = window.scrollY || window.pageYOffset || 0; } catch(e){}
+    /* Appuyer sur l'onglet DÉJÀ actif remonte en haut — le geste attendu sur
+       mobile quand on est perdu au fond d'un écran long. */
+    if (k === tab) {
+      scrollMemo.current[k] = 0;
+      try { window.scrollTo({top:0, behavior:"smooth"}); } catch(e){ try { window.scrollTo(0,0); } catch(e2){} }
+      return;
+    }
+    scrollMemo.current[tab] = y;
+    pendingScroll.current = scrollMemo.current[k] || 0;
+    setTab(k);
+  }
+  useLayoutEffect(function(){
+    var y = pendingScroll.current;
+    pendingScroll.current = null;
+    if (y == null) return;
+    try { window.scrollTo(0, y); } catch(e){}
+  }, [tab]);
   var _st = useState(initial), state=_st[0], setStateRaw=_st[1];
   var _sync = useState(initial ? "local" : "saving"), syncStatus=_sync[0], setSyncStatus=_sync[1];
   /* Mute l'objet C partagé AVANT tout rendu de cette passe — chaque
@@ -6581,7 +6976,24 @@ function App(props){
     // eslint-disable-next-line
   }, []);
 
-  useEffect(function(){ INC_CACHE = {}; state.exercises.forEach(function(e){ INC_CACHE[e.id]=e.inc; }); }, [state.exercises]);
+  /* BUG CORRIGÉ le 7 sept. 2026, signalé sur capture : "la cible est 37 alors
+     que je suis à 35 avec des pas de 5". 35 + 5 = 40, pas 37,5.
+
+     INC_CACHE (le plus petit incrément de chaque machine, lu par itemInc dans
+     prescribeBase) était rempli dans un useEffect, c'est-à-dire APRÈS le
+     premier rendu. Or c'est pendant ce rendu que les charges du jour sont
+     calculées : au tout premier affichage — donc à chaque ouverture de
+     l'appli, et à chaque fois que la liste des machines change — itemInc ne
+     trouvait rien et retombait sur son défaut de 2,5 kg. Toutes les machines
+     à pas de 5 kg proposaient donc un demi-cran inexistant sur la colonne
+     (35 -> 37,5 au lieu de 40), affiché "37" une fois le ",5" rogné par la
+     largeur du bloc. Le calcul devenait correct au rendu suivant, ce qui
+     rendait le défaut d'autant plus difficile à voir.
+
+     useMemo s'exécute PENDANT le rendu, avant que les composants enfants ne
+     lisent le cache : la charge affichée est donc bonne dès la première
+     image. */
+  useMemo(function(){ INC_CACHE = {}; state.exercises.forEach(function(e){ INC_CACHE[e.id]=e.inc; }); return null; }, [state.exercises]);
 
   var exMap = useMemo(function(){ var m={}; state.exercises.forEach(function(e){m[e.id]=e;}); return m; }, [state.exercises]);
   var nextDayKey = useMemo(function(){
@@ -6667,14 +7079,24 @@ function App(props){
      là écraserait la valeur dans le même geste que la saisie — le bouton
      paraîtrait cassé. Ces réglages manuels restent donc en place jusqu'à la
      prochaine réoptimisation déclenchée par autre chose, comme avant. */
+  /* opts.reflow : remettre aussi la COMPOSITION des séances en cohérence avec
+     la liste des machines (voir reflowProgramForCatalogue), pas seulement le
+     nombre de séries. Activé à l'ajout et au retrait d'une machine (7 sept.
+     2026). Volontairement PAS activé pour les autres appels — changer
+     d'objectif ou de fourchette de séances ne doit pas se mettre à ajouter des
+     machines dans les séances au passage. */
   function persistConfig(exercises, program, opts){
     if (opts && opts.reoptimize === false) { setState({exercises:exercises, program:program}); return; }
     var prof = state.profile || {};
     var mf = prof.muscleFocus || {};
-    var pick = pickOptimalAvgSessions(program, exercises, prof.goal,
+    var prog = program;
+    if (opts && opts.reflow) {
+      prog = reflowProgramForCatalogue(prog, exercises, prof.goal, avgSessionsPerWeek(prof), mf, prof.currentGymId, prof);
+    }
+    var pick = pickOptimalAvgSessions(prog, exercises, prof.goal,
       prof.sessionsMin, prof.sessionsMax,
       prof.sessionMinutesMin||0, prof.sessionMinutesMax==null?90:prof.sessionMinutesMax, mf);
-    var next = applyGoalToProgram(program, exercises, prof.goal, pick ? pick.n : avgSessionsPerWeek(prof), mf, prof);
+    var next = applyGoalToProgram(prog, exercises, prof.goal, pick ? pick.n : avgSessionsPerWeek(prof), mf, prof);
     setState({exercises:exercises, program:next});
   }
   function persistSessions(sessions){ setState({sessions:sessions}); }
@@ -6765,7 +7187,7 @@ function App(props){
              haut) : la couleur seule n'est pas un indicateur suffisant, et
              l'ambre sur taupe passe mal en plein soleil comme pour un daltonisme
              rouge/vert. aria-current expose le même état aux lecteurs d'écran. */
-          return h("button",{key:t.k, onClick:function(){setTab(t.k);},
+          return h("button",{key:t.k, onClick:function(){goToTab(t.k);},
             "aria-current": on ? "page" : null, title:t.label,
             style:{flex:1,padding:"10px 0 9px",display:"flex",flexDirection:"column",alignItems:"center",gap:3,
               background:on?C.shroud:"transparent",border:"none",borderTop:"2px solid "+(on?C.pin:"transparent"),
