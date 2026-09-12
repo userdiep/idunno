@@ -2676,10 +2676,66 @@ function suggestProgramCompletion(program, exercises, goal, avgSessions, muscleF
    manque pénalisé plus lourdement que l'excès quand l'objectif d'entraînement
    est la priorité n°1, à égalité quand c'est l'équilibrage. Plus bas = mieux.
    Sert à décider si ajouter une machine améliore vraiment le programme. */
-function programBalancePenalty(program, exercises, goal, avgSessions, muscleFocus, profile) {
+function programBalancePenalty(program, exercises, goal, avgSessions, muscleFocus, profile, opts) {
   var order = priorityOrderOf(profile);
   var balanceFirst = priorityRank(order, "balance") < priorityRank(order, "goal");
   var UNDER_W = balanceFirst ? 1.0 : 3.0, OVER_W = balanceFirst ? 1.0 : 0.5;
+  /* `opts.symmetric` — poids égaux pour le manque et l'excès. Ajouté le 7 sept.
+     2026 après « je préfère avoir 12 que 20, c'est too much là non ? ».
+
+     Les poids asymétriques (3,0 / 0,5) ont été réglés pour RÉPARTIR des séries
+     entre des machines déjà choisies : là, sacrifier un muscle à sa cible pour
+     rogner le dépassement d'un autre est un mauvais échange. Mais ils sont le
+     mauvais arbitre pour décider si une machine a sa place dans le programme :
+     ils rendent le dépassement presque gratuit, donc rien ne s'enlevait jamais
+     et le volume ne pouvait que monter — jusqu'à 22 séries de triceps pour une
+     cible de 12.
+
+     Pour une décision de COMPOSITION, dépasser coûte autant que manquer, et
+     c'est défendable : au-delà de la cible aucun bénéfice supplémentaire n'est
+     démontré (Remmert et al., SportRxiv 2025, sur le plafond par séance ;
+     Pelland et al. 2025 sur la cible hebdomadaire), pendant que chaque série en
+     trop coûte du temps de séance et de la fatigue bien réels. */
+  if (opts && opts.symmetric) { UNDER_W = 1.0; OVER_W = 1.0; }
+
+  /* RÈGLE DU COULOIR (`opts.corridor`) — formulée telle quelle par
+     l'utilisateur le 12 sept. 2026 : « il faut que ce soit compris entre 12 et
+     20 chaque série, et tout en essayant de rapprocher de 12 sans être moins
+     que 12 ».
+
+     Les poids symétriques essayés la veille étaient une mauvaise réponse à
+     « je préfère avoir 12 que 20 » : à traiter le manque et l'excès à égalité,
+     l'appli a corrigé le dépassement en basculant dans l'autre extrême, et la
+     moitié des muscles est passée SOUS la cible. C'était pire — être à 7 pour
+     une cible de 12, c'est du stimulus perdu, alors qu'être à 14 ne coûte que
+     du temps.
+
+     Le vrai objectif n'est ni symétrique ni asymétrique dans l'autre sens :
+     c'est un COULOIR. Descendre sous la cible est ce qu'on veut éviter avant
+     tout (poids fort), dépasser 20 aussi (c'est le plafond demandé), et entre
+     les deux on se rapproche du bas du couloir. Un optimum clair : pile à la
+     cible. */
+  if (opts && opts.corridor) {
+    var base = goalPreset(goal).targetSets || VOL_MIN;
+    var totalC = 0;
+    plannedVolume(program, exercises, avgSessions).forEach(function(v){
+      var target = base * focusMultiplier(muscleFocus || {}, v.muscle);
+      if (!(target > 0)) return;
+      var ceil = Math.max(target, VOL_MAX * focusMultiplier(muscleFocus || {}, v.muscle));
+      if (v.sets < target) {
+        var d = (target - v.sets) / target;
+        totalC += 10 * d * d;                       /* manquer : à éviter avant tout */
+      } else {
+        var over = (v.sets - target) / target;
+        totalC += 1 * over * over;                  /* dépasser un peu : on s'en rapproche */
+        if (v.sets > ceil) {
+          var far = (v.sets - ceil) / target;
+          totalC += 50 * far * far;                 /* au-delà du plafond demandé : quasi interdit */
+        }
+      }
+    });
+    return totalC;
+  }
   var base = goalPreset(goal).targetSets || VOL_MIN;
   var total = 0;
   plannedVolume(program, exercises, avgSessions).forEach(function(v){
@@ -2810,39 +2866,202 @@ function reflowProgramForCatalogue(program, exercises, goal, avgSessions, muscle
      refus, les suivantes étant classées comme moins utiles.
      Chaque candidate est évaluée sur le programme APRÈS redistribution des
      séries, sinon on comparerait un programme optimisé à un programme brut. */
-  var score = function(pr){
-    return programBalancePenalty(applyGoalToProgram(pr, exercises, goal, avgSessions, muscleFocus, profile),
-      exercises, goal, avgSessions, muscleFocus, profile);
-  };
   /* Si "temps par séance et nombre de séances" passe AVANT l'objectif dans
      l'ordre de priorité (Options), une machine en plus ne doit pas faire
      déborder la fourchette de temps : trimToTimeBudget sait rogner des séries
      mais pas descendre sous MIN_SETS_PER_EXERCISE, donc chaque machine ajoutée
      coûte un plancher incompressible. On refuse alors explicitement ce qui
      dépasse le maximum réglé — c'est ce que cette priorité promet. */
+  /* Poids symétriques ici : voir programBalancePenalty. Décider si une machine
+     a sa place dans le programme n'obéit pas aux mêmes règles que répartir des
+     séries entre les machines déjà retenues. */
+  function score(pr){
+    return programBalancePenalty(applyGoalToProgram(pr, exercises, goal, avgSessions, muscleFocus, profile),
+      exercises, goal, avgSessions, muscleFocus, profile, {corridor:true});
+  }
   var order = priorityOrderOf(profile);
   var timeFirst = profile && priorityRank(order,"time") < priorityRank(order,"goal");
   var maxMin = (profile && profile.sessionMinutesMax != null) ? profile.sessionMinutesMax : null;
+  /* Plafond de durée pour un AJOUT de machine, dérivé de l'ordre de priorité
+     réglé dans Options — et absolu, donc identique à chaque appel (c'est ce qui
+     rend la réoptimisation idempotente, voir la note du garde-fou plus bas).
+
+     - "temps et nombre de séances" avant l'objectif : on s'en tient strictement
+       à la fourchette réglée, c'est ce que cette priorité promet.
+     - sinon (réglage par défaut, objectif d'abord) : l'appli s'autorise à
+       dépasser le temps visé de moitié au plus pour aller chercher le volume
+       manquant — elle annonce depuis toujours qu'elle préfère allonger la
+       séance plutôt que rogner l'équilibrage — mais pas au-delà. Sans cette
+       limite haute, servir chaque muscle jusqu'à sa cible produisait des
+       séances de plus de deux heures, que personne ne fera ; la durée estimée
+       reste affichée dans l'onglet Programme pour que le compromis soit
+       visible, et le volume manquant reste signalé plutôt que masqué. */
+  var plafondMin = maxMin == null ? null : (timeFirst ? maxMin : Math.round(maxMin * 1.5));
   var exMap = {}; (exercises||[]).forEach(function(e){ exMap[e.id] = e; });
   function longestDay(pr){
     return pr.reduce(function(a,d){ return Math.max(a, estimateDayMinutes(d, exMap)); }, 0);
   }
   var best = score(prog);
-  var baseLongest = longestDay(applyGoalToProgram(prog, exercises, goal, avgSessions, muscleFocus, profile));
-  for (var round = 0; round < 8; round++) {
-    var sugg = suggestProgramCompletion(prog, exercises, goal, avgSessions, muscleFocus, gymId);
-    if (!sugg || !sugg.length) break;
-    var cand = applyPlacement(sugg[0].ex, sugg[0].placement, exercises, prog);
-    if (cand === prog) break;
-    var applied = applyGoalToProgram(cand, exercises, goal, avgSessions, muscleFocus, profile);
-    var candScore = programBalancePenalty(applied, exercises, goal, avgSessions, muscleFocus, profile);
-    if (!(candScore < best - 1e-9)) break;
-    if (timeFirst && maxMin != null) {
+  /* Le garde-fou de durée ne regarde QUE le candidat : "cette séance
+     dépasserait-elle la fourchette réglée ?". Il a d'abord été écrit en
+     relatif ("... et serait-elle plus longue qu'actuellement ?"), avec une
+     référence qui montait à chaque coup accepté. Le garde-fou devenait alors
+     de plus en plus permissif au fil de la descente, et surtout d'un appel à
+     l'autre : un deuxième appel repartait d'une référence plus haute et
+     autorisait des coups que le premier avait refusés — le résultat dépendait
+     du nombre de fois où la fonction avait tourné. Le test de convergence l'a
+     attrapé deux fois de suite. Un seuil absolu est à la fois plus simple et
+     réellement idempotent. Conséquence assumée : si tes séances dépassent déjà
+     ton temps réglé, l'appli n'ajoute plus rien — elle affiche le manque de
+     volume plutôt que de te prescrire des séances encore plus longues. */
+
+  /* UNE SEULE DESCENTE, deux types de coups : AJOUTER une machine dans un jour
+     (pour combler un muscle sous sa cible) ou en RETIRER une (pour un muscle
+     au-dessus). À chaque tour on évalue tous les coups possibles et on joue le
+     meilleur, tant qu'il améliore la note.
+
+     Le retrait a été ajouté le 7 sept. 2026 sur signalement : « je préfère
+     avoir 12 que 20, c'est too much là non ? ». Le problème était structurel.
+     Mesuré : HUIT machines sollicitaient les triceps ; aucune ne peut descendre
+     sous MIN_SETS_PER_EXERCISE séries (plancher justifié — Krieger 2010, une
+     seule série est mesurablement moins efficace). Huit machines × ce plancher,
+     pondéré, faisaient déjà 15 séries/semaine pour une cible de 12, AVANT toute
+     optimisation. L'optimiseur de séries ne pouvait rien y faire : il ne change
+     que des NOMBRES de séries, jamais la composition d'un jour. Ce levier-là
+     n'existait pas — on savait ajouter pour combler un manque, jamais l'inverse.
+
+     Les deux coups ont d'abord été écrits en deux passes successives (ajouts
+     puis retraits). Le test de convergence l'a rejeté, à juste titre : la passe
+     d'ajout replaçait une machine que la passe de retrait venait d'enlever, et
+     un second appel continuait de modifier le programme — donc le résultat
+     dépendait du nombre de fois où la fonction avait tourné. Une descente
+     unique sur les deux types de coups atteint un vrai point fixe : rappeler la
+     fonction ne change plus rien.
+
+     Deux garde-fous sur le retrait : ne jamais retirer la dernière machine qui
+     travaille un muscle en PRINCIPAL (ce muscle ne dépendrait plus que des
+     effets de bord des autres exercices — voir musclesWithoutPrimary), et ne
+     jamais vider un jour. La machine reste dans le MATÉRIEL : c'est sa place
+     dans CE jour qui est en trop, pas la machine elle-même. */
+  /* Plafond de tours relevé le 12 sept. 2026 : depuis l'ajout du coup "une
+     machine un jour de plus", une descente complète demande nettement plus de
+     coups qu'avant, et s'arrêter trop tôt rendait le résultat dépendant du
+     nombre d'appels (le test de convergence l'a attrapé). C'est un filet de
+     sécurité, pas un réglage : la descente s'arrête d'elle-même dès qu'aucun
+     coup n'améliore. */
+  for (var round = 0; round < 200; round++) {
+    var bestMove = null, bestMoveScore = best;
+
+    /* Muscles encore sous leur cible : c'est eux qu'on cherche à servir. */
+    var sousCible = {};
+    (function(){
+      var base = goalPreset(goal).targetSets || VOL_MIN;
+      plannedVolume(applyGoalToProgram(prog, exercises, goal, avgSessions, muscleFocus, profile), exercises, avgSessions)
+        .forEach(function(v){
+          if (v.sets < base * focusMultiplier(muscleFocus || {}, v.muscle) - 0.05) sousCible[v.muscle] = true;
+        });
+    })();
+    /* Photo du dépassement AVANT ce tour : un muscle déjà au-dessus du plafond
+       (parce que le matériel ne permet pas mieux) ne doit pas bloquer tous les
+       coups, seulement empêcher qu'on l'aggrave. */
+    var dejaAuPlafond = {};
+    plannedVolume(applyGoalToProgram(prog, exercises, goal, avgSessions, muscleFocus, profile), exercises, avgSessions)
+      .forEach(function(v){ dejaAuPlafond[v.muscle] = v.sets; });
+    function evalMove(cand){
+      if (!cand || cand === prog) return;
+      var applied = applyGoalToProgram(cand, exercises, goal, avgSessions, muscleFocus, profile);
+      var sc = programBalancePenalty(applied, exercises, goal, avgSessions, muscleFocus, profile, {corridor:true});
       var lg = longestDay(applied);
-      if (lg > maxMin && lg > baseLongest + 0.001) break;
-      baseLongest = Math.max(baseLongest, lg);
+      /* GARDE-FOU DE DURÉE, appliqué à TOUS les ordres de priorité depuis le
+         12 sept. 2026. La règle « dépasser le temps visé plutôt que rogner
+         l'équilibrage » a été écrite pour le nombre de SÉRIES ; l'étendre au
+         nombre de MACHINES donnait des séances de 127 min, ce que personne ne
+         fera. On refuse donc un ajout qui pousse la séance la plus longue
+         au-delà de la fourchette réglée, sauf s'il ne l'allonge pas davantage
+         qu'elle ne l'est déjà. Le manque de volume qui en résulte n'est pas
+         masqué : il reste visible dans "Volume prévu par semaine" et expliqué
+         par le diagnostic de l'onglet Machines — mieux vaut le dire que
+         prescrire une séance de deux heures. */
+      if (plafondMin != null && lg > plafondMin) return;
+      /* PLAFOND DUR À VOL_MAX — « il faut que ce soit compris entre 12 et 20 »
+         est une borne, pas une préférence : aucun coup ne peut faire passer un
+         muscle au-dessus du plafond s'il n'y était pas déjà. La pénalité seule
+         ne suffisait pas (elle se laissait acheter quand le coup servait
+         beaucoup un autre muscle). */
+      var depasse = false;
+      var baseT = goalPreset(goal).targetSets || VOL_MIN;
+      plannedVolume(applied, exercises, avgSessions).forEach(function(v){
+        var f = focusMultiplier(muscleFocus || {}, v.muscle);
+        var plafond = Math.max(baseT * f, VOL_MAX * f);
+        if (v.sets > plafond + 0.05 && !(dejaAuPlafond[v.muscle] >= v.sets - 0.05)) depasse = true;
+      });
+      if (depasse) return;
+      if (sc < bestMoveScore - 1e-9) { bestMove = cand; bestMoveScore = sc; }
     }
-    prog = cand; best = candScore;
+
+    /* Coup 1 — faire entrer dans le programme une machine du matériel qui n'y
+       est pas encore. On essaie TOUTES les propositions, pas seulement la
+       première : s'arrêter au premier refus laissait de côté des machines qui
+       auraient comblé un autre muscle. */
+    var sugg = suggestProgramCompletion(prog, exercises, goal, avgSessions, muscleFocus, gymId);
+    (sugg || []).forEach(function(su){ evalMove(applyPlacement(su.ex, su.placement, exercises, prog)); });
+
+    /* Coup 2 — AJOUTER UN JOUR À UNE MACHINE DÉJÀ PRÉSENTE. Levier ajouté le
+       12 sept. 2026, sans lequel la règle « jamais moins de 12 » est
+       inatteignable pour beaucoup de muscles.
+
+       Mesuré : les pectoraux plafonnaient à 8,8 séries/semaine pour une cible
+       de 12 — deux machines seulement les travaillaient, toutes deux DÉJÀ au
+       maximum de 5 séries. 2 machines × 5 séries × 0,875 (un jour revient 0,88
+       fois par semaine à 3,5 séances sur 4 jours) = 8,8, et pas un dixième de
+       plus. Aucun réglage de séries ne pouvait y changer quoi que ce soit :
+       le plafond n'était pas dans l'algorithme, il était dans le nombre de
+       créneaux disponibles. Refaire passer une machine un second jour est le
+       seul moyen d'aller plus haut sans inventer du matériel — et ça monte
+       aussi la fréquence hebdomadaire du muscle, ce que la littérature
+       recommande par ailleurs (Ralston et al. 2018).
+
+       Restreint aux machines qui touchent un muscle sous sa cible, sinon on
+       évaluerait tout le catalogue × tous les jours à chaque tour. */
+    prog.forEach(function(day, di){
+      exercises.forEach(function(ex){
+        if (!ex || !exerciseAvailableAtGym(ex, gymId)) return;
+        if (day.items.some(function(it){ return it.ex === ex.id; })) return;
+        if (!allMuscles(ex).some(function(mu){ return sousCible[mu]; })) return;
+        var modele = null;
+        prog.forEach(function(d){ d.items.forEach(function(it){ if (it.ex === ex.id && !modele) modele = it; }); });
+        var td = tierDefaultsForGoal(goal, exerciseOrderTier(ex));
+        var nouvel = modele
+          ? { ex: ex.id, sets: modele.sets, min: modele.min, max: modele.max, rest: modele.rest }
+          : { ex: ex.id, sets: td.sets, min: td.min, max: td.max, rest: td.rest };
+        evalMove(prog.map(function(d, i){
+          return i !== di ? d : Object.assign({}, d, { items: d.items.concat([nouvel]) });
+        }));
+      });
+    });
+
+    /* Coup 3 — retirer d'un jour la machine dont l'absence améliore le plus. */
+    prog.forEach(function(day, di){
+      if (day.items.length <= 1) return;
+      day.items.forEach(function(it, ii){
+        var ex = exMap[it.ex]; if (!ex) return;
+        var cut = prog.map(function(d, i){
+          return i !== di ? d : Object.assign({}, d, { items: d.items.filter(function(x, j){ return j !== ii; }) });
+        });
+        var primary = allMuscles(ex)[0];
+        var stillPrimary = false;
+        cut.forEach(function(d){ d.items.forEach(function(x){
+          var e2 = exMap[x.ex];
+          if (e2 && allMuscles(e2)[0] === primary) stillPrimary = true;
+        }); });
+        if (!stillPrimary) return;
+        var sc = score(cut);
+        if (sc < bestMoveScore - 1e-9) { bestMove = cut; bestMoveScore = sc; }
+      });
+    });
+
+    if (!bestMove) break;
+    prog = bestMove; best = bestMoveScore;
   }
   return prog;
 }
@@ -3051,7 +3270,7 @@ var PROGRAM_VERSION = 3;
    recommitée à la main — contrairement au lien Artifact qui se met à jour
    tout seul". Change cette date à chaque publication notable pour que la
    comparaison soit possible côté utilisateur. */
-var APP_BUILD = "2026-09-07g";
+var APP_BUILD = "2026-09-12b";
 
 function seedState() {
   return {
@@ -5624,7 +5843,16 @@ function OptionsTab(props){
      réellement appliquée à chaque machine tient maintenant compte à la fois
      de la fourchette séances/semaine ET de la fourchette temps/séance
      réglées dans Options, pas juste de la première. */
-  function reapplyGoalToProgram(){ persistConfig(exercises, applyGoalToProgram(program, exercises, profile.goal, optPick.n, muscleFocus, profile), {reoptimize:false}); setReapplyPrompt(false); }
+  /* Passé en réoptimisation COMPLÈTE le 7 sept. 2026 (composition comprise,
+     voir reflowProgramForCatalogue). Avant, ce bouton ne recalculait que les
+     NOMBRES de séries : sur un programme devenu trop chargé — 22 séries de
+     triceps pour une cible de 12, parce que huit machines les sollicitent et
+     qu'aucune ne peut descendre sous 3 séries — il ne pouvait strictement rien
+     y faire, et l'utilisateur n'avait aucun moyen de rattraper la situation
+     depuis l'appli. C'est pourtant le seul bouton dont le nom promet
+     exactement ça. Il peut donc maintenant aussi retirer d'un jour une machine
+     qui fait déborder un muscle, et en ajouter une qui comble un manque. */
+  function reapplyGoalToProgram(){ persistConfig(exercises, program, {reflow:true}); setReapplyPrompt(false); }
   /* Ajouté le 6 sept. 2026 — remplace setReapplyPrompt(true) pour les
      changements d'équilibrage (muscleFocus) et de temps/nombre de séances
      (sessionsMin/Max, sessionMinutesMin/Max) : contrairement à applyGoal, ces
@@ -5879,7 +6107,7 @@ function OptionsTab(props){
         style:{width:"100%",padding:"9px 0",borderRadius:6,color:C.bone,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:13.5,fontWeight:600}},
         "Recalculer toutes mes séances maintenant"),
       h(InfoTip,{label:"Quand est-ce utile ?"},
-        "Normalement jamais : chaque réglage (objectif, priorité par muscle, séances, temps, ordre de priorité, type de split, ajout ou retrait d'une machine) recalcule déjà tes séances tout seul. Ce bouton sert au cas où tu as ajusté des séries À LA MAIN dans Machines > « Composer les séances » et que tu veux revenir aux repères calculés par l'appli — il remplace le réglage de chacune de tes "+totalItems+" machines par celui de son palier (poly/semi/isolation) pour ton objectif « "+((GOALS.find(function(g){return g.k===profile.goal;})||{}).label||"")+" », à "+optPick.n.toFixed(1)+" séances/semaine"+(optPick.inWindow?" (dans ta fourchette de temps)":" (au plus proche de ta fourchette de temps)")+". Tes retouches manuelles sont donc écrasées.")),
+        "Remet tout à plat : la COMPOSITION des séances (quelle machine dans quel jour) puis les séries de chacune, pour ton objectif « "+((GOALS.find(function(g){return g.k===profile.goal;})||{}).label||"")+" » à "+optPick.n.toFixed(1)+" séances/semaine"+(optPick.inWindow?" (dans ta fourchette de temps)":" (au plus proche de ta fourchette de temps)")+". Deux cas où ça sert vraiment : tu as ajusté des séries à la main dans « Composer les séances » et tu veux revenir aux repères calculés ; ou un muscle est passé nettement au-dessus de sa cible parce que trop de machines le sollicitent — chacune impose son plancher de "+setsBoundsForGoal(profile.goal).min+" séries, donc le seul remède est d'en retirer une d'un jour, ce que ce bouton sait faire. Il n'enlève jamais la dernière machine qui travaille un muscle en principal, et ne vide jamais un jour. Tes retouches manuelles sont écrasées. Le reste du temps il est inutile : chaque réglage (objectif, priorité par muscle, séances, temps, ordre de priorité, type de split, ajout ou retrait d'une machine) recalcule déjà tout seul.")),
 
     h(Section, {title:"Dépense énergétique de repos (DER)"},
       h("div",{style:{padding:"10px 12px",borderRadius:8,background:C.shroudDeep,border:"1px solid "+C.taupeDim,marginBottom:10}},
@@ -6560,7 +6788,15 @@ function MachinesTab(props){
           var ratio = muTarget>0 ? v.sets/muTarget : 1;
           var below = v.sets < VOL_MIN || ratio < 0.7;
           var partial = !below && ratio < 0.95;
-          var over = v.sets > VOL_MAX;
+          /* Corrigé le 7 sept. 2026 — signalé par capture : « je préfère avoir
+             12 que 20, c'est too much là non ? ». Un muscle à 20 séries pour
+             une cible de 12 s'affichait en VERT, c'est-à-dire "cible atteinte,
+             rien à voir". La faute au seuil de dépassement, resté sur la bande
+             fixe VOL_MAX=20 alors que le côté MANQUE avait déjà été passé en
+             relatif à la cible le 6 sept. — la moitié du bug avait été
+             corrigée, l'autre non. Le dépassement suit maintenant la même règle
+             que le manque : c'est l'écart à TA cible qui compte. */
+          var over = ratio > 1.15 || v.sets > VOL_MAX;
           var tone = below ? C.rust : partial ? C.steel : over ? C.pin : C.green;
           var lowFreq = v.freq < (goalPreset(goal).minFreq||1);
           /* Passé sur deux lignes le 6 sept. 2026 — sur un écran de 390 px, les
@@ -6580,7 +6816,7 @@ function MachinesTab(props){
             h("div",{style:{display:"flex"}}, h(Bar,{value:v.sets, max:volBarMax, tone:tone, marker:muTarget})));
         }); })(volumeBarMax(vol, goal, profile))),
       h("p",{style:{fontSize:12.5,color:C.taupe,marginTop:6,lineHeight:1.5}},
-        "Chaque ligne : séries prévues / cible du muscle, le trait clair sur la barre marquant cette cible. Calculé sur "+avgSessions.toFixed(1)+" séances/semaine (ton réglage actuel — voir Options > \"Séances par semaine\"). Cible pour ton objectif actuel (\""+((GOALS.find(function(g){return g.k===(goal||"loss_hyper");})||{}).label||"")+"\") : ~"+goalPreset(goal).targetSets+" séries/semaine/muscle (voir GOAL_PRESETS — basé sur Pelland et al. 2025 pour l'hypertrophie/perte de gras, Androulakis-Korakakis et al. 2021 pour la force), ajustée muscle par muscle si tu as réglé une \"Priorité par muscle\" dans Options. Vert = cible atteinte (≥95%), bleu = en approche, rouge = sous 70% de la cible ou sous le plancher de sécurité "+VOL_MIN+" séries, ambre = au-delà de "+VOL_MAX+" séries. La colonne \"×/sem\" est une estimation du nombre de séances où ce muscle est sollicité — "+(goalPreset(goal).minFreq>=2?"vise au moins "+goalPreset(goal).minFreq+"×/semaine pour bien répartir ce volume (repère pratique, pas un effet magique de la fréquence elle-même — voir la note plus haut) ; en bleu si en dessous.":"la fréquence compte moins pour cet objectif (voir la note sur la force), pas de seuil strict ici.")+" Se met à jour dès que tu ajoutes/retires une machine, changes d'objectif, ou changes ta fréquence dans Options.")),
+        "Chaque ligne : séries prévues / cible du muscle, le trait clair sur la barre marquant cette cible. Calculé sur "+avgSessions.toFixed(1)+" séances/semaine (ton réglage actuel — voir Options > \"Séances par semaine\"). Cible pour ton objectif actuel (\""+((GOALS.find(function(g){return g.k===(goal||"loss_hyper");})||{}).label||"")+"\") : ~"+goalPreset(goal).targetSets+" séries/semaine/muscle (voir GOAL_PRESETS — basé sur Pelland et al. 2025 pour l'hypertrophie/perte de gras, Androulakis-Korakakis et al. 2021 pour la force), ajustée muscle par muscle si tu as réglé une \"Priorité par muscle\" dans Options. Vert = cible atteinte (95 à 115%), bleu = en approche, rouge = sous 70% de la cible ou sous le plancher de sécurité "+VOL_MIN+" séries, ambre = plus de 15% au-dessus de la cible — au-delà, rien ne montre de bénéfice supplémentaire (Remmert et al. 2025, Pelland et al. 2025) et ça ne coûte que du temps de séance. La colonne \"×/sem\" est une estimation du nombre de séances où ce muscle est sollicité — "+(goalPreset(goal).minFreq>=2?"vise au moins "+goalPreset(goal).minFreq+"×/semaine pour bien répartir ce volume (repère pratique, pas un effet magique de la fréquence elle-même — voir la note plus haut) ; en bleu si en dessous.":"la fréquence compte moins pour cet objectif (voir la note sur la force), pas de seuil strict ici.")+" Se met à jour dès que tu ajoutes/retires une machine, changes d'objectif, ou changes ta fréquence dans Options.")),
 
     h(Section, {title:"Composer les séances"},
       program.map(function(d){
@@ -6864,7 +7100,10 @@ function AnalyseTab(props){
         (function(volBarMax){ return setsByMuscle.map(function(v,i){
           var muTarget = (goalPreset(goal).targetSets||VOL_MIN) * focusMultiplier((profile && profile.muscleFocus)||{}, v.muscle);
           var ratio = muTarget>0 ? v.sets/muTarget : 1;
-          var tone = (v.sets<VOL_MIN || ratio<0.7) ? C.rust : ratio<0.95 ? C.steel : v.sets>VOL_MAX ? C.pin : C.green;
+          /* Même correction que dans "Volume prévu par semaine" (7 sept. 2026) :
+             le dépassement se juge par rapport à la cible, pas à la bande fixe
+             VOL_MAX. */
+          var tone = (v.sets<VOL_MIN || ratio<0.7) ? C.rust : ratio<0.95 ? C.steel : (ratio>1.15 || v.sets>VOL_MAX) ? C.pin : C.green;
           return h("div",{key:v.muscle, style:{padding:"7px 0",borderTop:i?"1px solid "+C.shroud:"none"}},
             h("div",{style:{display:"flex",alignItems:"baseline",gap:8,marginBottom:5}},
               h("span",{style:{fontSize:13,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}, v.muscle),
