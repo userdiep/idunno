@@ -873,11 +873,21 @@ function removeWithSubstitution(exId, exercises, program) {
    muscle (see allMuscles), that isn't already used anywhere in the program
    (see bestCandidate for what "best" means here). Returns null if nothing
    suitable exists. */
-function suggestSwap(exId, exercises, program, gymId) {
+/* `alsoUsedIds` (12 sept. 2026) : les machines ajoutées à la volée pendant la
+   séance en cours ne sont PAS dans le programme, donc rien ne les excluait des
+   remplaçants proposés. Concrètement : le poste est pris, tu ajoutes une autre
+   machine à la séance et tu y logges 3 séries ; plus tard tu demandes un
+   remplaçant pour la machine d'origine, l'appli te propose celle que tu es en
+   train d'utiliser, et la carte affiche alors les séries (vides) de l'ancienne
+   — tes 3 séries disparaissent de l'écran (le rendu ne trouve que la PREMIÈRE
+   entrée portant cet id) tout en restant enregistrées, d'où une séance en
+   double dans l'historique et un volume compté deux fois dans Analyse. */
+function suggestSwap(exId, exercises, program, gymId, alsoUsedIds) {
   var ex = exercises.find(function(e){return e.id===exId;});
   if (!ex) return null;
   var usedIds = {};
   program.forEach(function(d){ d.items.forEach(function(it){ usedIds[it.ex]=true; }); });
+  (alsoUsedIds||[]).forEach(function(id){ if (id !== exId) usedIds[id] = true; });
   var exMuscles = allMuscles(ex);
   /* gymId ajouté le 7 sept. 2026 — BUG signalé : "quand je change une machine
      pendant une séance la nouvelle machine n'apparaît pas même quand j'appuie
@@ -1188,19 +1198,35 @@ function swapRecommendation(oldEx, newEx, program, goal) {
      seulement 9 études) — donc traité ici comme "viser plutôt ≥90s que
      60s", pas comme une règle stricte.
    - Perte de gras — déficit : revue Helms/Aragon/Fitschen 2014 (contest
-     prep naturel) : viser une perte de 0,5 à 1%/semaine du poids corporel
-     pour préserver au mieux la masse maigre (plus lent = mieux préservé).
-     Converti en kcal/jour pour CE profil (poids actuel dans l'appli,
-     ~85,1 kg) avec l'équivalence usuelle ~7700 kcal/kg de masse grasse :
-     0,5%/sem ≈ 470 kcal/j, 1%/sem ≈ 935 kcal/j — une fourchette large, pas
-     un chiffre validé au kg près. Le preset "Perte de gras" seule (priorité
-     vitesse, pas de muscle à construire) vise le haut de cette fourchette —
-     corrigé le 4 sept. 2026 de 600 à 925 kcal/j : 600 correspondait en fait
-     à ~0,64%/semaine, un peu au-dessus du milieu de la fourchette, pas au
-     sommet visé par le preset (erreur de calibration, pas un changement de
-     stratégie). Les presets combinés à hypertrophie/force restent plus
-     prudents (bas de fourchette, ~450-470 kcal/j), cohérent avec la
-     recommandation "plus lent préserve mieux". Aucune étude trouvée ne
+     prep naturel). Converti en kcal/jour pour CE profil (poids actuel dans
+     l'appli, ~85,1 kg) avec l'équivalence usuelle ~7700 kcal/kg de masse
+     grasse : 0,5%/sem ≈ 470 kcal/j, 0,7%/sem ≈ 650 kcal/j, 1%/sem ≈ 935
+     kcal/j — des ordres de grandeur, pas des chiffres validés au kg près.
+
+     RAMENÉ DE 925 À 650 kcal/j LE 12 SEPT. 2026, en revérifiant les six
+     objectifs source par source. Le commentaire précédent présentait 1%/sem
+     comme "le haut d'une fourchette 0,5-1%" que viserait légitimement un
+     preset orienté vitesse. En relisant les textes eux-mêmes, ce n'est pas
+     ce qu'ils disent : Helms et al. 2014 recommandent explicitement des
+     vitesses "moins extrêmes" — 0,5 kg/semaine ou 0,7% de la masse
+     corporelle — comme étant les plus protectrices de la masse maigre, et
+     la revue plus récente des mêmes auteurs sur les athlètes de physique
+     (Nutritional Recommendations for Physique Athletes) descend à ≤0,5% de
+     la masse corporelle par semaine. 1%/sem n'est donc pas "le haut d'une
+     plage recommandée", c'est au-delà de ce que ces sources conseillent.
+     650 kcal/j ≈ 0,7%/sem : la borne haute de ce qu'elles soutiennent
+     réellement. Choix confirmé par l'utilisateur le 12 sept. 2026 après lui
+     avoir présenté les trois options (0,5% / 0,7% / garder 1%).
+
+     LIMITE CONNUE, non corrigée : deficitKcal est un nombre de kcal FIXE,
+     calibré sur ~85 kg. À un poids nettement différent il ne correspond plus
+     au même pourcentage hebdomadaire — un déficit exprimé en % du poids
+     serait plus juste, mais changerait la signification du réglage
+     "Déficit calorique" d'Options, que l'utilisateur peut régler à la main.
+
+     Les presets combinés à hypertrophie/force restent plus prudents
+     (350-450 kcal/j, soit ~0,32-0,42%/sem), cohérent avec la recommandation
+     "plus lent préserve mieux". Aucune étude trouvée ne
      montre qu'un rep range particulier accélère la perte de gras elle-même
      — donc les tiers ci-dessous, pour "Perte de gras" seule, restent
      proches d'un schéma hypertrophie générique plutôt que d'inventer un rep
@@ -1482,7 +1508,7 @@ var GOAL_PRESETS = {
   // séances de durée raisonnable — pas une règle stricte, juste le calcul
   // affiché en clair dans Options pour que tu voies le compromis réel de TON
   // réglage actuel plutôt que de deviner.
-  loss:           { nutrition: { activityMultiplier: 1.55, deficitKcal: 925, proteinPerKg: 2.3 }, targetSets: 12, minFreq: 2, setsMin: 3, setsMax: 5, recommendedSessions: {min:4, max:5},
+  loss:           { nutrition: { activityMultiplier: 1.55, deficitKcal: 650, proteinPerKg: 2.3 }, targetSets: 12, minFreq: 2, setsMin: 3, setsMax: 5, recommendedSessions: {min:4, max:5},
     tiers: { 1: {sets:4, min:8,  max:12, rest:90},  2: {sets:4, min:10, max:15, rest:75}, 3: {sets:4, min:12, max:15, rest:60} } },
   // Hypertrophie seule : léger SURPLUS calorique (mise à jour du 4 sept.
   // 2026, remplace la maintenance d'avant — voir note "Prise de masse" plus
@@ -1520,7 +1546,7 @@ var GOAL_PRESETS = {
   // tient dans des séances courtes (~90-130 min) sans avoir besoin d'en
   // faire plus — contrairement aux 5 autres objectifs, ici minimiser le
   // temps total ne coûte rien niveau fréquence.
-  strength:       { nutrition: { activityMultiplier: 1.55, deficitKcal: -125, proteinPerKg: 1.8 }, targetSets: 6, minFreq: 1, setsMin: 3, setsMax: 6, recommendedSessions: {min:2, max:3},
+  strength:       { nutrition: { activityMultiplier: 1.55, deficitKcal: -125, proteinPerKg: 1.8 }, targetSets: 6, minFreq: 2, setsMin: 3, setsMax: 5, recommendedSessions: {min:2, max:3},
     tiers: { 1: {sets:3, min:4,  max:6,  rest:180}, 2: {sets:3, min:5,  max:8,  rest:150}, 3: {sets:3, min:8,  max:12, rest:90} } },
   // targetSets:12 comme "hyper" (baissé de 14 à 12 le 4 sept. 2026, voir
   // note détaillée sur "Perte de gras" plus haut) — la recomposition (prise
@@ -1552,7 +1578,7 @@ var GOAL_PRESETS = {
   // détaillée plus haut sur "Perte de gras"/"Hypertrophie"), les mouvements
   // lourds tirant vers moins de séries (logique "force") tandis que les
   // accessoires restent proches du volume hypertrophique.
-  hyper_strength: { nutrition: { activityMultiplier: 1.55, deficitKcal: -125, proteinPerKg: 1.9 }, targetSets: 10, minFreq: 2, setsMin: 3, setsMax: 6, recommendedSessions: {min:4, max:5},
+  hyper_strength: { nutrition: { activityMultiplier: 1.55, deficitKcal: -125, proteinPerKg: 1.9 }, targetSets: 10, minFreq: 2, setsMin: 3, setsMax: 5, recommendedSessions: {min:4, max:5},
     tiers: { 1: {sets:4, min:5,  max:8,  rest:130}, 2: {sets:4, min:8,  max:12, rest:100}, 3: {sets:4, min:12, max:15, rest:85} } },
 };
 function goalPreset(goal) { return GOAL_PRESETS[goal] || GOAL_PRESETS.loss_hyper; }
@@ -1640,7 +1666,18 @@ function tierDefaultsForGoal(goal, tier) { var g = goalPreset(goal); return g.ti
    vraie solution, comme le recommande la littérature sur la fréquence
    (Ralston et al. 2018, déjà cité), est d'ajouter une autre machine pour ce
    muscle ou de le travailler un jour de plus, pas de gonfler une séance. */
-var SESSION_VOLUME_CAP = { loss: 11, hyper: 11, loss_hyper: 11, hyper_strength: 11 };
+/* Étendu à TOUS les objectifs le 12 sept. 2026 (vérification demandée sur
+   l'ensemble des objectifs). "Force" et "Perte + force" n'avaient aucun
+   plafond, au motif que leurs 3 séries par palier le respectaient "par
+   construction". C'est faux dès qu'un muscle a plusieurs machines le même
+   jour : mesuré sur un catalogue de 5 développés — un cas banal quand on
+   fréquente deux salles de marques différentes — la séance produit 15 séries
+   de pectoraux, sur ces deux objectifs comme sur les autres. Le repère de
+   Remmert et al. 2025 vaut d'abord pour l'hypertrophie ; pour la force la même
+   étude le situe encore PLUS BAS (~2 séries directes par séance), donc
+   l'appliquer aussi à ces deux objectifs est le choix conservateur, jamais
+   l'inverse. */
+var SESSION_VOLUME_CAP = { loss: 11, hyper: 11, loss_hyper: 11, strength: 11, loss_strength: 11, hyper_strength: 11 };
 function capSessionVolume(program, exercises, goal) {
   var cap = SESSION_VOLUME_CAP[goal];
   if (!cap) return program; // objectif hors du champ de cette étude (voir la note ci-dessus) — pas de plafond ajouté
@@ -1808,13 +1845,36 @@ var MIN_SETS_PER_EXERCISE = 3;
    association d'entraînement") — elles étaient globales, donc identiques pour
    un programme de force et un programme d'hypertrophie, ce qui n'a pas de sens :
    à 4-6 répétitions par série on fait naturellement plus de séries par
-   exercice qu'à 12-15. Krieger 2010 (voir la note ci-dessus) place le palier
-   à 2-3 séries, sans différence significative jusqu'à 4-6 — d'où un maximum
-   de 5 pour les objectifs orientés hypertrophie/perte de gras et de 6 pour
-   ceux qui comportent une part de force (séries plus courtes, plus lourdes).
-   Le minimum reste 3 partout, pour la même raison chiffrée. Les fourchettes
-   de RÉPÉTITIONS, elles, étaient déjà par objectif ET par palier
-   poly/semi/isolation (voir GOAL_PRESETS.tiers), rien à changer de ce côté. */
+   exercice qu'à 12-15. Le minimum reste 3 partout (Krieger 2010, voir la note
+   ci-dessus). Les fourchettes de RÉPÉTITIONS, elles, étaient déjà par objectif
+   ET par palier poly/semi/isolation (voir GOAL_PRESETS.tiers), rien à changer
+   de ce côté.
+
+   MAXIMUM RAMENÉ DE 6 À 5 PARTOUT le 12 sept. 2026, sur la question « c'est
+   normal que l'app propose 6 séries en hypertrophie + force ? c'est pas too
+   much ? ». Deux raisons, la première étant un vrai défaut :
+
+   1. INCOHÉRENCE INTERNE. MAX_SETS_PER_EXERCISE = 5 a été posé le 6 sept. 2026
+      comme LA convention de l'appli, et c'est ce chiffre qu'affiche l'onglet
+      Machines ("Pourquoi un maximum de 5 séries par machine ?"), qu'utilisent
+      les diagnostics de plafonnement (cappedMuscles), la fusion de doublons et
+      le rééquilibrage en séance. Les deux objectifs comportant une part de
+      force étaient restés à 6, hérités d'avant cette convention : l'appli
+      expliquait donc 5 à l'écran tout en en prescrivant 6, et une machine à 6
+      séries redescendait silencieusement à 5 dès qu'on ajoutait une machine en
+      cours de séance (le rééquilibrage, lui, plafonne à 5).
+   2. LE 6 N'ÉTAIT PAS SOURCÉ. Le raisonnement « séries plus courtes, donc plus
+      de séries » est une convention de coaching (les 5×5, 6×3 classiques), pas
+      un résultat. Krieger 2010 ne trouve AUCUNE différence significative entre
+      2-3 et 4-6 séries (p = 0,29) : rien ne place 6 au-dessus de 5. Et pour la
+      part FORCE précisément, Remmert, Pelland, Robinson, Hinson & Zourdos 2025
+      (SportRxiv, déjà citée pour SESSION_VOLUME_CAP) situe le point de
+      rendements décroissants vers 2 séries DIRECTES par séance — donc bien
+      plus bas, pas plus haut. La 6e série coûtait du temps de séance sans rien
+      qui la soutienne.
+   Ce plafond reste celui du calcul automatique : le compteur de séries sur la
+   carte de séance (voir setEntrySetCount) permet toujours de monter plus haut
+   à la main pour la séance du jour. */
 function setsBoundsForGoal(goal){
   var g = goalPreset(goal);
   return { min: g.setsMin || MIN_SETS_PER_EXERCISE, max: g.setsMax || MAX_SETS_PER_EXERCISE };
@@ -2191,8 +2251,17 @@ function cappedMuscles(appliedProgram, exercises, goal, avgSessions, muscleFocus
    "séances recommandées"). Pure fonction, ne modifie ni program ni exercises
    — applyGoalToProgram est déjà pur (retourne un nouveau tableau), donc
    l'appeler ici pour prévisualiser est sans risque. */
-function previewSessionStats(program, exercises, goal, avgSessions, muscleFocus) {
-  var simulated = applyGoalToProgram(program, exercises, goal, avgSessions, muscleFocus);
+/* `profile` ajouté le 12 sept. 2026 — BUG RÉEL trouvé en auditant l'arité des
+   appels : cette fonction simulait le programme SANS le profil, donc sans
+   l'ordre de priorité choisi (voir applyGoalToProgram, dont le 6e paramètre ne
+   sert qu'à ça). Conséquence mesurée sur le programme livré avec "Temps et
+   nombre de séances" classé en premier et un plafond à 55 min : l'aperçu
+   d'Options annonçait 79 min/séance pendant que le programme réellement
+   appliqué tenait à 58 min. L'écart apparaissait exactement sur l'écran où on
+   règle ce plafond — l'endroit où il induit le plus en erreur. Paramètre
+   optionnel : omis, comportement d'avant (priorité par défaut). */
+function previewSessionStats(program, exercises, goal, avgSessions, muscleFocus, profile) {
+  var simulated = applyGoalToProgram(program, exercises, goal, avgSessions, muscleFocus, profile);
   var exMap = {}; exercises.forEach(function(e){ exMap[e.id]=e; });
   var dayMinutes = simulated.map(function(d){ return estimateDayMinutes(d, exMap); });
   var avgDayMin = dayMinutes.length ? Math.round(dayMinutes.reduce(function(a,b){return a+b;},0) / dayMinutes.length) : 0;
@@ -2215,6 +2284,11 @@ function previewSessionStats(program, exercises, goal, avgSessions, muscleFocus)
    moyenne simulée sous maxMinutes SUR TON catalogue de machines actuel — pas
    une estimation générique. Retourne null si même 7×/semaine ne suffit pas
    (catalogue trop limité en machines pour ce muscle, ou plafond trop bas). */
+/* Volontairement SANS profil (voir previewSessionStats) : cette fonction et
+   pickOptimalAvgSessions cherchent la fréquence qui fait tenir la séance dans
+   le plafond SANS rogner de séries. Leur passer le profil appliquerait le
+   rognage par le temps à chaque candidat testé, donc toutes les fréquences
+   "rentreraient" et la recherche ne voudrait plus rien dire. */
 function sessionsNeededForMaxMinutes(program, exercises, goal, maxMinutes, muscleFocus) {
   for (var n=2; n<=7; n+=0.5) {
     if (previewSessionStats(program, exercises, goal, n, muscleFocus).avgDayMin <= maxMinutes) return n;
@@ -2278,12 +2352,29 @@ function pickOptimalAvgSessions(program, exercises, goal, sessionsMin, sessionsM
   })[0];
 }
 
+/* Les `overrides` viennent de quatre Stepper éditables (carte "Remplacer X par
+   Y ?"). Un Stepper vidé renvoie null — et null était recopié tel quel dans le
+   programme, DÉFINITIVEMENT (corrigé le 12 sept. 2026). Effacer "90" dans
+   "Repos (s)" sans retaper de valeur, puis appuyer sur Remplacer, donnait
+   rest:null : startRestTimer(null) part alors déjà expiré et la sonnerie se
+   déclenche à chaque série, à chaque séance, sur cette machine. Même geste sur
+   "Séries" donnait sets:null, donc Array.from({length:null}) = aucune ligne à
+   remplir : la machine devenait impossible à logger. On ne reprend donc qu'une
+   valeur numérique valide, sinon on garde celle déjà en place. */
 function applySwap(oldExId, newExId, program, overrides) {
+  function pick(v, fallback, floor) {
+    return (typeof v === "number" && isFinite(v) && v >= floor) ? v : fallback;
+  }
   return program.map(function(d){
     return Object.assign({}, d, { items: d.items.map(function(it){
       if (it.ex !== oldExId) return it;
       var patch = { ex: newExId };
-      if (overrides) { patch.sets = overrides.sets; patch.min = overrides.min; patch.max = overrides.max; patch.rest = overrides.rest; }
+      if (overrides) {
+        patch.sets = pick(overrides.sets, it.sets, 1);
+        patch.min  = pick(overrides.min,  it.min,  1);
+        patch.max  = Math.max(pick(overrides.max, it.max, 1), patch.min);
+        patch.rest = pick(overrides.rest, it.rest, 5);
+      }
       return Object.assign({}, it, patch);
     }) });
   });
@@ -2780,7 +2871,12 @@ function rebalanceSessionSets(entries, exercises, targetsByMuscle) {
     var ex = exMap[e.ex];
     var all = e.sets || [];
     var logged = all.filter(function(s){ return s && (s.weight!=null || s.reps!=null); }).length;
-    var touched = logged > 0;           /* machine déjà entamée -> intouchable */
+    /* `manualSets` (12 sept. 2026) : tu as fixé toi-même le nombre de séries de
+       cette machine pour aujourd'hui (voir le compteur "séries" sur la carte).
+       Traité comme une machine déjà entamée — intouchable : un rééquilibrage
+       déclenché plus tard par un autre ajout ne doit pas défaire un choix
+       explicite. */
+    var touched = logged > 0 || e.manualSets === true;
     var n = Math.max(1, all.length);
     return { ex: ex, logged: logged, touched: touched,
       muscles: ex ? allMuscles(ex).map(function(mu){ return {mu:mu, w:muscleWeight(ex,mu)}; }) : [],
@@ -2836,6 +2932,18 @@ function sessionVolumeByMuscle(entries, exercises) {
     allMuscles(ex).forEach(function(mu){ out[mu] = (out[mu]||0) + n*muscleWeight(ex, mu); });
   });
   return out;
+}
+/* Position (0-based) de la DERNIÈRE série saisie d'une entrée, -1 si aucune.
+   resizeEntrySets ne retire des lignes que par la fin et s'arrête à la
+   première ligne remplie : le nombre de séries ne peut donc pas descendre
+   en dessous de cette position + 1. Sert au compteur de séries de la carte de
+   séance, pour griser "−" plutôt que de le laisser sans effet. */
+function lastFilledSetIndex(entry) {
+  var sets = (entry && entry.sets) || [];
+  for (var i = sets.length - 1; i >= 0; i--) {
+    if (sets[i] && (sets[i].weight != null || sets[i].reps != null)) return i;
+  }
+  return -1;
 }
 /* Redimensionne les séries d'une entrée sans jamais toucher à ce qui est déjà
    saisi : on complète par des lignes vides, on ne retire QUE des lignes vides,
@@ -3137,7 +3245,16 @@ function actualMuscleVolumeMap(doneSessions, exMap, windowDays) {
    Un seul algorithme de répartition dans toute l'appli, donc un seul endroit
    à corriger la prochaine fois — et le recalibrage automatique hérite
    gratuitement de la répartition entre machines et du plafond par exercice. */
-function recalibrateProgramFromHistory(program, exercises, goal, avgSessions, muscleFocus, sessions) {
+/* `profile` ajouté le 12 sept. 2026 — BUG RÉEL trouvé en auditant l'arité des
+   appels : ce recalibrage tourne après CHAQUE séance terminée et refaisait la
+   répartition SANS l'ordre de priorité choisi (le 7e paramètre de
+   _applyGoalToProgramRaw) ni le rognage par le temps que applyGoalToProgram
+   applique quand "Temps et nombre de séances" passe devant l'objectif. Mesuré
+   sur le programme livré, plafond 55 min, temps en priorité n°1 : le programme
+   appliqué tenait à 58 min, et la première séance enregistrée le renvoyait à
+   87 min — le réglage se défaisait tout seul, sans rien afficher, et le seul
+   moyen de le remettre était de retoucher un réglage dans Options. */
+function recalibrateProgramFromHistory(program, exercises, goal, avgSessions, muscleFocus, sessions, profile) {
   var exMap = {}; exercises.forEach(function(e){ exMap[e.id]=e; });
   var doneSessions = (sessions||[]).filter(function(s){ return s.done; });
   var hasEnoughHistory = doneSessions.length >= program.length; // ~un tour complet de la rotation
@@ -3146,9 +3263,16 @@ function recalibrateProgramFromHistory(program, exercises, goal, avgSessions, mu
   // Même plafond par-séance que applyGoalToProgram (voir capSessionVolume) —
   // jamais avant, pour partir d'un déficit calculé sur les séries de palier
   // normales, pas d'une base déjà tronquée.
-  var newProgram = clampSetsToBounds(capSessionVolume(
-    _applyGoalToProgramRaw(program, exercises, goal, avgSessions, muscleFocus, actualWeekly),
-    exercises, goal), goal);
+  var order = priorityOrderOf(profile);
+  var recalibrated = capSessionVolume(
+    _applyGoalToProgramRaw(program, exercises, goal, avgSessions, muscleFocus, actualWeekly, order),
+    exercises, goal);
+  /* Même post-traitement que applyGoalToProgram, pour que les deux chemins
+     d'écriture du programme ne puissent pas diverger. */
+  if (profile && priorityRank(order, "time") < priorityRank(order, "goal")) {
+    recalibrated = trimToTimeBudget(recalibrated, exercises, profile.sessionMinutesMax, goal);
+  }
+  var newProgram = clampSetsToBounds(recalibrated, goal);
   var changed = false;
   program.forEach(function(d,i){ d.items.forEach(function(it,j){
     var newIt = newProgram[i].items[j];
@@ -3270,7 +3394,7 @@ var PROGRAM_VERSION = 3;
    recommitée à la main — contrairement au lien Artifact qui se met à jour
    tout seul". Change cette date à chaque publication notable pour que la
    comparaison soit possible côté utilisateur. */
-var APP_BUILD = "2026-09-12b";
+var APP_BUILD = "2026-09-12g";
 
 function seedState() {
   return {
@@ -3327,20 +3451,54 @@ function migrateActiveSession(active, program) {
   var entries = active.entries.map(function(entry){
     var it = byExId[entry.ex];
     var nSets = it ? it.sets : entry.sets.length;
-    var sets = entry.sets.slice(0, nSets);
+    /* Les lignes DÉJÀ REMPLIES d'abord (corrigé le 12 sept. 2026 : le code
+       gardait les premières lignes, pas les lignes remplies, contrairement à
+       ce que dit le commentaire ci-dessus — une série saisie en 3e position
+       alors que le nouveau programme n'en prévoit que 2 était supprimée). */
+    var filled = entry.sets.filter(function(s){ return s.weight!=null || s.reps!=null; });
+    var empty = entry.sets.filter(function(s){ return s.weight==null && s.reps==null; });
+    var sets = filled.concat(empty).slice(0, Math.max(nSets, filled.length));
     while (sets.length < nSets) sets.push({weight:null, reps:null, rir:null, weakSide:null});
-    return { ex: entry.ex, sets: sets };
+    return Object.assign({}, entry, { ex: entry.ex, sets: sets });
   });
   return Object.assign({}, active, { entries: entries });
 }
+/* CORRIGÉ le 12 sept. 2026 — cette migration écrivait `exercises:
+   SEED_EXERCISES`, c'est-à-dire qu'un simple bump de PROGRAM_VERSION effaçait
+   TOUT le matériel ajouté par l'utilisateur : ses machines créées à la main,
+   les marques renseignées, les salles attribuées, les muscles et paliers
+   corrigés. Le commentaire de PROGRAM_VERSION affirmait pourtant que la
+   migration "préserve tout ce que l'utilisateur a loggé" — c'était vrai pour
+   les séances, mais celles-ci référencent des ids de machines qui, eux,
+   disparaissaient : l'historique se serait mis à afficher "Machine supprimée".
+   Défaut dormant (il fallait que je bump le numéro), mais qui se serait
+   déclenché exactement au moment d'ajouter de nouvelles machines au catalogue
+   de départ — c'est-à-dire à la prochaine demande en attente.
+
+   Fusion plutôt que remplacement : les machines du catalogue absentes de chez
+   l'utilisateur sont AJOUTÉES, celles qu'il a déjà sont gardées TELLES QU'IL
+   les a réglées, et ses propres machines ne bougent pas. Les corrections de
+   contenu sur les machines du catalogue (muscles secondaires, intensités) ont
+   déjà leur propre chemin, indépendant de ce numéro de version et rejoué à
+   chaque chargement : withMuscleCorrections / withSecondaryMuscleUpdates.
+   Le PROGRAMME, lui, est bien repris du catalogue — c'est l'objet du bump —
+   en ignorant les jours qui référenceraient une machine absente. */
 function withLatestProgram(state) {
   if (!state) return state;
   if ((state.programVersion || 0) >= PROGRAM_VERSION) return state;
+  var have = {}; (state.exercises||[]).forEach(function(e){ have[e.id] = true; });
+  var mergedExercises = (state.exercises||[]).concat(
+    SEED_EXERCISES.filter(function(e){ return !have[e.id]; }));
+  var known = {}; mergedExercises.forEach(function(e){ known[e.id] = true; });
+  var mergedProgram = SEED_PROGRAM
+    .map(function(d){ return Object.assign({}, d, { items: d.items.filter(function(it){ return known[it.ex]; }) }); })
+    .filter(function(d){ return d.items.length > 0; });
+  if (!mergedProgram.length) mergedProgram = state.program || SEED_PROGRAM;
   return Object.assign({}, state, {
     programVersion: PROGRAM_VERSION,
-    exercises: SEED_EXERCISES,
-    program: SEED_PROGRAM,
-    active: state.active ? migrateActiveSession(state.active, SEED_PROGRAM) : state.active,
+    exercises: mergedExercises,
+    program: mergedProgram,
+    active: state.active ? migrateActiveSession(state.active, mergedProgram) : state.active,
     _justMigrated: true,
   });
 }
@@ -3771,6 +3929,41 @@ function structuralOvershoot(program, exercises, goal, avgSessions, muscleFocus)
   });
   return out.sort(function(a,b){ return (b.floor/b.target)-(a.floor/a.target); });
 }
+/* Muscles dont une SÉANCE dépasse le repère de volume par séance
+   (SESSION_VOLUME_CAP ; Remmert et al. 2025) — ajouté le 12 sept. 2026 en
+   vérifiant les six objectifs.
+
+   capSessionVolume essaie de tenir ce plafond, mais il ne peut pas descendre
+   une machine sous le plancher de 3 séries (Krieger 2010) : dès qu'un muscle a
+   quatre machines ou plus le même jour, le plafond devient mathématiquement
+   inatteignable et la fonction abandonne EN SILENCE. Mesuré sur un catalogue
+   de 5 développés — banal quand on fréquente deux salles de marques
+   différentes — la séance produit 15 séries de pectoraux pour un repère de 11,
+   sans que rien ne l'indique nulle part. C'est exactement le genre de situation
+   que l'appli dit pourtant signaler plutôt que subir (voir l'info-bulle
+   "Pourquoi un maximum de 5 séries par machine ?"). Le remède n'est pas de
+   rogner encore : c'est de répartir ces machines sur des jours différents. */
+function sessionVolumeOvershoot(program, exercises, goal) {
+  var cap = SESSION_VOLUME_CAP[goal];
+  if (!cap) return [];
+  var exMap = {}; exercises.forEach(function(e){ exMap[e.id]=e; });
+  var out = [];
+  program.forEach(function(d){
+    var by = {}, machines = {};
+    d.items.forEach(function(it){
+      var ex = exMap[it.ex]; if (!ex) return;
+      allMuscles(ex).forEach(function(mu){
+        by[mu] = (by[mu]||0) + it.sets*muscleWeight(ex, mu);
+        machines[mu] = (machines[mu]||0) + 1;
+      });
+    });
+    Object.keys(by).forEach(function(mu){
+      if (by[mu] > cap + 1e-9) out.push({ muscle: mu, day: d.label, sets: Math.round(by[mu]*10)/10,
+        cap: cap, machines: machines[mu] });
+    });
+  });
+  return out.sort(function(a,b){ return b.sets-a.sets; });
+}
 function unmappedExercises(exercises) {
   return (exercises||[]).filter(function(e){
     if (allMuscles(e).length > 1) return false;
@@ -3831,15 +4024,71 @@ function withAllMigrations(state) {
   s = withTrackingDefaults(s);
   return s;
 }
+/* Nettoyage des séries au moment d'enregistrer une séance — sorti de
+   finishSession le 12 sept. 2026 pour être testable, et CORRIGÉ au passage.
+
+   BUG RÉEL : le filtre exigeait une charge ET des répétitions
+   (`s.weight!=null && s.reps!=null`), alors que l'appli gère explicitement des
+   exercices SANS charge — gainage/planche (inferTrackBy les passe en
+   trackBy:"time", le champ affiche des secondes) et toute la callisthénie
+   (tractions, pompes, dips), pour lesquels le formulaire d'ajout dit lui-même
+   "laisse le poids à 0 kg". Pendant la séance tout indiquait pourtant que la
+   série était saisie : `started` ne teste qu'UN des deux champs, le chrono de
+   repos démarrait, le sélecteur de ressenti apparaissait. À l'enregistrement,
+   ces séries étaient jetées sans un mot — et une séance libre entièrement au
+   poids du corps (typiquement chez le kiné) tombait à zéro entrée, donc
+   `setActive(null)` : retour à l'écran d'accueil, compteur inchangé, séance
+   entièrement perdue en silence.
+
+   La donnée qui compte est le nombre de répétitions (ou de secondes) : une
+   série sans charge mais avec des reps est une vraie série, on lui pose
+   simplement weight:0 — la valeur que le reste du code attend déjà (voir
+   prescribeBase, qui progresse alors par les répétitions) et que l'appli
+   conseille elle-même. Une série sans reps reste ignorée : sans elle, il n'y a
+   rien à enregistrer ni à comparer d'une séance à l'autre. */
+function cleanSessionEntries(active) {
+  if (!active || !active.entries) return [];
+  return active.entries.map(function(e){
+    return Object.assign({}, e, { sets: e.sets
+      .filter(function(s){ return s.reps != null; })
+      .map(function(s){ return s.weight == null ? Object.assign({}, s, {weight: 0}) : s; }) });
+  }).filter(function(e){ return e.sets.length > 0; });
+}
+/* Choisit entre la copie cloud (data/state.json) et la copie locale
+   (localStorage) — ajouté le 12 sept. 2026.
+
+   BUG RÉEL : le cloud gagnait INCONDITIONNELLEMENT, sans comparer quoi que ce
+   soit. Or l'écriture locale est immédiate alors que la publication est
+   différée de 1,2 s et n'est jamais réessayée si elle échoue (doPublish avale
+   l'erreur et met juste la pastille sur "local"). Scénario : salle au
+   sous-sol, pas de réseau, séance enregistrée -> elle part dans localStorage,
+   la publication échoue. Le lendemain avec du réseau, l'appli recharge la
+   copie cloud d'AVANT la séance : la séance a disparu, et la bonne copie est
+   toujours dans localStorage sans jamais être relue.
+
+   Chaque sauvegarde horodate maintenant l'état (savedAt, voir scheduleSave) et
+   on garde la plus récente des deux. Un état sans savedAt (écrit par une
+   version antérieure à ce correctif) vaut 0 : au premier enregistrement qui
+   suit, les deux copies sont horodatées et la comparaison redevient exacte.
+   À égalité — y compris deux états sans horodatage — le cloud gagne, comme
+   avant, puisque c'est la copie partagée entre les appareils. */
+function pickFreshestState(cloud, local) {
+  if (!cloud) return local || null;
+  if (!local) return cloud;
+  return ((local.savedAt || 0) > (cloud.savedAt || 0)) ? local : cloud;
+}
 async function loadInitialState() {
+  var cloud = null, local = null;
   try {
     var res = await fetch("data/state.json", { cache: "no-store" });
-    if (res.ok) { var j = await res.json(); if (j && j.v) return withAllMigrations(j); }
+    if (res.ok) { var j = await res.json(); if (j && j.v) cloud = j; }
   } catch (e) {}
   try {
     var raw = localStorage.getItem(LS_KEY);
-    if (raw) { var parsed = JSON.parse(raw); if (parsed && parsed.v) return withAllMigrations(parsed); }
+    if (raw) { var parsed = JSON.parse(raw); if (parsed && parsed.v) local = parsed; }
   } catch (e) {}
+  var chosen = pickFreshestState(cloud, local);
+  if (chosen) return withAllMigrations(chosen);
   /* BUG CORRIGÉ le 6 sept. 2026, vu en ouvrant l'appli sur un écran vierge :
      les deux chemins de chargement d'un état EXISTANT passaient bien par
      withAllMigrations, mais pas celui d'une PREMIÈRE ouverture, qui renvoyait
@@ -3856,11 +4105,34 @@ async function loadInitialState() {
   return withAllMigrations(seedState());
 }
 var publishTimer = null;
+var pendingSave = null;
+/* savedAt : horodatage de CHAQUE sauvegarde, écrit dans les deux copies (voir
+   pickFreshestState). Posé ici plutôt que dans setState pour qu'aucun chemin
+   d'écriture ne puisse l'oublier. L'objet d'état en mémoire n'est pas muté —
+   on horodate une copie. */
 function scheduleSave(state, onStatus) {
-  try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch (e) {}
+  var stamped = Object.assign({}, state, { savedAt: Date.now() });
+  try { localStorage.setItem(LS_KEY, JSON.stringify(stamped)); } catch (e) {}
+  pendingSave = { state: stamped, onStatus: onStatus };
   if (publishTimer) clearTimeout(publishTimer);
-  publishTimer = setTimeout(function(){ doPublish(state, onStatus); }, 1200);
+  publishTimer = setTimeout(function(){ publishTimer = null; var p = pendingSave; pendingSave = null; doPublish(p.state, p.onStatus); }, 1200);
 }
+/* Vide tout de suite la publication en attente — sinon fermer l'appli (ou la
+   basculer en arrière-plan, ce que fait le téléphone dès qu'on change d'appli)
+   dans la seconde qui suit le dernier geste perd la publication : la copie
+   locale est à jour, la copie cloud non, et au prochain démarrage avec du
+   réseau c'est la copie cloud qui était servie (voir pickFreshestState — même
+   famille de bug, corrigée des deux côtés). */
+function flushPendingSave() {
+  if (!publishTimer || !pendingSave) return;
+  clearTimeout(publishTimer); publishTimer = null;
+  var p = pendingSave; pendingSave = null;
+  doPublish(p.state, p.onStatus);
+}
+try {
+  window.addEventListener("pagehide", flushPendingSave);
+  document.addEventListener("visibilitychange", function(){ if (document.visibilityState === "hidden") flushPendingSave(); });
+} catch (e) {}
 async function doPublish(state, onStatus) {
   var cap = await getCap();
   if (!cap) { onStatus && onStatus("local"); return; }
@@ -4454,6 +4726,36 @@ function IncStepper(props){
     h("button",{onClick:function(e){e.stopPropagation(); onChange(round((value||0)+step));}, "aria-label":"Augmenter le palier de poids",
       style:{width:16,height:16,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:3,background:C.shroud,color:C.taupe,border:"1px solid "+C.taupeDim,padding:0,fontSize:10,lineHeight:1,flexShrink:0}}, "+"));
 }
+/* Compteur de séries POUR LA SÉANCE DU JOUR, sur la carte d'une machine en
+   séance programmée — ajouté le 12 sept. 2026 (voir setEntrySetCount pour le
+   pourquoi). Volontairement calqué sur IncStepper ci-dessus : mêmes boutons de
+   16 px, même typo, même ligne. Une machine en séance porte déjà beaucoup
+   d'informations, et sur 320 px une commande de plus ne peut pas coûter une
+   ligne supplémentaire.
+   Le libellé dit "séries" en toutes lettres plutôt qu'un simple chiffre : à
+   côté du repère de charge (qui affiche déjà "4 × 8-12"), un compteur nu
+   serait illisible. */
+function SessionSetsStepper(props){
+  var value = props.value, onChange = props.onChange, max = props.max || 10;
+  /* Le nom de la machine est repris dans l'étiquette d'accessibilité : une
+     séance affiche sept à huit cartes identiques, et "Une série de plus" tout
+     seul ne dit pas à un lecteur d'écran DE QUELLE machine il s'agit. */
+  var what = props.label ? (" — " + props.label) : "";
+  /* `min` = nombre de lignes qu'on ne peut plus retirer parce qu'elles sont
+     déjà remplies (resizeEntrySets refuse de supprimer une série saisie). Sans
+     ça le "−" resterait actif et ne ferait rien : un bouton qui ne répond pas
+     ressemble à une panne. */
+  var min = Math.max(1, props.min || 1);
+  var btn = {width:16,height:16,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:3,
+    background:C.shroud,color:C.taupe,border:"1px solid "+C.taupeDim,padding:0,fontSize:10,lineHeight:1,flexShrink:0};
+  return h("div",{style:{display:"inline-flex",alignItems:"center",gap:3,marginTop:2}},
+    h("button",{onClick:function(e){e.stopPropagation(); onChange(Math.max(min, value-1));}, "aria-label":"Une série de moins aujourd'hui"+what,
+      title: value<=min ? "Impossible de retirer une série déjà saisie" : "Une série de moins aujourd'hui",
+      disabled: value<=min, style:Object.assign({}, btn, value<=min?{opacity:0.4}:null)}, "−"),
+    h("span",{style:{fontFamily:sansCond,fontSize:11,color:C.taupe,whiteSpace:"nowrap"}}, value+" série"+(value>1?"s":"")),
+    h("button",{onClick:function(e){e.stopPropagation(); onChange(Math.min(max, value+1));}, "aria-label":"Une série de plus aujourd'hui"+what,
+      disabled: value>=max, style:Object.assign({}, btn, value>=max?{opacity:0.4}:null)}, "+"));
+}
 function Section(props){
   return h("div",{style:{marginBottom:24}},
     h("div",{style:{display:"flex",alignItems:"baseline",justifyContent:"space-between",marginBottom:8}},
@@ -4728,10 +5030,21 @@ function RestTimerBar(props) {
      like a microwave that keeps beeping until you open the door — rather
      than a single beep you can miss. Stops the moment `over` goes back to
      false (new timer started) or the component unmounts (dismissed). */
+  /* volumeRef, ajouté le 12 sept. 2026 — BUG RÉEL : `volume` n'était pas dans
+     les dépendances de l'effet ci-dessous, donc l'intervalle gardait la valeur
+     du rendu où il avait démarré. Baisser le curseur "Son du chrono de repos"
+     pendant que ça sonne (le cas où on le fait, forcément) ne changeait rien :
+     ça continuait à plein volume toutes les 4 s jusqu'à ce qu'on pense à
+     fermer la barre — alors que le bouton "Tester le son" juste en dessous
+     était bien devenu muet. Une ref plutôt que d'ajouter volume aux
+     dépendances : ça éviterait le bug mais relancerait l'effet à chaque cran
+     du curseur, donc un bip immédiat à chaque cran. */
+  var volumeRef = useRef(volume);
+  volumeRef.current = volume;
   useEffect(function(){
     if (!over) return;
-    restAlert(volume);
-    var id = setInterval(function(){ restAlert(volume); }, 4000);
+    restAlert(volumeRef.current);
+    var id = setInterval(function(){ restAlert(volumeRef.current); }, 4000);
     return function(){ clearInterval(id); };
   }, [over, timer.id]);
   var totalSec = Math.round(Math.abs(remainingMs) / 1000);
@@ -4894,7 +5207,8 @@ function SeanceTab(props) {
      qu'on puisse continuer à logger dessus tout de suite. */
   function requestSwap(ex){
     if (!ex) return;
-    var cand = suggestSwap(ex.id, exercises, program, currentGymId);
+    var cand = suggestSwap(ex.id, exercises, program, currentGymId,
+      (active && active.entries) ? active.entries.map(function(e){ return e.ex; }) : []);
     var rec = cand ? swapRecommendation(ex, cand, program, goal) : null;
     setSwapPending({ exId: ex.id, oldName: ex.name, muscles: allMuscles(ex).join(" + "), candidate: cand, rec: rec });
   }
@@ -4904,9 +5218,23 @@ function SeanceTab(props) {
     var oldId = swapPending.exId, newId = swapPending.candidate.id;
     persistConfig(exercises, applySwap(oldId, newId, program, swapPending.rec));
     if (active && !active.freeform) {
-      setActive(Object.assign({}, active, { entries: active.entries.map(function(e){
-        return e.ex===oldId ? Object.assign({}, e, {ex: newId}) : e;
-      }) }));
+      /* Filet de sécurité (12 sept. 2026) : si la nouvelle machine est DÉJÀ
+         dans la séance, renommer l'id créerait deux entrées pour le même
+         exercice — le rendu n'en affiche qu'une (findIndex) et l'historique en
+         garderait deux, donc un volume compté en double. On réunit les deux
+         entrées en gardant les séries déjà saisies des deux côtés. */
+      var already = active.entries.filter(function(e){ return e.ex===newId; })[0];
+      var merged;
+      if (already) {
+        var oldEntry = active.entries.filter(function(e){ return e.ex===oldId; })[0];
+        var keptSets = ((oldEntry && oldEntry.sets) || []).filter(function(s){ return s.weight!=null || s.reps!=null; });
+        merged = active.entries
+          .filter(function(e){ return e.ex!==oldId; })
+          .map(function(e){ return e.ex===newId ? Object.assign({}, e, {sets: e.sets.concat(keptSets)}) : e; });
+      } else {
+        merged = active.entries.map(function(e){ return e.ex===oldId ? Object.assign({}, e, {ex: newId}) : e; });
+      }
+      setActive(Object.assign({}, active, { entries: merged }));
     }
     setSwapPending(null);
   }
@@ -5001,6 +5329,32 @@ function SeanceTab(props) {
     var next = rebalancedEntries(active.entries.concat([newEntry]), before);
     setActive(Object.assign({}, active, { entries: next }));
     setSessionPick("");
+  }
+  /* Fixer soi-même le nombre de séries d'une machine POUR AUJOURD'HUI (12 sept.
+     2026, signalement : "je peux pas ajouter plus de 2 séries quand j'ajoute
+     des machines en plus de la séance programmée").
+
+     C'était exact, et ce n'était pas un plantage : depuis que la séance se
+     rééquilibre à l'ajout d'une machine (le volume du jour est réparti sur les
+     machines présentes au lieu d'être augmenté), la machine ajoutée hérite du
+     plancher de 2 séries — et la séance programmée, contrairement à la séance
+     libre, n'avait AUCUN bouton pour ajouter une série. Le raisonnement du
+     rééquilibrage tient toujours par défaut, mais il te laissait sans recours :
+     tu ne pouvais pas dire "non, sur cette machine j'en fais 4 aujourd'hui".
+     Ce compteur donne le dernier mot, sans toucher au programme — demain, ce
+     jour retrouve ses séries habituelles.
+
+     Ne retire jamais une série déjà remplie (resizeEntrySets refuse de
+     supprimer une ligne saisie), et marque l'entrée manualSets pour qu'un
+     rééquilibrage ultérieur la laisse tranquille (voir rebalanceSessionSets). */
+  var MANUAL_SETS_MAX = 10;
+  function setEntrySetCount(idx, n) {
+    if (!active) return;
+    var target = Math.max(1, Math.min(MANUAL_SETS_MAX, n));
+    setActive(Object.assign({}, active, { entries: active.entries.map(function(e,i){
+      if (i!==idx) return e;
+      return Object.assign({}, resizeEntrySets(e, target), { manualSets: true });
+    }) }));
   }
   function addFreeformSet(idx) {
     setActive(Object.assign({}, active, { entries: active.entries.map(function(e,i){
@@ -5432,7 +5786,13 @@ function SeanceTab(props) {
                est la seule source de vérité de ce qu'on va faire aujourd'hui,
                et vaut déjà setsOverride||it.sets au démarrage (voir start). */
             h(StackPlate,{weight:p.weight, repMin:it.min, repMax:it.max, sets:entry.sets.length, state:p.state, unit:unitLabel(ex)==="s"?"s":"", block:true}),
-            (ex && updateExerciseInc) ? h(IncStepper,{value:ex.inc, onChange:function(v){updateExerciseInc(ex.id, v);}}) : null)),
+            (ex && updateExerciseInc) ? h(IncStepper,{value:ex.inc, onChange:function(v){updateExerciseInc(ex.id, v);}}) : null,
+            /* Compteur de séries POUR AUJOURD'HUI (voir setEntrySetCount) —
+               même gabarit que le compteur d'incrément juste à côté, pour ne
+               pas ajouter une ligne de plus sur un écran de 320 px. */
+            h(SessionSetsStepper,{ value: entry.sets.length, max: MANUAL_SETS_MAX,
+              min: lastFilledSetIndex(entry) + 1, label: ex ? ex.name : null,
+              onChange: function(v){ setEntrySetCount(idx, v); } }))),
         h("div",{style:{padding:"8px 12px",background:C.shroudDeep,borderTop:"1px solid "+C.shroud}},
           h("div",{style:{fontSize:12.5,color:p.state==="up"?C.green:p.state==="down"?C.rust:p.state==="deload"?C.steel:C.taupe,lineHeight:1.45}}, p.note)),
         h("div",{style:{background:C.shroud}},
@@ -5713,10 +6073,10 @@ function OptionsTab(props){
   var goalNow = profile.goal || "loss_hyper";
   var muscleFocus = profile.muscleFocus || {};
   var currentAvgSessions = avgSessionsPerWeek(profile);
-  var currentSessionPreview = previewSessionStats(program, exercises, goalNow, currentAvgSessions, muscleFocus);
+  var currentSessionPreview = previewSessionStats(program, exercises, goalNow, currentAvgSessions, muscleFocus, profile);
   var recSessions = goalPreset(goalNow).recommendedSessions || {min:4, max:5};
   var recAvgSessions = (recSessions.min + recSessions.max) / 2;
-  var recSessionPreview = previewSessionStats(program, exercises, goalNow, recAvgSessions, muscleFocus);
+  var recSessionPreview = previewSessionStats(program, exercises, goalNow, recAvgSessions, muscleFocus, profile);
   var meetsFreqFloor = currentSessionPreview.minFreqActual >= (goalPreset(goalNow).minFreq||1) - 0.01;
   /* "Temps par séance (min-max)" (voir sessionsNeededForMaxMinutes) — même
      logique de comparatif live que pour les séances/semaine juste au-dessus :
@@ -5988,10 +6348,18 @@ function OptionsTab(props){
           h("span",{style:{color:C.taupe,fontSize:13}},"à"),
           h(Stepper,{value:profile.sessionsMax, step:1, min:profile.sessionsMin||0, onChange:function(v){applyBalanceOrTimeChange({sessionsMax:v});}})),
         h(InfoTip,{label:"Pourquoi "+recSessions.min+"–"+recSessions.max+" pour cet objectif ?"},
-          "Le nombre de séances/semaine ne change pas le volume total visé (~"+goalPreset(goalNow).targetSets+" séries/semaine/muscle pour cet objectif, voir \"Volume prévu par semaine\" dans Machines) — il détermine juste comment ce volume est réparti dans la semaine. Pelland et al. 2025 (Sports Medicine) et Ralston et al. 2018 (Sports Medicine – Open) montrent qu'à volume égal, répartir sur plusieurs séances plutôt qu'une seule évite d'entasser trop de séries d'affilée (moins de qualité par série en fin de longue séance, voir aussi Nunes et al. 2020/2021 sur l'effet d'ordre/fatigue) — sans bénéfice supplémentaire au-delà de ce repère. "
+          "Le nombre de séances/semaine ne change pas le volume total visé (~"+goalPreset(goalNow).targetSets+" séries/semaine/muscle pour cet objectif, voir \"Volume prévu par semaine\" dans Machines) — il détermine juste comment ce volume est réparti dans la semaine. Pour la PRISE DE MUSCLE, à volume égal, la fréquence elle-même n'apporte rien de plus (Pelland et al. 2025, Sports Medicine : effet compatible avec zéro) ; l'intérêt de répartir est pratique — éviter d'entasser trop de séries d'affilée, dont la qualité baisse en fin de longue séance (Nunes et al. 2020/2021, effet d'ordre/fatigue). "
+          /* Corrigé le 12 sept. 2026 en revérifiant les sources une par une : ce
+             texte disait exactement l'INVERSE de ce que conclut Pelland et al.
+             2025 pour la force, en citant cette étude à l'appui. Les deux
+             sources se contredisent vraiment, et c'est la plus récente et la
+             plus large qui trouve un effet — le dire plutôt que de trancher en
+             silence. minFreq de l'objectif "Force" est passé de 1 à 2 dans le
+             même geste (voir GOAL_PRESETS). */
+          +"Pour la FORCE, les deux méta-analyses disponibles ne disent pas la même chose : Ralston et al. 2018 (Sports Medicine – Open) ne trouve aucun effet de la fréquence à volume égal (taille d'effet 0,03 ; p = 0,78), tandis que Pelland et al. 2025, plus récente et plus large, trouve au contraire que les gains de force augmentent avec la fréquence (probabilité postérieure de 100%, avec rendements décroissants). L'appli suit la plus récente et vise donc au moins 2×/semaine/muscle pour la force aussi — c'est un arbitrage entre deux sources, pas un fait établi. "
           +(goalPreset(goalNow).minFreq>=2
             ? "Pour cet objectif, vise au moins "+goalPreset(goalNow).minFreq+"×/semaine/muscle."
-            : "Pour la force seule, la fréquence a moins d'effet une fois le volume égalisé (Ralston et al. 2018 ; Pelland et al. 2025) — pas de repère strict ici.")
+            : "")
           +" Sur ton catalogue de machines actuel, ça donne "+recSessions.min+" à "+recSessions.max+" séances/semaine.")),
       h("div",{style:{marginTop:10,padding:"10px 12px",borderRadius:8,background:C.shroudDeep,border:"1px solid "+(meetsFreqFloor?C.taupeDim:C.steel)}},
         h("div",{style:{fontSize:12.5,color:C.bone,lineHeight:1.55}},
@@ -6640,6 +7008,7 @@ function MachinesTab(props){
      musclesWithoutPrimary). */
   var noPrimary = musclesWithoutPrimary(exercises, program, goal, avgSessions, (profile && profile.muscleFocus) || {});
   var overshoot = structuralOvershoot(program, exercises, goal, avgSessions, (profile && profile.muscleFocus) || {});
+  var sessionOver = sessionVolumeOvershoot(program, exercises, goal);
   /* Ajouté le 6 sept. 2026 — troisième cause de score bas, distincte des deux
      autres et jamais expliquée jusqu'ici : la LONGUEUR DE LA ROTATION. La
      fréquence par muscle vaut (jours du programme qui le sollicitent) ×
@@ -6745,6 +7114,19 @@ function MachinesTab(props){
           h("div",{style:{fontSize:11.5,color:C.taupe,lineHeight:1.45,marginTop:5,opacity:0.85}},
             "À noter : le score ci-dessus ne pénalise pas les dépassements (rien ne montre qu'aller au-delà de la cible nuise, ça coûte surtout du temps de séance) — il peut donc rester haut malgré ce déséquilibre. D'où ce message.")
         ) : null,
+        /* Ajouté le 12 sept. 2026 (voir sessionVolumeOvershoot) : le plafond
+           par SÉANCE pouvait être dépassé sans que rien ne le dise. */
+        sessionOver.length ? h(Callout,{title:"Trop de séries dans une même séance", accent:C.steel, defaultOpen:true,
+            summary: sessionOver.slice(0,2).map(function(o){return o.muscle+" "+o.sets+" séries le jour « "+o.day+" »";}).join(", ")+" — au-dessus du repère de "+sessionOver[0].cap+" par séance."},
+          h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.55}},
+            "Au-delà d'environ "+sessionOver[0].cap+" séries pour un même muscle DANS UNE SÉANCE, les séries supplémentaires n'apportent presque plus rien (Remmert, Pelland, Robinson, Hinson & Zourdos, « Is There Too Much of a Good Thing? », SportRxiv 2025). Ici : "+
+            sessionOver.slice(0,4).map(function(o){ return o.muscle+" — "+o.sets+" séries le jour « "+o.day+" », réparties sur "+o.machines+" machines"; }).join(" ; ")+
+            ". L'appli essaie de tenir ce plafond, mais elle ne peut pas descendre une machine sous "+setsBoundsForGoal(goal).min+" séries (Krieger 2010) : à partir de quatre machines pour le même muscle le même jour, c'est arithmétiquement impossible."),
+          h("div",{style:{fontSize:12.5,color:C.bone,lineHeight:1.55,marginTop:6}},
+            "La solution n'est pas de rogner encore, c'est de RÉPARTIR : déplace une de ces machines sur un autre jour depuis « Composer les séances » ci-dessous. Le volume hebdomadaire reste le même, il travaille juste mieux."),
+          h("div",{style:{fontSize:11.5,color:C.taupe,lineHeight:1.45,marginTop:5,opacity:0.85}},
+            "Ce repère est mesuré pour l'hypertrophie ; pour la force, la même étude le situe encore plus bas (~2 séries directes par séance). Il est donc plutôt prudent que sévère.")
+        ) : null,
         noPrimary.length ? h(Callout,{title:"Muscles sans machine dédiée", accent:C.rust, defaultOpen:true,
             summary: noPrimary.map(function(n){return n.muscle;}).join(", ")+" "+(noPrimary.length>1?"ne sont travaillés":"n'est travaillé")+" qu'en secondaire — c'est la cause principale du déséquilibre."},
           h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.55}},
@@ -6816,7 +7198,7 @@ function MachinesTab(props){
             h("div",{style:{display:"flex"}}, h(Bar,{value:v.sets, max:volBarMax, tone:tone, marker:muTarget})));
         }); })(volumeBarMax(vol, goal, profile))),
       h("p",{style:{fontSize:12.5,color:C.taupe,marginTop:6,lineHeight:1.5}},
-        "Chaque ligne : séries prévues / cible du muscle, le trait clair sur la barre marquant cette cible. Calculé sur "+avgSessions.toFixed(1)+" séances/semaine (ton réglage actuel — voir Options > \"Séances par semaine\"). Cible pour ton objectif actuel (\""+((GOALS.find(function(g){return g.k===(goal||"loss_hyper");})||{}).label||"")+"\") : ~"+goalPreset(goal).targetSets+" séries/semaine/muscle (voir GOAL_PRESETS — basé sur Pelland et al. 2025 pour l'hypertrophie/perte de gras, Androulakis-Korakakis et al. 2021 pour la force), ajustée muscle par muscle si tu as réglé une \"Priorité par muscle\" dans Options. Vert = cible atteinte (95 à 115%), bleu = en approche, rouge = sous 70% de la cible ou sous le plancher de sécurité "+VOL_MIN+" séries, ambre = plus de 15% au-dessus de la cible — au-delà, rien ne montre de bénéfice supplémentaire (Remmert et al. 2025, Pelland et al. 2025) et ça ne coûte que du temps de séance. La colonne \"×/sem\" est une estimation du nombre de séances où ce muscle est sollicité — "+(goalPreset(goal).minFreq>=2?"vise au moins "+goalPreset(goal).minFreq+"×/semaine pour bien répartir ce volume (repère pratique, pas un effet magique de la fréquence elle-même — voir la note plus haut) ; en bleu si en dessous.":"la fréquence compte moins pour cet objectif (voir la note sur la force), pas de seuil strict ici.")+" Se met à jour dès que tu ajoutes/retires une machine, changes d'objectif, ou changes ta fréquence dans Options.")),
+        "Chaque ligne : séries prévues / cible du muscle, le trait clair sur la barre marquant cette cible. Calculé sur "+avgSessions.toFixed(1)+" séances/semaine (ton réglage actuel — voir Options > \"Séances par semaine\"). Cible pour ton objectif actuel (\""+((GOALS.find(function(g){return g.k===(goal||"loss_hyper");})||{}).label||"")+"\") : ~"+goalPreset(goal).targetSets+" séries/semaine/muscle (voir GOAL_PRESETS — basé sur Pelland et al. 2025 pour l'hypertrophie/perte de gras, Androulakis-Korakakis et al. 2021 pour la force), ajustée muscle par muscle si tu as réglé une \"Priorité par muscle\" dans Options. Vert = cible atteinte (95 à 115%), bleu = en approche, rouge = sous 70% de la cible ou sous le plancher de sécurité "+VOL_MIN+" séries, ambre = plus de 15% au-dessus de la cible — au-delà, rien ne montre de bénéfice supplémentaire (Remmert et al. 2025, Pelland et al. 2025) et ça ne coûte que du temps de séance. La colonne \"×/sem\" est une estimation du nombre de séances où ce muscle est sollicité — "+"vise au moins "+goalPreset(goal).minFreq+"×/semaine pour bien répartir ce volume ; en bleu si en dessous. Pour la prise de muscle c'est un repère pratique (à volume égal, la fréquence n'ajoute rien en soi — Pelland et al. 2025) ; pour la force, la même étude trouve en revanche un vrai effet de la fréquence, contrairement à Ralston et al. 2018 — voir la note dans Options."+" Se met à jour dès que tu ajoutes/retires une machine, changes d'objectif, ou changes ta fréquence dans Options.")),
 
     h(Section, {title:"Composer les séances"},
       program.map(function(d){
@@ -7063,7 +7445,13 @@ function AnalyseTab(props){
     stalls.length>0 ? h(Section,{title:"Ça bloque"},
       stalls.map(function(x){
         var isolated = stalls.length<=2;
-        var swap = isolated ? suggestSwap(x.ex.id, exercises, program) : null;
+        /* currentGymId ajouté le 12 sept. 2026 : le filtre par salle avait été
+           posé sur suggestSwap pour l'onglet Séance (une machine proposée puis
+           immédiatement re-substituée y faisait disparaître la ligne), mais ce
+           deuxième appel était resté sans salle — depuis Analyse, "Ça bloque"
+           pouvait donc proposer de remplacer une machine par une autre qui
+           n'existe pas dans la salle où tu es, et l'appliquer au programme. */
+        var swap = isolated ? suggestSwap(x.ex.id, exercises, program, profile && profile.currentGymId) : null;
         var swapped = swapDone[x.ex.id];
         return h("div",{key:x.ex.id, style:{display:"flex",alignItems:"flex-start",gap:10,padding:"12px",marginBottom:8,borderRadius:10,background:C.shroudDeep,border:"1px solid "+C.rust}},
         h(Icon,{name:"alert",size:17,color:C.rust}),
@@ -7262,10 +7650,23 @@ function App(props){
   // auto-releases the lock the instant the page becomes hidden). Wrapped in
   // try/catch and feature-detected since many mobile browsers (notably
   // Safari on iOS before 16.4, and some in-app browsers) don't support it.
+  /* Corrigé le 12 sept. 2026 — BUG RÉEL : la spec relâche le verrou dès que la
+     page passe en arrière-plan, mais wakeLockRef.current restait non-nul (rien
+     n'écoutait l'événement "release"). La garde !wakeLockRef.current rendait
+     donc le rappel sur visibilitychange inopérant : il suffisait de basculer
+     cinq secondes sur une autre appli pendant un repos pour que l'écran se
+     remette à s'éteindre tout seul pour TOUT le reste de la séance — très
+     exactement le cas que ce rappel devait couvrir. On remet la ref à null
+     quand le verrou est relâché, et on traite aussi un verrou déjà marqué
+     `released` par le navigateur. */
   function acquireWakeLock(){
     try {
+      if (wakeLockRef.current && wakeLockRef.current.released) wakeLockRef.current = null;
       if (navigator.wakeLock && !wakeLockRef.current) {
-        navigator.wakeLock.request("screen").then(function(wl){ wakeLockRef.current = wl; }).catch(function(){});
+        navigator.wakeLock.request("screen").then(function(wl){
+          wakeLockRef.current = wl;
+          try { wl.addEventListener("release", function(){ if (wakeLockRef.current === wl) wakeLockRef.current = null; }); } catch(e2) {}
+        }).catch(function(){});
       }
     } catch(e) {}
   }
@@ -7344,8 +7745,7 @@ function App(props){
   function snoozeDeload(){ setState(function(prev){ return Object.assign({},prev,{meta:{deloadSnoozeUntil: prev.sessions.filter(function(s){return s.done;}).length + 4}}); }); }
   function finishSession(){
     var active = state.active;
-    var cleaned = Object.assign({}, active, { done:true,
-      entries: active.entries.map(function(e){ return Object.assign({}, e, {sets: e.sets.filter(function(s){return s.weight!=null && s.reps!=null;})}); }).filter(function(e){return e.sets.length>0;}) });
+    var cleaned = Object.assign({}, active, { done:true, entries: cleanSessionEntries(active) });
     if (cleaned.entries.length===0) { setActive(null); return; }
     setRestTimer(null);
     releaseWakeLock();
@@ -7354,7 +7754,7 @@ function App(props){
        liste des machines — voir recalibrateProgramFromHistory) après CHAQUE
        séance terminée, libre ou programmée : les deux alimentent l'historique
        de volume réel par muscle utilisé pour ce recalibrage. */
-    var recalibrated = recalibrateProgramFromHistory(state.program, state.exercises, state.profile.goal, avgSessionsPerWeek(state.profile), state.profile.muscleFocus || {}, newSessions);
+    var recalibrated = recalibrateProgramFromHistory(state.program, state.exercises, state.profile.goal, avgSessionsPerWeek(state.profile), state.profile.muscleFocus || {}, newSessions, state.profile);
     if (recalibrated !== state.program) {
       setState({ sessions: newSessions, active: null, program: recalibrated });
     } else {
