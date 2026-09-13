@@ -3460,6 +3460,60 @@ function reflowProgramForCatalogue(program, exercises, goal, avgSessions, muscle
     if (!bestMove) break;
     prog = bestMove; best = bestMoveScore;
   }
+  /* DERNIÈRE PASSE — égaliser les jours de MÊME type (13 sept. 2026 :
+     "pourquoi Haut A et Haut B autant déséquilibrés ?").
+
+     Constat sur son programme : Haut A à 7 exercices / 70 min contre Haut B à
+     10 exercices / 101 min. Rien dans tout ce qui précède ne regardait
+     l'équilibre ENTRE les jours : le score ne parle que de volume hebdomadaire
+     par muscle, et deux jours du haut très inégaux le satisfont exactement
+     autant qu'une répartition régulière.
+
+     Déplacer une machine d'un jour vers un autre jour du MÊME type ne change
+     RIEN au volume hebdomadaire — dans une rotation, chaque jour est parcouru
+     aussi souvent que les autres. Ça ne déplace que la durée et la fréquence
+     par muscle. Cette passe est donc sans risque pour l'équilibre musculaire,
+     et c'est pour ça qu'elle est séparée du score : il n'y a rien à arbitrer,
+     juste à ne pas laisser une séance faire 30 minutes de plus que sa jumelle.
+
+     Ne déplace jamais une machine vers un jour qui la contient déjà (ça ferait
+     un doublon), ne vide jamais un jour, et s'arrête dès que l'écart repasse
+     sous 10 minutes ou qu'aucun déplacement ne l'améliore. */
+  (function equilibrerJoursJumeaux(){
+    for (var passe = 0; passe < 30; passe++) {
+      var applique = applyGoalToProgram(prog, exercises, goal, avgSessions, muscleFocus, profile);
+      var infos = prog.map(function(d, i){
+        return { i: i, region: dayRegion(d, exMap), min: estimateDayMinutes(applique[i], exMap) };
+      });
+      var meilleur = null;
+      ["haut","bas"].forEach(function(region){
+        var grp = infos.filter(function(x){ return x.region === region; });
+        if (grp.length < 2) return;
+        var longs = grp.slice().sort(function(a,b){ return b.min - a.min; });
+        var source = longs[0], cible = longs[longs.length-1];
+        var ecart = source.min - cible.min;
+        if (ecart <= 10) return;
+        prog[source.i].items.forEach(function(it, ii){
+          if (prog[source.i].items.length <= 2) return;               /* ne pas vider */
+          if (prog[cible.i].items.some(function(x){ return x.ex === it.ex; })) return;
+          var ex = exMap[it.ex]; if (!ex) return;
+          if (!machineFitsDay(ex, prog[cible.i], exMap)) return;
+          var cand = prog.map(function(d, di){
+            if (di === source.i) return Object.assign({}, d, { items: d.items.filter(function(_, j){ return j !== ii; }) });
+            if (di === cible.i) return Object.assign({}, d, { items: d.items.concat([Object.assign({}, it)]) });
+            return d;
+          });
+          var ap2 = applyGoalToProgram(cand, exercises, goal, avgSessions, muscleFocus, profile);
+          var g2 = cand.map(function(d, i2){ return { region: dayRegion(d, exMap), min: estimateDayMinutes(ap2[i2], exMap) }; })
+            .filter(function(x){ return x.region === region; }).map(function(x){ return x.min; });
+          var ecart2 = Math.max.apply(null, g2) - Math.min.apply(null, g2);
+          if (ecart2 < ecart - 0.5 && (!meilleur || ecart2 < meilleur.ecart)) meilleur = { prog: cand, ecart: ecart2 };
+        });
+      });
+      if (!meilleur) return;
+      prog = meilleur.prog;
+    }
+  })();
   return prog;
 }
 /* ============================================================
@@ -3686,7 +3740,7 @@ var PROGRAM_VERSION = 3;
    recommitée à la main — contrairement au lien Artifact qui se met à jour
    tout seul". Change cette date à chaque publication notable pour que la
    comparaison soit possible côté utilisateur. */
-var APP_BUILD = "2026-09-13i";
+var APP_BUILD = "2026-09-13j";
 
 function seedState() {
   return {
