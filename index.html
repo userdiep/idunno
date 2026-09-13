@@ -725,14 +725,27 @@ function effectiveDayItems(items, exMap) {
   });
   return out;
 }
-function plannedVolume(program, exercises, avgSessions) {
+/* `gymId` ajouté le 13 sept. 2026 — deuxième moitié du "ça compte mal".
+
+   Le volume comptait le programme BRUT. Mais dans une salle donnée, certaines
+   machines du programme n'existent pas : l'appli les remplace à la volée par
+   l'équivalent disponible (voir adaptDayItems). Au Fitness park théâtre, le
+   programme "Upper Back + machine indisponible" devient donc "Upper Back +
+   Tirage vertical" à l'écran et dans la séance réellement faite — mais le
+   tableau, lui, comptait le programme brut et affichait un dos deux fois plus
+   bas que ce qui allait vraiment être fait.
+   Le tableau compte maintenant la séance TELLE QU'ELLE SERA FAITE dans la
+   salle sélectionnée, substitutions et fusions de doublons comprises. Sans
+   gymId (appels internes de simulation), comportement d'avant. */
+function plannedVolume(program, exercises, avgSessions, gymId) {
   var exMap = {}; exercises.forEach(function(e){ exMap[e.id]=e; });
   var freqFactor = (avgSessions||SESSIONS_PER_WEEK) / Math.max(1, program.length);
   var factor = freqFactor;
   var m = {}, daysWith = {};
   program.forEach(function(d){
     var musclesToday = {};
-    effectiveDayItems(d.items, exMap).forEach(function(it){
+    var duJour = gymId ? adaptDayItems(d.items, exercises, exMap, gymId) : effectiveDayItems(d.items, exMap);
+    duJour.forEach(function(it){
       var ex = exMap[it.ex]; if (!ex) return;
       allMuscles(ex).forEach(function(mu){
         m[mu] = (m[mu]||0) + it.sets * muscleWeight(ex, mu);
@@ -2771,6 +2784,18 @@ function suggestProgramCompletion(program, exercises, goal, avgSessions, muscleF
   if (!capped.length) return [];
   var inProgram = {};
   program.forEach(function(d){ d.items.forEach(function(it){ inProgram[it.ex] = true; }); });
+  /* Compter aussi les machines que tu fais DÉJÀ dans cette salle en tant que
+     remplaçantes d'une machine du programme indisponible ici (13 sept. 2026).
+     Sans ça, l'appli proposait d'"ajouter" une machine que tu es en train de
+     faire à chaque séance : c'est la moitié visible du va-et-vient signalé —
+     on l'ajoute, la recomposition la retire (elle fait doublon avec celle
+     qu'elle remplaçait), et l'écran la repropose au tour suivant. */
+  if (gymId) {
+    var exMapG = {}; exercises.forEach(function(e){ exMapG[e.id] = e; });
+    program.forEach(function(d){
+      adaptDayItems(d.items, exercises, exMapG, gymId).forEach(function(it){ inProgram[it.ex] = true; });
+    });
+  }
   var pool = exercises.filter(function(e){ return !inProgram[e.id] && exerciseAvailableAtGym(e, gymId); });
   if (!pool.length) return [];
 
@@ -3504,7 +3529,7 @@ var PROGRAM_VERSION = 3;
    recommitée à la main — contrairement au lien Artifact qui se met à jour
    tout seul". Change cette date à chaque publication notable pour que la
    comparaison soit possible côté utilisateur. */
-var APP_BUILD = "2026-09-13d";
+var APP_BUILD = "2026-09-13e";
 
 function seedState() {
   return {
@@ -4961,7 +4986,23 @@ function DayItemList(props){
       h(OrderBadge,{order: ex?exerciseOrderTier(ex):null}),
       h("div",{style:{flex:1,minWidth:0}},
         h("div",{style:{fontSize:13.5,lineHeight:1.3}}, ex?ex.name:"Machine supprimée"),
-        h("div",{style:{fontFamily:sansCond,fontSize:11,color:C.taupe}}, ex?allMuscles(ex).join(" · "):"")),
+        h("div",{style:{fontFamily:sansCond,fontSize:11,color:C.taupe}}, ex?allMuscles(ex).join(" · "):""),
+        /* AJOUTÉ le 13 sept. 2026 — c'est LA cause du "18 séries de dos dans le
+           programme mais compté 10". Cette liste affichait le nom de la machine
+           SUBSTITUÉE (celle disponible dans la salle où tu es) sans dire que
+           c'était une substitution. À l'écran, "Tirage vertical" apparaissait
+           donc dans Haut A et Haut B comme s'il était au programme — alors que
+           l'onglet Machines disait, à juste titre, qu'il n'était dans aucune
+           séance et ne comptait que les machines réellement programmées. Les
+           deux écrans disaient vrai, sur deux choses différentes, sans le dire.
+           Les trois autres listes de l'appli affichaient déjà cette note ;
+           celle-ci, la plus consultée, était la seule à la taire. */
+        it.gymSwappedFrom ? h("div",{style:{fontFamily:sansCond,fontSize:10.5,color:C.steel,lineHeight:1.3}},
+          "remplace "+it.gymSwappedFrom+" — indispo dans cette salle") : null,
+        it.gymMergedFrom ? h("div",{style:{fontFamily:sansCond,fontSize:10.5,color:C.steel,lineHeight:1.3}},
+          mergedNoteShort(it.gymMergedFrom)) : null,
+        it.gymMissing ? h("div",{style:{fontFamily:sansCond,fontSize:10.5,color:C.rust,lineHeight:1.3}},
+          "indisponible dans cette salle") : null),
       h("span",{style:{fontFamily:sansBody,fontSize:13,fontWeight:600,color:C.taupe,fontVariantNumeric:"tabular-nums",flexShrink:0}},
         it.sets+"×"+(it.min===it.max?it.min:it.min+"-"+it.max)+(unitLabel(ex)==="s"?"s":"")));
   }));
@@ -7330,7 +7371,7 @@ function MachinesTab(props){
     }), program);
     setEditIdentity(null);
   }
-  var vol = plannedVolume(program, exercises, avgSessions);
+  var vol = plannedVolume(program, exercises, avgSessions, profile && profile.currentGymId);
   var opt = optimizationScore(program, exercises, goal, avgSessions, (profile && profile.muscleFocus) || {});
   /* Ajouté le 6 sept. 2026 avec MAX_SETS_PER_EXERCISE (voir cappedMuscles) :
      distingue "ce muscle manque de volume" de "ce muscle manque d'une MACHINE
@@ -7800,7 +7841,8 @@ function AnalyseTab(props){
           return { id: it.ex, nom: ex?ex.name:"(supprimée)", series: it.sets, reps: it.min+"-"+it.max, repos: it.rest };
         }) };
       }),
-      volumeCalcule: plannedVolume(program, exercises, avgSessions),
+      volumeCalcule: plannedVolume(program, exercises, avgSessions, profile && profile.currentGymId),
+      volumeCalculeProgrammeBrut: plannedVolume(program, exercises, avgSessions),
     };
     var text = JSON.stringify(dump, null, 2);
     setExportMsg("saving");
