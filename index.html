@@ -322,120 +322,109 @@ function exerciseAvailableAtGym(ex, gymId) {
    levier de performance validé par la littérature — modifiable à la main
    pour un exercice précis via le rond numéroté si tu veux prioriser
    volontairement une isolation. */
+/* CATALOGUE DE DÉPART — mis à jour le 13 sept. 2026 à la demande de
+   l'utilisateur : "je veux que toutes les machines que j'ai dans mon local
+   storage soient disponibles à tous les utilisateurs". Les 29 machines
+   ci-dessous sont exactement celles de son export (Fitness Park théâtre /
+   Rambouillet / Maurepas), y compris les 8 qu'il a ajoutées à la main
+   (Matrix de Maurepas, Tirage vertical Technogym, Extension dorsale, Corde
+   triceps), avec SES incréments réels mesurés machine par machine (pas de
+   2.5 / 4 / 4.5 / 5 / 7 / 7.5 kg selon le modèle) — c'est ce que le seed
+   générique ne pouvait pas deviner.
+
+   Trois choix explicites :
+   - `gymIds` volontairement ABSENT : ses ids de salle (g1,
+     gym1788618063482, gym1788618102052) ne veulent rien dire pour un autre
+     utilisateur, et une machine sans salle est considérée disponible
+     partout. Lui garde ses propres affectations : la migration ne touche
+     jamais une machine qu'il a déjà (voir withLatestProgram).
+   - les 8 anciennes fiches "(à vérifier)" et les modèles qu'il a supprimés
+     (x-pulldown, x-assisted, x-row, x-lombaires, tg-wide-chest,
+     lf-pectoraux, lf-fessiers, tg-shoulder-press) sont retirées : c'étaient
+     des suppositions, remplacées par du matériel réellement constaté. Les
+     garder les aurait aussi fait RÉAPPARAÎTRE chez lui au bump de version.
+   - `unilateral` : l'export ne transporte pas ce champ. Les 21 machines
+     déjà au catalogue gardent leur valeur d'origine ; les 8 ajoutées à la
+     main gardent le défaut de l'app pour une machine créée par
+     l'utilisateur (false). Non vérifié, modifiable machine par machine dans
+     l'onglet Machines. */
 var SEED_EXERCISES = [
-  { id: "tg-chest-press", name: "Chest Press", brand: "Technogym", muscle: "Pectoraux", kind: "machine", inc: 2.5, unilateral:true, order:1 },
-  { id: "tg-wide-chest", name: "Wide Chest Press", brand: "Technogym", muscle: "Pectoraux", kind: "machine", inc: 2.5, unilateral:true, order:1 },
-  { id: "lf-dev-tronc", name: "Développé du Tronc", brand: "Life Fitness", muscle: "Pectoraux", kind: "machine", inc: 2.5, unilateral:true, order:1 },
-  { id: "tg-pectoral", name: "Pectoral (butterfly)", brand: "Technogym", muscle: "Pectoraux", kind: "machine", inc: 2.5, unilateral:true, order:3 },
-  { id: "lf-pectoraux", name: "Pectoraux (butterfly)", brand: "Life Fitness", muscle: "Pectoraux", kind: "machine", inc: 2.5, unilateral:true, order:3 },
-  { id: "tg-upper-back", name: "Upper Back", brand: "Technogym", muscle: "Dos", kind: "machine", inc: 2.5, unilateral:true, order:1 },
-  { id: "x-pulldown", name: "Tirage Vertical (à vérifier)", brand: "?", muscle: "Dos", kind: "machine", inc: 2.5, unilateral:true, order:1 },
-  { id: "x-assisted", name: "Traction Assistée (à vérifier)", brand: "?", muscle: "Dos", kind: "machine", inc: 2.5, unilateral:true, order:1 },
-  { id: "x-row", name: "Tirage Horizontal (à vérifier)", brand: "?", muscle: "Dos", kind: "machine", inc: 2.5, unilateral:true, order:1 },
-  { id: "tg-reverse-fly", name: "Reverse Fly", brand: "Technogym", muscle: "Deltoïdes post.", kind: "machine", inc: 2.5, unilateral:true, order:2 },
-  { id: "lf-delt-arriere", name: "Deltoïde Arrière", brand: "Life Fitness", muscle: "Deltoïdes post.", kind: "machine", inc: 2.5, unilateral:true, order:2 },
-  { id: "tg-shoulder-press", name: "Shoulder Press", brand: "Technogym", muscle: "Épaules", kind: "machine", inc: 2.5, unilateral:true, order:1 },
-  { id: "lf-dev-epaules", name: "Développé des Épaules", brand: "Life Fitness", muscle: "Épaules", kind: "machine", inc: 2.5, unilateral:true, order:1 },
-  { id: "lf-elev-laterale", name: "Élévation Latérale", brand: "Life Fitness", muscle: "Épaules", kind: "machine", inc: 2.5, unilateral:true, order:3 },
-  { id: "lf-biceps", name: "Flexion des Biceps", brand: "Life Fitness", muscle: "Biceps", kind: "machine", inc: 2.5, unilateral:true, order:3 },
+  { id: "tg-chest-press", name: "Chest Press", brand: "Technogym", muscle: "Pectoraux", muscles: ["Pectoraux", "Épaules", "Triceps"], muscleIntensity: {"Pectoraux": 1, "Épaules": 0.75, "Triceps": 0.5}, kind: "machine", inc: 5, unilateral:true, order:1 },
+  { id: "lf-dev-tronc", name: "Développé du Tronc", brand: "Life Fitness", muscle: "Pectoraux", muscles: ["Pectoraux", "Épaules", "Triceps"], muscleIntensity: {"Pectoraux": 1, "Épaules": 0.75, "Triceps": 0.5}, kind: "machine", inc: 7.5, unilateral:true, order:1 },
+  { id: "tg-pectoral", name: "Pectoral (butterfly)", brand: "Technogym", muscle: "Pectoraux", muscles: ["Pectoraux", "Épaules"], muscleIntensity: {"Pectoraux": 1, "Épaules": 0.65}, kind: "machine", inc: 2.5, unilateral:true, order:3 },
+  { id: "tg-upper-back", name: "Upper Back", brand: "Technogym", muscle: "Dos", muscles: ["Dos", "Trapèzes", "Deltoïdes post.", "Biceps"], muscleIntensity: {"Dos": 1, "Trapèzes": 0.5, "Deltoïdes post.": 0.5, "Biceps": 0.5}, kind: "machine", inc: 5, unilateral:true, order:1 },
+  { id: "tg-reverse-fly", name: "Reverse Fly", brand: "Technogym", muscle: "Deltoïdes post.", muscles: ["Deltoïdes post.", "Trapèzes"], muscleIntensity: {"Deltoïdes post.": 1, "Trapèzes": 0.9}, kind: "machine", inc: 2.5, unilateral:true, order:2 },
+  { id: "lf-delt-arriere", name: "Deltoïde Arrière", brand: "Life Fitness", muscle: "Deltoïdes post.", muscles: ["Deltoïdes post.", "Trapèzes"], muscleIntensity: {"Deltoïdes post.": 1, "Trapèzes": 0.9}, kind: "machine", inc: 7.5, unilateral:true, order:2 },
+  { id: "lf-dev-epaules", name: "Développé des Épaules", brand: "Life Fitness", muscle: "Épaules", muscles: ["Épaules", "Trapèzes", "Triceps"], muscleIntensity: {"Épaules": 1, "Trapèzes": 0.5, "Triceps": 0.5}, kind: "machine", inc: 7.5, unilateral:true, order:1 },
+  { id: "lf-elev-laterale", name: "Élévation Latérale", brand: "Life Fitness", muscle: "Épaules", muscles: ["Épaules", "Trapèzes"], muscleIntensity: {"Épaules": 1, "Trapèzes": 0.5}, kind: "machine", inc: 2.5, unilateral:true, order:3 },
+  { id: "lf-biceps", name: "Flexion des Biceps", brand: "Life Fitness", muscle: "Biceps", muscles: ["Biceps", "Avant-bras"], muscleIntensity: {"Biceps": 1, "Avant-bras": 0.5}, kind: "machine", inc: 7.5, unilateral:true, order:3 },
   { id: "lf-triceps", name: "Extension des Triceps", brand: "Life Fitness", muscle: "Triceps", kind: "machine", inc: 2.5, unilateral:true, order:3 },
-  { id: "tg-leg-press", name: "Leg Press", brand: "Technogym", muscle: "Quadriceps", kind: "machine", inc: 5, unilateral:true, order:1 },
+  { id: "tg-leg-press", name: "Leg Press", brand: "Technogym", muscle: "Quadriceps", muscles: ["Quadriceps", "Fessiers", "Ischio-jambiers"], muscleIntensity: {"Quadriceps": 1, "Fessiers": 0.5, "Ischio-jambiers": 0.3}, kind: "machine", inc: 5, unilateral:true, order:1 },
   { id: "tg-leg-ext", name: "Leg Extension", brand: "Technogym", muscle: "Quadriceps", kind: "machine", inc: 2.5, unilateral:true, order:3 },
   { id: "lf-ext-jambes", name: "Extension des Jambes Assis", brand: "Life Fitness", muscle: "Quadriceps", kind: "machine", inc: 2.5, unilateral:true, order:3 },
-  { id: "lf-flex-jambes", name: "Flexion des Jambes (allongé)", brand: "Life Fitness", muscle: "Ischio-jambiers", kind: "machine", inc: 2.5, unilateral:true, order:2 },
-  { id: "lf-ischio-assis", name: "Ischio-Jambiers Assis", brand: "Life Fitness", muscle: "Ischio-jambiers", kind: "machine", inc: 2.5, unilateral:true, order:2 },
-  { id: "hs-ischio-debout", name: "MTS Ischio-Jambier Debout", brand: "Hammer Strength", muscle: "Ischio-jambiers", kind: "machine", inc: 2.5, unilateral:true, order:2 },
-  { id: "lf-mollets", name: "Extension des Mollets", brand: "Life Fitness", muscle: "Mollets", kind: "machine", inc: 2.5, unilateral:false, order:2 },
-  { id: "lf-fessiers", name: "Fessiers", brand: "Life Fitness", muscle: "Fessiers", kind: "machine", inc: 2.5, unilateral:false, order:2 },
-  { id: "lf-abduction", name: "Abduction des Hanches", brand: "Life Fitness", muscles: ["Abducteurs","Fessiers"], muscleIntensity: {Abducteurs:1, Fessiers:0.5}, muscle: "Abducteurs", kind: "machine", inc: 2.5, unilateral:false, order:3 },
+  { id: "lf-flex-jambes", name: "Flexion des Jambes (allongé)", brand: "Life Fitness", muscle: "Ischio-jambiers", muscles: ["Ischio-jambiers", "Mollets"], muscleIntensity: {"Ischio-jambiers": 1, "Mollets": 0.5}, kind: "machine", inc: 7.5, unilateral:true, order:2 },
+  { id: "lf-ischio-assis", name: "Ischio-Jambiers Assis", brand: "Life Fitness", muscle: "Ischio-jambiers", muscles: ["Ischio-jambiers", "Mollets"], muscleIntensity: {"Ischio-jambiers": 1, "Mollets": 0.5}, kind: "machine", inc: 2.5, unilateral:true, order:2 },
+  { id: "hs-ischio-debout", name: "MTS Ischio-Jambier Debout", brand: "Hammer Strength", muscle: "Ischio-jambiers", muscles: ["Ischio-jambiers", "Mollets"], muscleIntensity: {"Ischio-jambiers": 1, "Mollets": 0.5}, kind: "machine", inc: 5, unilateral:true, order:2 },
+  { id: "lf-mollets", name: "Extension des Mollets", brand: "Life Fitness", muscle: "Mollets", kind: "machine", inc: 7.5, unilateral:false, order:2 },
+  { id: "lf-abduction", name: "Abduction des Hanches", brand: "Life Fitness", muscle: "Abducteurs", muscles: ["Abducteurs", "Fessiers"], muscleIntensity: {"Abducteurs": 1, "Fessiers": 0.5}, kind: "machine", inc: 7.5, unilateral:false, order:3 },
   { id: "lf-adduction", name: "Adduction des Hanches", brand: "Life Fitness", muscle: "Adducteurs", kind: "machine", inc: 2.5, unilateral:false, order:3 },
-  { id: "x-lombaires", name: "Extension Lombaires / Fessiers (à vérifier)", brand: "?", muscle: "Lombaires", kind: "machine", inc: 2.5, unilateral:false, order:2 },
-  { id: "hs-ab-crunch", name: "MTS Abdominal Crunch", brand: "Hammer Strength", muscle: "Abdominaux", kind: "machine", inc: 2.5, unilateral:false, order:3 },
-  { id: "lf-rotation", name: "Rotation du Torse", brand: "Life Fitness", muscles: ["Obliques","Abdominaux"], muscleIntensity: {Obliques:1, Abdominaux:0.5}, muscle: "Obliques", kind: "machine", inc: 2.5, unilateral:false, order:3 },
+  { id: "hs-ab-crunch", name: "MTS Abdominal Crunch", brand: "Hammer Strength", muscle: "Abdominaux", muscles: ["Abdominaux", "Obliques"], muscleIntensity: {"Abdominaux": 1, "Obliques": 0.3}, kind: "machine", inc: 2.5, unilateral:false, order:3 },
+  { id: "lf-rotation", name: "Rotation du Torse", brand: "Life Fitness", muscle: "Obliques", muscles: ["Obliques", "Abdominaux"], muscleIntensity: {"Obliques": 1, "Abdominaux": 0.5}, kind: "machine", inc: 7.5, unilateral:false, order:3 },
+  { id: "u1788601373972", name: "Converging shoulder press", brand: "Matrix", muscle: "Épaules", muscles: ["Épaules", "Trapèzes", "Triceps"], muscleIntensity: {"Épaules": 1, "Trapèzes": 0.5, "Triceps": 0.5}, kind: "machine", inc: 4.5, unilateral:false, order:1 },
+  { id: "u1788601807506", name: "Rear delt", brand: "Matrix", muscle: "Deltoïdes post.", muscles: ["Deltoïdes post.", "Trapèzes"], muscleIntensity: {"Deltoïdes post.": 1, "Trapèzes": 0.9}, kind: "machine", inc: 7, unilateral:false, order:2 },
+  { id: "u1788603519430", name: "Tirage vertical", brand: "Matrix", muscle: "Dos", muscles: ["Dos", "Biceps", "Trapèzes"], muscleIntensity: {"Dos": 1, "Biceps": 0.5, "Trapèzes": 0.5}, kind: "cable", inc: 2.5, unilateral:false, order:1 },
+  { id: "u1788604096937", name: "Arm curl", brand: "Matrix", muscle: "Biceps", muscles: ["Biceps", "Avant-bras"], muscleIntensity: {"Biceps": 1, "Avant-bras": 0.5}, kind: "machine", inc: 4, unilateral:false, order:3 },
+  { id: "u1788604759644", name: "Triceps extension", brand: "Matrix", muscle: "Triceps", kind: "machine", inc: 4, unilateral:false, order:3 },
+  { id: "u1788761248906", name: "Tirage vertical", brand: "Technogym", muscle: "Dos", muscles: ["Dos", "Biceps", "Trapèzes"], muscleIntensity: {"Dos": 1, "Biceps": 0.5, "Trapèzes": 0.5}, kind: "machine", inc: 5, unilateral:false, order:1 },
+  { id: "u1788769758052", name: "Extension dorsale", brand: "Life fitness", muscle: "Lombaires", muscles: ["Lombaires", "Fessiers"], muscleIntensity: {"Lombaires": 1, "Fessiers": 0.4}, kind: "machine", inc: 7.5, unilateral:false, order:2 },
+  { id: "u1788773897255", name: "Corde triceps", brand: "", muscle: "Triceps", kind: "cable", inc: 5, unilateral:false, order:3 },
 ];
 
-/* v3 (2026-08-31) — objectif confirmé : RECOMPOSITION (prise de muscle ET
-   perte de gras en même temps), pas juste perte de gras. Ça change la cible
-   de volume : la v2 avait redescendu à ~5-9 séries/semaine/muscle (volume
-   d'ENTRETIEN, correct seulement si l'objectif était de préserver le muscle
-   pendant un cut) — trop bas pour un vrai stimulus de croissance. La cible
-   recomp est plutôt ~8-12 séries/semaine/muscle (volume de croissance
-   modéré-haut — sources RP Strength / volume-landmarks, voir commit history).
-
-   MAIS entre-temps il s'avère que quasiment tous les exercices sont faits
-   bras/jambe par bras (voir `unilateral:true` dans SEED_EXERCISES) — sur un
-   mécanisme bilatéral, ça double le temps réel par exercice (chaque série
-   est faite deux fois, une par côté). Viser la cible recomp ET garder le
-   bras par bras partout en même temps pousserait les séances à 95-134 min
-   (calculé), ce qui ne rentre pas dans un créneau de salle normal.
-
-   PLAN EN DEUX PHASES choisi avec l'utilisateur :
-   Phase 1 (ACTUELLE, ce fichier) : on garde le volume d'entretien de la v2
-   (~5-9 séries/semaine/muscle, sets ci-dessous) MAIS en unilatéral partout,
-   le temps de vérifier objectivement où il y a un vrai déséquilibre gauche/
-   droite (symmetryInfo a besoin d'un peu d'historique par côté). Séances
-   ~75-100 min pendant cette phase — plus long que le plafond habituel de 90
-   min, accepté temporairement.
-   Phase 2 (à activer à la prochaine révision, ~12 oct. 2026, une fois les
-   données de symétrie disponibles) : pour chaque exercice où les deux côtés
-   sont proches (écart <8%, pas de flag symmetryInfo), repasser unilateral:
-   false et REMONTER les sets vers la cible recomp ~8-12/semaine — un
-   exercice bilatéral remonté en volume tient largement sous 90 min. Pour un
-   exercice où un déséquilibre réel est détecté, garder l'unilatéral plus
-   longtemps et appliquer la méthode "côté faible d'abord" (voir Analyse >
-   Asymétrie gauche/droite) avant de repasser bilatéral.
-
-   v4 (2026-08-31) — correctif d'équilibrage : la répartition "3 séries sur
-   quasi tout, 4 sur les gros mouvements" laissait épaules/deltoïdes post./
-   biceps/triceps/mollets/fessiers/adducteurs/lombaires à 4.8 séries/semaine
-   (sous VOL_MIN=5, flag rouge dans l'app), pendant que quadriceps/ischios/
-   pecs/dos/abdos tournaient à 6.4-8. Ce n'était pas voulu : ce n'est pas un
-   problème de gauche/droite ni haut/bas (ces ratios étaient bons, ~1.05 et
-   1.00), juste une répartition de séries trop concentrée sur les gros
-   mouvements. Correctif : ces 8 muscles passent à 4 séries (répartis sur
-   les deux jours du haut pour ne pas surcharger un seul jour), ce qui les
-   remonte à 5.6-6.4 séries/semaine — aligné avec le reste. Pour limiter le
-   temps ajouté, repos réduit à 60-80s sur les séries d'isolation concernées
-   (justifié : petits muscles, récupération plus rapide qu'un gros mouvement
-   composé). Séances UA/UB ~104-107 min (vs 97-99 avant) — accepté par
-   l'utilisateur comme faisant partie du compromis temporaire de la phase 1. */
+/* Programme de départ — issu du sien après réajustement automatique par
+   l'app elle-même (reflow + objectif), donc déjà dans la fourchette 12-20
+   séries/semaine/muscle et équilibré entre les deux jours du haut et les
+   deux jours du bas. Ne référence que des ids présents ci-dessus. */
 var SEED_PROGRAM = [
   { key: "UA", label: "Haut A", accent: C.pin, items: [
-    { ex: "tg-chest-press", sets: 4, min: 8, max: 12, rest: 100 },
-    { ex: "x-pulldown", sets: 4, min: 8, max: 12, rest: 100 },
-    { ex: "tg-shoulder-press", sets: 4, min: 10, max: 12, rest: 80 },
-    { ex: "tg-reverse-fly", sets: 3, min: 12, max: 20, rest: 60 },
-    { ex: "lf-biceps", sets: 4, min: 10, max: 15, rest: 60 },
-    { ex: "lf-triceps", sets: 3, min: 10, max: 15, rest: 70 },
-    { ex: "hs-ab-crunch", sets: 3, min: 10, max: 15, rest: 60 },
+    { ex: "tg-chest-press", sets: 5, min: 8, max: 12, rest: 110 },  /* Chest Press */
+    { ex: "tg-upper-back", sets: 5, min: 8, max: 12, rest: 110 },  /* Upper Back */
+    { ex: "tg-reverse-fly", sets: 5, min: 10, max: 15, rest: 85 },  /* Reverse Fly */
+    { ex: "lf-biceps", sets: 5, min: 12, max: 15, rest: 65 },  /* Flexion des Biceps */
+    { ex: "hs-ab-crunch", sets: 4, min: 12, max: 15, rest: 65 },  /* MTS Abdominal Crunch */
+    { ex: "lf-dev-tronc", sets: 4, min: 8, max: 12, rest: 110 },  /* Développé du Tronc */
+    { ex: "lf-rotation", sets: 4, min: 12, max: 15, rest: 65 },  /* Rotation du Torse */
+    { ex: "u1788769758052", sets: 5, min: 10, max: 15, rest: 85 },  /* Extension dorsale */
   ]},
   { key: "BA", label: "Bas A", accent: C.taupe, items: [
-    { ex: "tg-leg-press", sets: 4, min: 10, max: 15, rest: 140 },
-    { ex: "tg-leg-ext", sets: 3, min: 12, max: 15, rest: 90 },
-    { ex: "lf-ischio-assis", sets: 3, min: 10, max: 15, rest: 90 },
-    { ex: "lf-mollets", sets: 4, min: 12, max: 20, rest: 60 },
-    { ex: "lf-fessiers", sets: 4, min: 12, max: 15, rest: 60 },
-    { ex: "lf-adduction", sets: 4, min: 15, max: 20, rest: 60 },
-    { ex: "x-lombaires", sets: 4, min: 12, max: 15, rest: 70 },
-    { ex: "hs-ab-crunch", sets: 3, min: 10, max: 15, rest: 60 },
+    { ex: "tg-leg-press", sets: 5, min: 8, max: 12, rest: 110 },  /* Leg Press */
+    { ex: "hs-ischio-debout", sets: 4, min: 10, max: 15, rest: 85 },  /* MTS Ischio-Jambier Debout */
+    { ex: "lf-mollets", sets: 5, min: 10, max: 15, rest: 85 },  /* Extension des Mollets */
+    { ex: "lf-abduction", sets: 5, min: 12, max: 15, rest: 65 },  /* Abduction des Hanches */
+    { ex: "lf-adduction", sets: 5, min: 12, max: 15, rest: 65 },  /* Adduction des Hanches */
+    { ex: "hs-ab-crunch", sets: 4, min: 12, max: 15, rest: 65 },  /* MTS Abdominal Crunch */
+    { ex: "u1788769758052", sets: 5, min: 10, max: 15, rest: 85 },  /* Extension dorsale */
+    { ex: "lf-rotation", sets: 4, min: 12, max: 15, rest: 65 },  /* Rotation du Torse */
   ]},
   { key: "UB", label: "Haut B", accent: C.pin, items: [
-    { ex: "tg-wide-chest", sets: 4, min: 10, max: 15, rest: 90 },
-    { ex: "x-assisted", sets: 4, min: 8, max: 12, rest: 100 },
-    { ex: "lf-dev-epaules", sets: 3, min: 10, max: 15, rest: 80 },
-    { ex: "lf-delt-arriere", sets: 4, min: 12, max: 20, rest: 60 },
-    { ex: "lf-biceps", sets: 3, min: 10, max: 15, rest: 70 },
-    { ex: "lf-triceps", sets: 4, min: 10, max: 15, rest: 60 },
-    { ex: "lf-rotation", sets: 3, min: 12, max: 15, rest: 60 },
+    { ex: "tg-chest-press", sets: 3, min: 8, max: 12, rest: 110 },  /* Chest Press */
+    { ex: "tg-upper-back", sets: 5, min: 8, max: 12, rest: 110 },  /* Upper Back */
+    { ex: "lf-dev-epaules", sets: 3, min: 8, max: 12, rest: 110 },  /* Développé des Épaules */
+    { ex: "lf-delt-arriere", sets: 4, min: 10, max: 15, rest: 85 },  /* Deltoïde Arrière */
+    { ex: "lf-biceps", sets: 5, min: 12, max: 15, rest: 65 },  /* Flexion des Biceps */
+    { ex: "lf-rotation", sets: 4, min: 12, max: 15, rest: 65 },  /* Rotation du Torse */
+    { ex: "u1788761248906", sets: 4, min: 8, max: 12, rest: 110 },  /* Tirage vertical */
+    { ex: "lf-dev-tronc", sets: 3, min: 8, max: 12, rest: 110 },  /* Développé du Tronc */
+    { ex: "u1788773897255", sets: 5, min: 12, max: 15, rest: 65 },  /* Corde triceps */
   ]},
   { key: "BB", label: "Bas B", accent: C.taupe, items: [
-    { ex: "lf-flex-jambes", sets: 4, min: 10, max: 15, rest: 90 },
-    { ex: "lf-ext-jambes", sets: 3, min: 15, max: 20, rest: 90 },
-    { ex: "hs-ischio-debout", sets: 3, min: 12, max: 15, rest: 75 },
-    { ex: "lf-abduction", sets: 4, min: 15, max: 20, rest: 60 },
-    { ex: "lf-mollets", sets: 4, min: 15, max: 25, rest: 60 },
-    { ex: "lf-adduction", sets: 4, min: 15, max: 20, rest: 60 },
-    { ex: "x-lombaires", sets: 4, min: 12, max: 15, rest: 70 },
+    { ex: "lf-flex-jambes", sets: 4, min: 10, max: 15, rest: 85 },  /* Flexion des Jambes (allongé) */
+    { ex: "lf-abduction", sets: 5, min: 12, max: 15, rest: 65 },  /* Abduction des Hanches */
+    { ex: "lf-mollets", sets: 4, min: 10, max: 15, rest: 85 },  /* Extension des Mollets */
+    { ex: "lf-adduction", sets: 5, min: 12, max: 15, rest: 65 },  /* Adduction des Hanches */
+    { ex: "tg-leg-press", sets: 5, min: 8, max: 12, rest: 110 },  /* Leg Press */
+    { ex: "u1788769758052", sets: 4, min: 10, max: 15, rest: 85 },  /* Extension dorsale */
+    { ex: "hs-ischio-debout", sets: 3, min: 10, max: 15, rest: 85 },  /* MTS Ischio-Jambier Debout */
+    { ex: "tg-leg-ext", sets: 4, min: 12, max: 15, rest: 65 },  /* Leg Extension */
   ]},
 ];
 
@@ -2625,7 +2614,14 @@ var SPLIT_TEMPLATES = [
   { k:"upper_lower", label:"Haut / Bas", sessions:"4 séances/semaine",
     summary:"Le haut du corps un jour, le bas le lendemain.",
     why:"Le meilleur compromis à 4 séances : chaque muscle revient 2 fois par semaine, avec assez de place dans la séance pour du volume par muscle.",
-    days:[{label:"Haut A",g:["upper","core"]},{label:"Bas A",g:["lower"]},{label:"Haut B",g:["upper"]},{label:"Bas B",g:["lower","core"]}] },
+    /* Le gainage était sur "Haut A" et "Bas B", c'est-à-dire les jours 1 et 4
+       d'une rotation de quatre : une fois la rotation bouclée, ça fait deux
+       jours de SUITE (corrigé le 13 sept. 2026). L'écart de récupération du
+       haut/bas retombait à 1 jour — or c'est précisément le chiffre sur lequel
+       l'appli conseille un split quand les séances s'enchaînent. Le gainage
+       passe sur les deux jours du BAS (jours 2 et 4, donc deux jours d'écart
+       dans les deux sens) ; ce sont aussi les séances les plus courtes. */
+    days:[{label:"Haut A",g:["upper"]},{label:"Bas A",g:["lower","core"]},{label:"Haut B",g:["upper"]},{label:"Bas B",g:["lower","core"]}] },
   { k:"ppl", label:"Push / Pull / Legs", sessions:"3 séances/semaine",
     summary:"Poussée (pecs, épaules, triceps), tirage (dos, biceps), jambes.",
     why:"Regroupe les muscles qui travaillent ensemble, donc peu de chevauchement d'une séance à l'autre. En 3 séances/semaine chaque muscle n'est vu qu'UNE fois — en dessous du repère de 2×/semaine.",
@@ -2888,6 +2884,7 @@ function musclesBelowTarget(program, exercises, goal, avgSessions, muscleFocus) 
   }).filter(function(v){ return v.sets < v.target - 0.05; });
 }
 function suggestProgramCompletion(program, exercises, goal, avgSessions, muscleFocus, gymId) {
+  var baseTarget = goalPreset(goal).targetSets || VOL_MIN;
   var capped = musclesBelowTarget(program, exercises, goal, avgSessions, muscleFocus);
   if (!capped.length) return [];
   var inProgram = {};
@@ -2926,8 +2923,33 @@ function suggestProgramCompletion(program, exercises, goal, avgSessions, muscleF
       }
     });
     if (!best) return;
-    chosen[best.id] = true;
     var placement = proposePlacement(best, exercises.filter(function(e){ return e.id!==best.id; }), program, goal, avgSessions);
+    /* Ajouté le 13 sept. 2026, trouvé en montant le catalogue de départ à 29
+       machines : la suggestion regardait seulement le muscle EN RETARD, jamais
+       ce que la machine proposée faisait aux autres. Sur un catalogue où deux
+       marques proposent le même mouvement, ça donnait "ajoute l'Arm curl" pour
+       remonter les AVANT-BRAS (0,5 en secondaire, et aucune machine ne les
+       travaille en principal, donc la cible est de toute façon inatteignable)
+       — au prix de 21 séries de biceps par semaine pour une cible de 12. C'est
+       exactement le "pourquoi y a 2 exos de triceps ?!" signalé le 12 sept.,
+       vu du côté de la suggestion au lieu de la recomposition.
+       Une suggestion qui pousse un muscle au-dessus du plafond que la
+       recomposition elle-même s'interdit (cible +15 %, cf.
+       programHorsFourchette) est donc écartée : elle serait défaite au tour
+       suivant, ce qui recrée le va-et-vient ajouter/retirer. */
+    /* Simulation faite APRÈS application de l'objectif : c'est le nombre de
+       séries que l'appli attribuerait réellement, pas les 3 séries du
+       placement brut — sans ça le débordement ne se voit pas ici. */
+    var avant = plannedVolume(applyGoalToProgram(program, exercises, goal, avgSessions, muscleFocus, null), exercises, avgSessions);
+    var apres = plannedVolume(applyGoalToProgram(applyPlacement(best, placement, exercises, program), exercises, goal, avgSessions, muscleFocus, null), exercises, avgSessions);
+    var casse = apres.some(function(v){
+      var plafond = (baseTarget * focusMultiplier(muscleFocus || {}, v.muscle)) * 1.15 + 0.05;
+      if (!(plafond > 0) || v.sets <= plafond) return false;
+      var av = avant.find(function(x){ return x.muscle === v.muscle; });
+      return !av || v.sets > av.sets + 0.05;   // au-dessus du plafond ET aggravé par cette machine
+    });
+    if (casse) return;
+    chosen[best.id] = true;
     out.push({ ex: best, forMuscle: c.muscle, covers: allMuscles(best).filter(function(mu){ return !!pending[mu]; }), placement: placement });
     allMuscles(best).forEach(function(mu){ delete pending[mu]; });
   });
@@ -3242,6 +3264,7 @@ function reflowProgramForCatalogue(program, exercises, goal, avgSessions, muscle
       var mu = allMuscles(e)[0];
       primaires[mu] = (primaires[mu] || 0) + 1;
     }); });
+    var deplacees = [];
     prog = prog.map(function(d, di){
       var region = regions[di];
       if (!region) return d;
@@ -3253,9 +3276,33 @@ function reflowProgramForCatalogue(program, exercises, goal, avgSessions, muscle
         var mu = allMuscles(e)[0];
         if ((primaires[mu] || 0) <= 1) return true;     /* seule machine de ce muscle */
         primaires[mu] -= 1;
+        deplacees.push(it);
         return false;
       });
       return gardes.length ? Object.assign({}, d, { items: gardes }) : d;
+    });
+    /* DÉPLACER plutôt que supprimer (13 sept. 2026). Cette passe ne faisait que
+       retirer la machine mal placée : le volume hebdomadaire du muscle partait
+       avec elle, et un muscle correctement servi pouvait passer sous sa cible
+       sans qu'aucun garde-fou ne le voie — les refus "chute" et "dépasse" ne
+       s'appliquent qu'à la descente qui suit, pas ici. Mesuré sur un programme
+       surchargé : le dos tombait de 12 à 10 séries par semaine.
+       La machine est donc reposée dans un jour de SA région (celui qui en a le
+       moins, à sets/reps/repos identiques) ; elle n'est vraiment abandonnée que
+       si aucun jour ne lui convient. */
+    deplacees.forEach(function(it){
+      var e = exMap[it.ex]; if (!e) return;
+      var r = REGION[allMuscles(e)[0]];
+      var cible = -1;
+      prog.forEach(function(d, di){
+        if (regions[di] !== r) return;
+        if (d.items.some(function(x){ return x.ex === it.ex; })) return;
+        if (cible < 0 || d.items.length < prog[cible].items.length) cible = di;
+      });
+      if (cible < 0) return;
+      prog = prog.map(function(d, di){
+        return di !== cible ? d : Object.assign({}, d, { items: d.items.concat([it]) });
+      });
     });
   })();
   var best = score(prog);
@@ -3336,7 +3383,14 @@ function reflowProgramForCatalogue(program, exercises, goal, avgSessions, muscle
     var dejaAuPlafond = {};
     plannedVolume(applyGoalToProgram(prog, exercises, goal, avgSessions, muscleFocus, profile), exercises, avgSessions)
       .forEach(function(v){ dejaAuPlafond[v.muscle] = v.sets; });
-    function evalMove(cand){
+    /* Excédent de volume PAR SÉANCE avant ce tour (SESSION_VOLUME_CAP,
+       Remmert et al. 2025) — voir le refus dans evalMove ci-dessous. */
+    function excesParSeance(p){
+      return sessionVolumeOvershoot(p, exercises, goal)
+        .reduce(function(a, o){ return a + (o.sets - o.cap); }, 0);
+    }
+    var excesAvant = excesParSeance(applyGoalToProgram(prog, exercises, goal, avgSessions, muscleFocus, profile));
+    function evalMove(cand, ajout){
       if (!cand || cand === prog) return;
       var applied = applyGoalToProgram(cand, exercises, goal, avgSessions, muscleFocus, profile);
       var sc = programBalancePenalty(applied, exercises, goal, avgSessions, muscleFocus, profile, {corridor:true});
@@ -3389,6 +3443,48 @@ function reflowProgramForCatalogue(program, exercises, goal, avgSessions, muscle
         if (v.sets < cible - 0.05 && !(avant != null && avant < cible - 0.05)) chute = true;
       });
       if (chute) return;
+      /* AJOUT QUI COÛTE PLUS QU'IL NE RAPPORTE — refusé depuis le 13 sept. 2026,
+         trouvé en montant le catalogue de départ à 29 machines (plusieurs fois
+         le même mouvement selon la marque ou la salle).
+
+         Mesuré sur le programme livré à 4 séances/semaine : pour remonter les
+         AVANT-BRAS — qu'aucune machine ne travaille en principal, dont la cible
+         est donc inatteignable — la recomposition ajoutait une SECONDE machine
+         de biceps (+2,5 séries d'avant-bras, toujours sous la cible) en poussant
+         le biceps de 16 à 20 séries pour une cible de 12 ; puis, la séance étant
+         saturée, elle retirait le Tirage vertical et le DOS tombait à 10. C'est
+         mot pour mot le double signalement du 12-13 sept. ("pourquoi y a 2 exos
+         de biceps/triceps ?!" et "le dos est toujours à 10").
+
+         Règle posée, sans seuil arbitraire : un AJOUT de machine doit rapporter
+         au moins autant qu'il ne coûte. Ce qu'il rapporte = le manque comblé
+         sous la cible ; ce qu'il coûte = l'excédent créé au-dessus. Un ajout qui
+         creuse plus qu'il ne comble est refusé. Les déplacements et les retraits
+         ne sont pas concernés : ils ne peuvent pas créer ce déséquilibre-là. */
+      if (ajout) {
+        var gain = 0, cout = 0;
+        plannedVolume(applied, exercises, avgSessions).forEach(function(v){
+          var cibleV = baseT * focusMultiplier(muscleFocus || {}, v.muscle);
+          var av = dejaAuPlafond[v.muscle];
+          if (!(cibleV > 0) || av == null) return;
+          gain += Math.max(0, Math.min(v.sets, cibleV) - Math.min(av, cibleV));
+          cout += Math.max(0, v.sets - Math.max(av, cibleV));
+        });
+        if (cout > gain + 0.05) return;
+      }
+      /* REPÈRE DE VOLUME PAR SÉANCE, ajouté le 13 sept. 2026 en montant le
+         catalogue de départ à 29 machines. La recomposition raisonnait
+         uniquement en volume HEBDOMADAIRE : elle regroupait volontiers quatre
+         machines d'ischio-jambiers le même jour (12,5 séries fractionnaires
+         dans la séance pour un repère de 11) — puis l'onglet Machines
+         signalait ce dépassement que la recomposition venait elle-même de
+         créer. Les deux vues de l'appli se contredisaient.
+         Un coup qui AGGRAVE le dépassement par séance est donc refusé ; un
+         programme déjà au-dessus peut encore bouger, sinon plus rien ne serait
+         réparable. Le remède, quand le total hebdomadaire est bon, n'est pas de
+         rogner des séries mais de répartir ces machines sur des jours
+         différents — ce que ce refus force la recomposition à faire. */
+      if (excesParSeance(applied) > excesAvant + 0.05) return;
       if (sc < bestMoveScore - 1e-9) { bestMove = cand; bestMoveScore = sc; }
     }
 
@@ -3397,7 +3493,7 @@ function reflowProgramForCatalogue(program, exercises, goal, avgSessions, muscle
        première : s'arrêter au premier refus laissait de côté des machines qui
        auraient comblé un autre muscle. */
     var sugg = suggestProgramCompletion(prog, exercises, goal, avgSessions, muscleFocus, gymId);
-    (sugg || []).forEach(function(su){ evalMove(applyPlacement(su.ex, su.placement, exercises, prog)); });
+    (sugg || []).forEach(function(su){ evalMove(applyPlacement(su.ex, su.placement, exercises, prog), true); });
 
     /* Coup 2 — AJOUTER UN JOUR À UNE MACHINE DÉJÀ PRÉSENTE. Levier ajouté le
        12 sept. 2026, sans lequel la règle « jamais moins de 12 » est
@@ -3433,7 +3529,7 @@ function reflowProgramForCatalogue(program, exercises, goal, avgSessions, muscle
           : { ex: ex.id, sets: td.sets, min: td.min, max: td.max, rest: td.rest };
         evalMove(prog.map(function(d, i){
           return i !== di ? d : Object.assign({}, d, { items: d.items.concat([nouvel]) });
-        }));
+        }), true);
       });
     });
 
@@ -3452,8 +3548,15 @@ function reflowProgramForCatalogue(program, exercises, goal, avgSessions, muscle
           if (e2 && allMuscles(e2)[0] === primary) stillPrimary = true;
         }); });
         if (!stillPrimary) return;
-        var sc = score(cut);
-        if (sc < bestMoveScore - 1e-9) { bestMove = cut; bestMoveScore = sc; }
+        /* CORRIGÉ le 13 sept. 2026 — ce coup-ci calculait sa note lui-même et
+           sautait donc TOUS les garde-fous d'evalMove, alors que la note seule
+           "se laisse acheter" (c'est la raison d'être de ces refus secs).
+           Le retrait pouvait ainsi faire passer un muscle SOUS sa cible :
+           mesuré sur un programme surchargé, le dos tombait de 12 à 10 séries
+           par semaine — exactement ce que le refus "chute", écrit le matin même
+           pour le signalement "le dos est toujours à 10", était censé empêcher.
+           Il croyait couvrir les retraits ; il ne les voyait pas. */
+        evalMove(cut);
       });
     });
 
@@ -3729,9 +3832,12 @@ var STATE_VERSION = 1;
    below loads THAT saved program forever and silently ignores any edits made
    here to SEED_PROGRAM — republishing the page changes the code but not what
    an existing user actually sees. Bumping the number forces a one-time merge
-   that replaces exercises+program with the latest SEED_* while preserving
-   everything the user has logged (sessions, bodyLog, profile, active set). */
-var PROGRAM_VERSION = 3;
+   qui AJOUTE les machines du catalogue absentes chez l'utilisateur, garde
+   telles quelles celles qu'il a déjà (ses réglages, ses salles, ses noms),
+   ne supprime jamais rien, et ne remplace son programme que s'il est devenu
+   inexploitable — tout ce qu'il a loggé (séances, poids, profil, séance en
+   cours) est préservé dans tous les cas. */
+var PROGRAM_VERSION = 4;
 /* Repère de build visible dans Options > tout en bas — demande implicite
    suite à plusieurs allers-retours où un changement publié semblait "ne pas
    arriver" (voir historique de la conversation, 5 sept. 2026) : sans repère
@@ -3740,7 +3846,7 @@ var PROGRAM_VERSION = 3;
    recommitée à la main — contrairement au lien Artifact qui se met à jour
    tout seul". Change cette date à chaque publication notable pour que la
    comparaison soit possible côté utilisateur. */
-var APP_BUILD = "2026-09-13j";
+var APP_BUILD = "2026-09-13k";
 
 function seedState() {
   return {
@@ -3836,10 +3942,22 @@ function withLatestProgram(state) {
   var mergedExercises = (state.exercises||[]).concat(
     SEED_EXERCISES.filter(function(e){ return !have[e.id]; }));
   var known = {}; mergedExercises.forEach(function(e){ known[e.id] = true; });
-  var mergedProgram = SEED_PROGRAM
+  /* CORRIGÉ le 13 sept. 2026 — le programme de l'utilisateur n'est écrasé
+     que s'il est inutilisable. Jusqu'ici un bump de version remplaçait
+     TOUJOURS le programme par SEED_PROGRAM : ajouter des machines au
+     catalogue (le but du bump du jour) aurait donc aussi effacé un
+     programme réglé à la main, réordonné, rééquilibré séance par séance.
+     Or les deux choses n'ont rien à voir. Nouvelle règle : si le programme
+     enregistré tient encore debout (au moins un jour dont toutes les
+     machines existent toujours), on le garde tel quel ; on ne retombe sur
+     le catalogue que s'il ne reste rien d'exploitable. */
+  var userProgram = (state.program || [])
+    .map(function(d){ return Object.assign({}, d, { items: (d.items||[]).filter(function(it){ return known[it.ex]; }) }); })
+    .filter(function(d){ return d.items.length > 0; });
+  var mergedProgram = userProgram.length ? userProgram : SEED_PROGRAM
     .map(function(d){ return Object.assign({}, d, { items: d.items.filter(function(it){ return known[it.ex]; }) }); })
     .filter(function(d){ return d.items.length > 0; });
-  if (!mergedProgram.length) mergedProgram = state.program || SEED_PROGRAM;
+  if (!mergedProgram.length) mergedProgram = SEED_PROGRAM;
   return Object.assign({}, state, {
     programVersion: PROGRAM_VERSION,
     exercises: mergedExercises,
@@ -4173,7 +4291,20 @@ function matchesMuscleConfig(e, cfg) {
    elle reste reconnue par son nom seul, et si son nom ne dit rien à l'appli,
    elle est laissée telle quelle — c'est à l'utilisateur de la renseigner
    (voir "Muscles à revoir" dans l'onglet Machines). */
-var SEED_NAME_BY_ID = (function(){ var m={}; SEED_EXERCISES.forEach(function(e){ m[e.id]=e.name; }); return m; })();
+/* Noms d'origine des fiches RETIRÉES du catalogue le 13 sept. 2026 (les
+   "(à vérifier)" et les modèles que l'utilisateur a supprimés). Un ancien
+   utilisateur peut très bien les avoir gardées ET renommées : sans cette
+   table, son "Rameur assis Matrix" (ex-x-row) ne serait plus reconnu par
+   aucune règle et perdrait ses muscles secondaires. La liste n'a pas
+   vocation à grandir — c'est une table de compatibilité, pas un catalogue. */
+var RETIRED_SEED_NAMES = {
+  "x-pulldown": "Tirage Vertical", "x-assisted": "Traction Assistée",
+  "x-row": "Tirage Horizontal", "x-lombaires": "Extension Lombaires / Fessiers",
+  "tg-wide-chest": "Wide Chest Press", "lf-pectoraux": "Pectoraux (butterfly)",
+  "lf-fessiers": "Fessiers", "tg-shoulder-press": "Shoulder Press",
+};
+var SEED_NAME_BY_ID = (function(){ var m={}; SEED_EXERCISES.forEach(function(e){ m[e.id]=e.name; });
+  Object.keys(RETIRED_SEED_NAMES).forEach(function(k){ if(!m[k]) m[k]=RETIRED_SEED_NAMES[k]; }); return m; })();
 function ruleNameFor(e, rules) {
   var n = stripAccents(e.name||"");
   var known = rules.some(function(r){ return r.test.test(n); });
@@ -7502,7 +7633,14 @@ function MachinesTab(props){
        non tout en haut de l'onglet, hors de l'écran (12 sept. 2026, même
        demande que pour la carte de remplacement en séance). */
     setNotice({ gone: out.gone.name, muscles: allMuscles(out.gone).join(" + "),
-      anchor: allMuscles(out.gone)[0] || null, report: out.report });
+      anchor: allMuscles(out.gone)[0] || null,
+      /* Repli d'ancrage (13 sept. 2026) : si la machine supprimée était la
+         SEULE de son muscle principal, ce muscle disparaît de la liste et le
+         compte rendu remontait tout en haut de l'onglet — donc hors écran sur
+         une liste de 29 machines, exactement ce qu'on voulait éviter. On
+         retombe alors sur ses muscles secondaires, qui, eux, ont encore des
+         machines et restent à peu près au même endroit de la liste. */
+      anchorsSec: allMuscles(out.gone).slice(1), report: out.report });
   }
   /* Une machine ajoutée entre DIRECTEMENT dans les séances (7 sept. 2026 :
      "quand j'ajoute une machine faut que le programme se mette à jour
@@ -7689,6 +7827,27 @@ function MachinesTab(props){
      muscle qu'elle sollicite ci-dessous — cohérent avec le fait qu'elle
      compte pour le volume de chacun (voir plannedVolume). */
   var byMuscle = {}; exercises.forEach(function(e){ allMuscles(e).forEach(function(mu){ (byMuscle[mu]=byMuscle[mu]||[]).push(e); }); });
+  /* Muscle sous lequel le compte rendu de suppression doit s'afficher : le
+     principal s'il est encore dans la liste, sinon le premier secondaire qui
+     y est encore, sinon rien (et il s'affiche alors tout en haut). */
+  /* Amener le compte rendu SOUS LES YEUX (13 sept. 2026). L'ancrage sous le
+     bon muscle ne suffit pas toujours : quand la machine supprimée était la
+     seule de son muscle, la section disparaît et le repli tombe sur un muscle
+     secondaire qui peut être bien plus haut dans une liste de 29 machines. La
+     carte est donc aussi amenée au centre de l'écran quand elle apparaît —
+     c'est la demande elle-même ("sans devoir monter tout là-haut"), pas un
+     confort : une carte qu'on ne voit pas revient à ne rien afficher. */
+  var noticeRef = useRef(null);
+  useEffect(function(){
+    if (!notice || !noticeRef.current || !noticeRef.current.scrollIntoView) return;
+    try { noticeRef.current.scrollIntoView({block:"center", behavior:"smooth"}); } catch (e) {}
+  }, [notice]);
+  var noticeAt = (function(){
+    if (!notice) return null;
+    if (byMuscle[notice.anchor]) return notice.anchor;
+    var repli = (notice.anchorsSec || []).find(function(mu){ return !!byMuscle[mu]; });
+    return repli || null;
+  })();
 
   /* Compte rendu de suppression — extrait en fonction le 12 sept. 2026 pour
      pouvoir être rendu DEUX fois : normalement sous le muscle concerné (là où
@@ -7696,7 +7855,7 @@ function MachinesTab(props){
      machine et a donc disparu de la liste. */
   function noticeCard(){
     if (!notice) return null;
-    return h("div",{style:{marginBottom:12,borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.pin}},
+    return h("div",{ref:noticeRef, style:{marginBottom:12,borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.pin}},
       h("div",{style:{display:"flex",alignItems:"flex-start",gap:8,marginBottom:8}},
         h(Icon,{name:"repeat",size:16,color:C.pin}),
         h("div",{style:{fontFamily:sansCond,fontSize:15,fontWeight:600}}, notice.gone+" retirée")),
@@ -7706,7 +7865,7 @@ function MachinesTab(props){
       h("button",{onClick:function(){setNotice(null);}, style:{marginTop:8,padding:"6px 12px",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:13}}, "Compris"));
   }
   return h("div", null,
-    (notice && !byMuscle[notice.anchor]) ? noticeCard() : null,
+    (notice && !noticeAt) ? noticeCard() : null,
 
     proposal ? h("div",{style:{marginBottom:16,borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.green}},
       h("div",{style:{fontFamily:sansCond,fontSize:15,fontWeight:600,marginBottom:6,color:C.green}},
@@ -7946,7 +8105,7 @@ function MachinesTab(props){
           /* Le compte rendu de suppression s'affiche ICI, dans le groupe de
              muscles d'où la machine a été retirée — pas tout en haut de
              l'onglet (12 sept. 2026, voir noticeCard). */
-          (notice && notice.anchor===muscle) ? noticeCard() : null,
+          (noticeAt===muscle) ? noticeCard() : null,
           list.map(function(e){
             var stall = stallInfo(sessions, e.id), u = usage(e.id), pending = confirmDel===e.id;
             var eMuscles = allMuscles(e);
