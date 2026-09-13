@@ -3421,7 +3421,7 @@ var PROGRAM_VERSION = 3;
    recommitée à la main — contrairement au lien Artifact qui se met à jour
    tout seul". Change cette date à chaque publication notable pour que la
    comparaison soit possible côté utilisateur. */
-var APP_BUILD = "2026-09-12i";
+var APP_BUILD = "2026-09-13a";
 
 function seedState() {
   return {
@@ -5397,6 +5397,15 @@ function SeanceTab(props) {
     setSwapPending(null);
   }
   function cancelSwap(){ setSwapPending(null); }
+  /* Filet de sécurité : si la machine en cours de remplacement n'apparaît pas
+     dans la liste affichée (retirée de la séance entre-temps, indisponible
+     dans la salle courante...), la carte reprend sa place en haut plutôt que
+     de disparaître avec elle. */
+  function swapCardOrphan(items){
+    if (!swapPending) return null;
+    var shown = (items||[]).some(function(it){ return it.ex === swapPending.exId; });
+    return shown ? null : swapCard();
+  }
   /* Compte rendu de la recomposition AUTOMATIQUE faite en fin de séance (voir
      finishSession et describeProgramDiff). L'appli a le droit de réorganiser
      les séances toute seule — c'est ce qui est demandé — mais pas de le faire
@@ -5419,8 +5428,24 @@ function SeanceTab(props) {
       h("button",{onClick:function(){ clearAutoFix && clearAutoFix(); },
         style:{width:"100%",padding:"8px 0",borderRadius:6,background:C.steel,color:C.ink,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Compris"));
   }
-  function swapCard(){
+  /* ANCRAGE (12 sept. 2026, demande : "je veux que quand on rafraîchit ou
+     qu'on enlève une machine, la proposition de remplacement soit au niveau de
+     la machine enlevée, sans devoir remonter tout en haut").
+
+     La carte s'affichait tout en haut de l'onglet. En salle, avec sept à douze
+     machines et une séance qui fait plusieurs écrans de haut, appuyer sur
+     l'icône de remplacement d'une machine du bas ne montrait donc RIEN : il
+     fallait deviner qu'il fallait remonter. Elle s'affiche maintenant dans la
+     carte de la machine concernée, là où le doigt vient d'appuyer.
+
+     `forExId` : la carte ne se rend que pour cette machine-là. Appelée sans
+     argument, elle se rend quelle que soit la machine — c'est le filet de
+     sécurité pour le cas où la machine concernée n'est plus visible dans la
+     liste affichée (voir swapCardOrphan) : mieux vaut la carte en haut que pas
+     de carte du tout. */
+  function swapCard(forExId){
     if (!swapPending) return null;
+    if (forExId !== undefined && swapPending.exId !== forExId) return null;
     return h("div",{style:{marginBottom:16,borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+(swapPending.candidate?C.green:C.rust)}},
       swapPending.candidate ? h("div",null,
         h("div",{style:{fontSize:13.5,color:C.bone,lineHeight:1.5,marginBottom:10}},
@@ -5596,7 +5621,7 @@ function SeanceTab(props) {
        figé tant que la séance n'a pas démarré). */
     var previewItems = sortByExerciseOrder(adaptDayItems(day.items, exercises, exMap, currentGymId), function(it){return it.ex;}, exMap);
     return h("div", null,
-      swapCard(),
+      swapCardOrphan(previewItems),
       autoFixCard(),
       (profile && profile.gyms && profile.gyms.length>1) ? h("div",{style:{marginBottom:16}},
         h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,marginBottom:6}}, "Salle actuelle"),
@@ -5690,7 +5715,10 @@ function SeanceTab(props) {
                   (ex && updateExerciseInc) ? h(IncStepper,{value:ex.inc, onChange:function(v){updateExerciseInc(ex.id, v);}}) : null)),
               it.gymSwappedFrom ? h("div",{style:{padding:"0 12px 10px",fontSize:12,color:C.steel}}, "Remplace "+it.gymSwappedFrom+" — indisponible dans cette salle.") : null,
               it.gymMergedFrom ? h("div",{style:{padding:"0 12px 10px",fontSize:12,color:C.steel}}, mergedNote(it.gymMergedFrom)) : null,
-              it.gymMissing ? h("div",{style:{padding:"0 12px 10px",fontSize:12,color:C.rust}}, "Indisponible dans cette salle et aucune autre machine équivalente trouvée.") : null);
+              it.gymMissing ? h("div",{style:{padding:"0 12px 10px",fontSize:12,color:C.rust}}, "Indisponible dans cette salle et aucune autre machine équivalente trouvée.") : null,
+              /* La proposition de remplacement s'ouvre ICI, sous la machine sur
+                 laquelle on vient d'appuyer (voir swapCard). */
+              swapPending && swapPending.exId===it.ex ? h("div",{style:{padding:"0 10px 10px"}}, swapCard(it.ex)) : null);
           })
         ),
         /* Ajouté le 6 sept. 2026 — la pastille ronde devant chaque machine
@@ -5921,7 +5949,7 @@ function SeanceTab(props) {
   var availableToAdd = exercises.filter(function(e){ return !active.entries.some(function(en){return en.ex===e.id;}) && exerciseAvailableAtGym(e, currentGymId); }).slice().sort(function(a,b){return a.name.localeCompare(b.name);});
 
   return h("div", null,
-    swapCard(),
+    swapCardOrphan(sessionItems),
     h("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}},
       h("div",null,
         h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,display:"flex",alignItems:"center",gap:5}},
@@ -5974,6 +6002,11 @@ function SeanceTab(props) {
             h(SessionSetsStepper,{ value: entry.sets.length, max: MANUAL_SETS_MAX,
               min: lastFilledSetIndex(entry) + 1, label: ex ? ex.name : null,
               onChange: function(v){ setEntrySetCount(idx, v); } }))),
+        /* La proposition de remplacement s'ouvre juste SOUS l'en-tête de la
+           machine, c'est-à-dire à hauteur du bouton qu'on vient d'appuyer —
+           mesuré : 382 px plus bas quand elle était placée en fin de carte,
+           après toutes les lignes de séries (12 sept. 2026, voir swapCard). */
+        swapPending && swapPending.exId===it.ex ? h("div",{style:{padding:"0 10px 10px",background:C.shroudDeep}}, swapCard(it.ex)) : null,
         h("div",{style:{padding:"8px 12px",background:C.shroudDeep,borderTop:"1px solid "+C.shroud}},
           h("div",{style:{fontSize:12.5,color:p.state==="up"?C.green:p.state==="down"?C.rust:p.state==="deload"?C.steel:C.taupe,lineHeight:1.45}}, p.note)),
         h("div",{style:{background:C.shroud}},
@@ -7074,7 +7107,12 @@ function MachinesTab(props){
     var out = removeWithSubstitution(exId, exercises, program);
     persistConfig(out.exercises, out.program, {reflow:true});
     setConfirmDel(null);
-    setNotice({ gone: out.gone.name, muscles: allMuscles(out.gone).join(" + "), report: out.report });
+    /* `anchor` : le muscle sous lequel afficher le compte rendu, c'est-à-dire
+       à l'endroit exact de la liste où se trouvait la machine supprimée — et
+       non tout en haut de l'onglet, hors de l'écran (12 sept. 2026, même
+       demande que pour la carte de remplacement en séance). */
+    setNotice({ gone: out.gone.name, muscles: allMuscles(out.gone).join(" + "),
+      anchor: allMuscles(out.gone)[0] || null, report: out.report });
   }
   /* Une machine ajoutée entre DIRECTEMENT dans les séances (7 sept. 2026 :
      "quand j'ajoute une machine faut que le programme se mette à jour
@@ -7262,15 +7300,23 @@ function MachinesTab(props){
      compte pour le volume de chacun (voir plannedVolume). */
   var byMuscle = {}; exercises.forEach(function(e){ allMuscles(e).forEach(function(mu){ (byMuscle[mu]=byMuscle[mu]||[]).push(e); }); });
 
-  return h("div", null,
-    notice ? h("div",{style:{marginBottom:16,borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.pin}},
+  /* Compte rendu de suppression — extrait en fonction le 12 sept. 2026 pour
+     pouvoir être rendu DEUX fois : normalement sous le muscle concerné (là où
+     était la machine), et en secours tout en haut si ce muscle n'a plus aucune
+     machine et a donc disparu de la liste. */
+  function noticeCard(){
+    if (!notice) return null;
+    return h("div",{style:{marginBottom:12,borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.pin}},
       h("div",{style:{display:"flex",alignItems:"flex-start",gap:8,marginBottom:8}},
         h(Icon,{name:"repeat",size:16,color:C.pin}),
         h("div",{style:{fontFamily:sansCond,fontSize:15,fontWeight:600}}, notice.gone+" retirée")),
       notice.report.length===0 ? h("div",{style:{fontSize:13,color:C.taupe}}, "Elle n'était dans aucune séance — rien à remplacer.")
         : notice.report.map(function(r,i){ return h("div",{key:i, style:{fontSize:13, color:r.to?C.bone:C.rust, lineHeight:1.5, marginBottom:3}},
             r.to ? (r.day+" : remplacée par "+r.to+", "+r.sets+" séries conservées.") : (r.day+" : aucune autre machine pour "+notice.muscles+" — tu perds "+r.sets+" séries. Ajoute du matériel ou reporte-les ailleurs.")); }),
-      h("button",{onClick:function(){setNotice(null);}, style:{marginTop:8,padding:"6px 12px",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:13}}, "Compris")) : null,
+      h("button",{onClick:function(){setNotice(null);}, style:{marginTop:8,padding:"6px 12px",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:13}}, "Compris"));
+  }
+  return h("div", null,
+    (notice && !byMuscle[notice.anchor]) ? noticeCard() : null,
 
     proposal ? h("div",{style:{marginBottom:16,borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.green}},
       h("div",{style:{fontFamily:sansCond,fontSize:15,fontWeight:600,marginBottom:6,color:C.green}},
@@ -7507,6 +7553,10 @@ function MachinesTab(props){
         var list = byMuscle[muscle];
         return h("div",{key:muscle, style:{marginBottom:12}},
           h("div",{style:{fontFamily:sansCond,fontSize:13,color:C.pin,marginBottom:4}}, muscle),
+          /* Le compte rendu de suppression s'affiche ICI, dans le groupe de
+             muscles d'où la machine a été retirée — pas tout en haut de
+             l'onglet (12 sept. 2026, voir noticeCard). */
+          (notice && notice.anchor===muscle) ? noticeCard() : null,
           list.map(function(e){
             var stall = stallInfo(sessions, e.id), u = usage(e.id), pending = confirmDel===e.id;
             var eMuscles = allMuscles(e);
