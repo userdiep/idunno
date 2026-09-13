@@ -2412,24 +2412,51 @@ function proposePlacement(newEx, exercises, program, goal, avgSessions) {
     var ex = withNew.find(function(e){return e.id===it.ex;});
     return ex && allMuscles(ex).some(function(mu){ return newMuscles.indexOf(mu)>=0; });
   }); });
-  var targets = daysTraining.length > 0 ? daysTraining.slice(0,2)
-    : program.slice().sort(function(a,b){return a.items.length-b.items.length;}).slice(0,2);
+  /* Corrigé le 12 sept. 2026 (signalement : "pourquoi y a 2 exos de triceps
+     alors que c'est beaucoup plus que 12 séries par semaine ?"). La machine
+     ajoutée était placée sur DEUX jours quoi qu'il arrive — y compris quand
+     tous ses muscles étaient DÉJÀ au-dessus de leur cible. Sur un triceps
+     sollicité en secondaire par trois développés et déjà à 14 séries pour une
+     cible de 12, ajouter une deuxième machine dédiée sur deux jours le pousse
+     vers 19-22 : chaque machine impose son plancher de 3 séries (Krieger
+     2010), donc plus il y a de machines sur un muscle, plus son plancher monte
+     — et l'appli ne peut plus redescendre, quoi qu'elle fasse ensuite. Un seul
+     jour quand le muscle est déjà servi, et on le DIT (voir
+     describePlacement) : ajouter une machine à un muscle déjà au-dessus de sa
+     cible, c'est un remplacement qu'on veut, pas un ajout. */
+  var allCovered = perMuscle.length > 0 && perMuscle.every(function(p){ return p.current >= p.target; });
+  var nDays = allCovered ? 1 : 2;
+  var targets = daysTraining.length > 0 ? daysTraining.slice(0, nDays)
+    : program.slice().sort(function(a,b){return a.items.length-b.items.length;}).slice(0, nDays);
   var tierDef = tierDefaultsForGoal(goal, exerciseOrderTier(newEx));
   var setsEach = current >= target ? tierDef.sets : tierDef.sets + 1;
   return { targets: targets.map(function(d){return d.key;}), targetLabels: targets.map(function(d){return d.label;}),
-    setsEach: setsEach, min: tierDef.min, max: tierDef.max, rest: tierDef.rest, current: current, target: target, perMuscle: perMuscle };
+    setsEach: setsEach, min: tierDef.min, max: tierDef.max, rest: tierDef.rest, current: current, target: target,
+    perMuscle: perMuscle, alreadyCovered: allCovered };
 }
 /* Texte affiché quand on propose où placer une machine qu'on vient d'ajouter
    (voir proposePlacement) — une ligne simple pour un muscle unique, le détail
    de chaque muscle quand la machine en sollicite plusieurs (voir allMuscles). */
 function describePlacement(placement) {
   var pm = placement.perMuscle || [];
+  /* Phrase ajoutée le 12 sept. 2026 (voir proposePlacement) : quand tous les
+     muscles de la machine sont déjà au-dessus de leur cible, le dire tout de
+     suite et nommer le vrai remède — remplacer une machine plutôt qu'en
+     ajouter une. Sinon l'appli place la machine sans broncher et le
+     dépassement n'apparaît que plus tard, dans un tableau d'un autre onglet. */
+  var warn = "";
+  if (placement.alreadyCovered) {
+    var worst = pm.slice().sort(function(a,b){ return (b.current-b.target)-(a.current-a.target); })[0];
+    warn = " ATTENTION : "+(pm.length>1?"tous ses muscles sont":"ce muscle est")+" déjà au-dessus de la cible de ton objectif"
+      + (worst ? " ("+worst.muscle+" "+worst.current+" pour "+worst.target+" visées)" : "")
+      + ", donc elle n'a été mise que sur UN jour, et elle va quand même augmenter ce dépassement : chaque machine impose un plancher de séries que l'appli ne peut plus redescendre. Si tu la préfères à une machine déjà en place, retire l'autre de ce jour (onglet Machines > « Composer les séances ») plutôt que de garder les deux.";
+  }
   if (pm.length <= 1) {
     var only = pm[0] || { muscle:"Ce muscle", current: placement.current, target: placement.target };
-    return only.muscle+" est actuellement à "+only.current+" séries/semaine"+(only.current<only.target?" — en dessous de la cible "+only.target+" séries/semaine visée par ton objectif actuel.":".");
+    return only.muscle+" est actuellement à "+only.current+" séries/semaine"+(only.current<only.target?" — en dessous de la cible "+only.target+" séries/semaine visée par ton objectif actuel.":".")+warn;
   }
   return "Cette machine sollicite "+pm.map(function(p){return p.muscle;}).join(" + ")+", actuellement à "+
-    pm.map(function(p){return p.muscle+" "+p.current+"×/sem"+(p.current<p.target?" (sous la cible "+p.target+")":"");}).join(", ")+".";
+    pm.map(function(p){return p.muscle+" "+p.current+"×/sem"+(p.current<p.target?" (sous la cible "+p.target+")":"");}).join(", ")+"."+warn;
 }
 /* ============================================================
    TYPES DE SPLIT — ajouté le 6 sept. 2026 (demande : "il faudrait pouvoir
@@ -3394,7 +3421,7 @@ var PROGRAM_VERSION = 3;
    recommitée à la main — contrairement au lien Artifact qui se met à jour
    tout seul". Change cette date à chaque publication notable pour que la
    comparaison soit possible côté utilisateur. */
-var APP_BUILD = "2026-09-12g";
+var APP_BUILD = "2026-09-12i";
 
 function seedState() {
   return {
@@ -3963,6 +3990,25 @@ function sessionVolumeOvershoot(program, exercises, goal) {
     });
   });
   return out.sort(function(a,b){ return b.sets-a.sets; });
+}
+/* Ce qui a changé entre deux compositions de programme — sert à ne JAMAIS
+   modifier les séances en silence (voir la recomposition automatique dans
+   finishSession). On compare jour par jour : une machine retirée d'un jour et
+   remise dans un autre apparaît comme un déplacement, pas comme deux gestes. */
+function describeProgramDiff(before, after, exercises) {
+  var name = {}; (exercises||[]).forEach(function(e){ name[e.id] = e.name; });
+  function map(pr){ var m={}; (pr||[]).forEach(function(d){ d.items.forEach(function(it){ (m[it.ex]=m[it.ex]||[]).push(d.label); }); }); return m; }
+  var b = map(before), a = map(after), out = [];
+  Object.keys(a).forEach(function(id){
+    var was = (b[id]||[]).slice().sort().join(", "), is = a[id].slice().sort().join(", ");
+    if (was === is) return;
+    if (!was) out.push({ ex: name[id]||id, kind:"add", days: a[id].join(" et ") });
+    else out.push({ ex: name[id]||id, kind:"move", days: a[id].join(" et "), from: (b[id]||[]).join(" et ") });
+  });
+  Object.keys(b).forEach(function(id){
+    if (!a[id]) out.push({ ex: name[id]||id, kind:"remove", days: b[id].join(" et ") });
+  });
+  return { changed: out.length > 0, moves: out };
 }
 function unmappedExercises(exercises) {
   return (exercises||[]).filter(function(e){
@@ -4979,19 +5025,126 @@ function SyncDot(props){
     h("span",{style:{fontFamily:sansCond,fontSize:10.5,color:C.taupe}}, status==="cloud"?"synchronisé":status==="saving"?"…":"local"));
 }
 
+/* ============================================================
+   SONNERIE EN MODE SILENCIEUX (12 sept. 2026, demande : "je veux que ça
+   sonne même en silencieux")
+   ============================================================
+   Le problème est propre à iOS. Sur Android, le petit interrupteur/mode
+   silencieux coupe la sonnerie et les notifications, PAS le canal média :
+   le bip d'une page web passe déjà. Sur iPhone, tout l'audio d'une page web
+   part par défaut sur un canal que l'interrupteur latéral coupe — c'est un
+   choix de WebKit, pas un bug de l'appli (bug WebKit 237322, "webaudio api
+   is muted when the iOS ringer is muted").
+
+   Deux leviers, appliqués tous les deux parce qu'aucun ne couvre tous les
+   iPhone :
+
+   1. navigator.audioSession.type = "playback" — l'API standardisée
+      (spécification W3C "Audio Session", implémentée par WebKit à partir
+      d'iOS 17). Elle déclare explicitement que cette page fait de la LECTURE
+      MÉDIA, catégorie qui sur iOS ignore l'interrupteur silencieux, au lieu
+      de laisser Safari deviner. Absente avant iOS 17, d'où la détection.
+
+   2. Une piste audio SILENCIEUSE jouée en boucle pendant le chrono. C'est la
+      méthode utilisée depuis des années par la bibliothèque unmute.js : faire
+      jouer un vrai élément <audio> bascule la session audio de la page sur le
+      canal média, et le bip Web Audio qui suit passe par ce canal. Elle ne
+      tourne QUE pendant un chrono de repos en cours — la laisser tourner en
+      permanence afficherait les commandes de lecture sur l'écran verrouillé
+      et consommerait de la batterie pour rien.
+
+   HONNÊTETÉ SUR LES LIMITES — rien de tout ça n'est garanti, et je n'ai pas
+   d'iPhone pour le vérifier ; seul ton téléphone peut trancher :
+   - si le VOLUME est à zéro, aucune technique web n'y changera quoi que ce
+     soit ;
+   - si tu verrouilles l'écran ou passes sur une autre appli, iOS gèle le
+     code de la page : le chrono ne sonnera pas du tout, silencieux ou non.
+     Seule une vraie application installée depuis l'App Store peut réveiller
+     le téléphone à l'heure dite ;
+   - le mode Concentration/Ne pas déranger peut encore filtrer le son ;
+   - la vibration (navigator.vibrate) est une alternative sur Android, mais
+     Safari iOS ne l'implémente pas du tout. */
+/* 50 ms de silence, WAV 44,1 kHz 16 bits — joué en boucle. Un vrai fichier
+   plutôt qu'un oscillateur à volume nul : c'est l'élément <audio> lui-même,
+   pas le son qu'il contient, qui fait basculer la session audio. */
+var SILENT_WAV = "data:audio/wav;base64,UklGRl4RAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YToRAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+var silentEl = null, audioUnlocked = false;
+function declarePlaybackSession() {
+  try {
+    if (navigator.audioSession && navigator.audioSession.type !== "playback") {
+      navigator.audioSession.type = "playback";
+    }
+  } catch (e) {}
+}
+function ensureSilentTrack() {
+  if (silentEl) return silentEl;
+  try {
+    silentEl = document.createElement("audio");
+    silentEl.src = SILENT_WAV;
+    silentEl.loop = true;
+    silentEl.preload = "auto";
+    silentEl.setAttribute("playsinline", "");
+    silentEl.setAttribute("x-webkit-airplay", "deny");
+    silentEl.volume = 1;      /* surtout PAS muted : un élément muet ne bascule rien */
+    silentEl.style.display = "none";
+    document.body.appendChild(silentEl);
+  } catch (e) { silentEl = null; }
+  return silentEl;
+}
+/* Appelé au PREMIER geste de l'utilisateur : iOS n'autorise la création et la
+   reprise d'un contexte audio que dans un geste. Sans ça, le contexte créé
+   plus tard (à l'expiration du chrono) reste "suspended" et le bip ne sort
+   jamais — un deuxième défaut du code précédent, indépendant du silencieux :
+   il créait un AudioContext NEUF à chaque bip. */
+function unlockAudio() {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+  declarePlaybackSession();
+  try {
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    if (Ctx && !alertCtx) alertCtx = new Ctx();
+    if (alertCtx && alertCtx.state === "suspended") alertCtx.resume().catch(function(){});
+  } catch (e) {}
+  var el = ensureSilentTrack();
+  /* On le démarre puis on l'arrête tout de suite : le but ici est seulement
+     de "déverrouiller" la lecture pendant qu'on est dans un geste, pour
+     pouvoir la relancer plus tard sans geste (voir silentTrackOn). */
+  if (el) { try { var p = el.play(); if (p && p.then) p.then(function(){ el.pause(); }).catch(function(){}); } catch (e) {} }
+}
+function silentTrackOn() {
+  declarePlaybackSession();
+  var el = ensureSilentTrack();
+  if (el) { try { var p = el.play(); if (p && p.catch) p.catch(function(){}); } catch (e) {} }
+}
+function silentTrackOff() {
+  if (silentEl) { try { silentEl.pause(); } catch (e) {} }
+}
+try {
+  ["pointerdown","touchend","click","keydown"].forEach(function(ev){
+    document.addEventListener(ev, unlockAudio, { once: false, passive: true });
+  });
+} catch (e) {}
+
 /* Microwave-style alert: 4 short, sharp square-wave beeps (a harsher, more
    "kitchen timer" tone than a single sine chime) + a matching vibration
    pattern. `volume` is 0–1 (from profile.alertVolume, see Options tab); at
    0 there's no point creating an AudioContext, just vibrate. Called once
    per repeat cycle by RestTimerBar — see the comment there for why it
    repeats instead of firing only once. */
+var alertCtx = null;
 function restAlert(volume) {
   var vol = volume == null ? 1 : Math.max(0, Math.min(1, volume));
   if (vol > 0) {
     try {
       var Ctx = window.AudioContext || window.webkitAudioContext;
       if (Ctx) {
-        var ctx = new Ctx();
+        /* UN SEUL contexte, réutilisé et réveillé si besoin (voir unlockAudio) —
+           au lieu d'en créer un neuf à chaque bip, ce qui sur iOS donnait un
+           contexte "suspended" qui ne jouait rien. */
+        if (!alertCtx) alertCtx = new Ctx();
+        var ctx = alertCtx;
+        if (ctx.state === "suspended") { try { ctx.resume(); } catch (e2) {} }
+        declarePlaybackSession();
         var beeps = 4, beepDur = 0.11, gap = 0.09;
         for (var i = 0; i < beeps; i++) {
           var delay = i * (beepDur + gap);
@@ -5003,7 +5156,11 @@ function restAlert(volume) {
           o.connect(g); g.connect(ctx.destination);
           o.start(ctx.currentTime + delay); o.stop(ctx.currentTime + delay + beepDur + 0.02);
         }
-        setTimeout(function(){ ctx.close(); }, (beeps * (beepDur + gap) + 0.3) * 1000);
+        /* PAS de ctx.close() ici : le contexte est maintenant partagé et
+           réutilisé d'un bip à l'autre (voir unlockAudio). Le fermer après le
+           premier bip rendait tous les suivants muets — c'était sans
+           conséquence tant qu'on en créait un neuf à chaque fois, ça n'en a
+           plus. Les oscillateurs, eux, se libèrent seuls après stop(). */
       }
     } catch (e) {}
   }
@@ -5107,7 +5264,8 @@ function SeanceTab(props) {
       deloadForNextStart=props.deloadForNextStart, setDeloadForNextStart=props.setDeloadForNextStart,
       snoozeDeload=props.snoozeDeload, deloadSuggested=props.deloadSuggested, deloadReason=props.deloadReason,
       updateExerciseOrder=props.updateExerciseOrder, updateExerciseInc=props.updateExerciseInc, persistConfig=props.persistConfig,
-      goal=props.goal, profile=props.profile, setProfile=props.setProfile;
+      goal=props.goal, profile=props.profile, setProfile=props.setProfile,
+      autoFix=props.autoFix, clearAutoFix=props.clearAutoFix;
   var _p = useState(false), pickerOpen=_p[0], setPickerOpen=_p[1];
   /* Jours dépliés dans la vue "tout le programme" — un objet {cleJour:true}
      plutôt qu'une seule clé : ouvrir l'encadré déroule TOUS les jours d'un
@@ -5239,6 +5397,28 @@ function SeanceTab(props) {
     setSwapPending(null);
   }
   function cancelSwap(){ setSwapPending(null); }
+  /* Compte rendu de la recomposition AUTOMATIQUE faite en fin de séance (voir
+     finishSession et describeProgramDiff). L'appli a le droit de réorganiser
+     les séances toute seule — c'est ce qui est demandé — mais pas de le faire
+     sans le dire : on verrait des machines apparaître et disparaître sans
+     comprendre pourquoi, et c'est exactement le genre de chose qui fait perdre
+     confiance dans un programme. */
+  function autoFixCard(){
+    if (!autoFix || !autoFix.moves || !autoFix.moves.length) return null;
+    return h("div",{style:{marginBottom:16,borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.steel}},
+      h("div",{style:{fontFamily:sansCond,fontSize:15,fontWeight:600,marginBottom:6,color:C.steel}}, "Programme réajusté tout seul"),
+      h("div",{style:{fontSize:13,color:C.taupe,lineHeight:1.5,marginBottom:8}},
+        "Un ou plusieurs muscles étaient nettement au-dessus de leur cible à cause du nombre de machines qui les sollicitent. L'appli a réorganisé la composition des séances pour revenir dans la fourchette — tes séries enregistrées ne sont pas touchées."),
+      h("div",{style:{display:"flex",flexDirection:"column",gap:4,marginBottom:10}},
+        autoFix.moves.slice(0,6).map(function(m,i){
+          return h("div",{key:i, style:{fontSize:12.5,color:C.bone,lineHeight:1.45}},
+            m.kind==="add" ? ("+ "+m.ex+" ajoutée à "+m.days)
+            : m.kind==="remove" ? ("− "+m.ex+" retirée de "+m.days)
+            : ("↔ "+m.ex+" : "+(m.from||"—")+" → "+m.days));
+        })),
+      h("button",{onClick:function(){ clearAutoFix && clearAutoFix(); },
+        style:{width:"100%",padding:"8px 0",borderRadius:6,background:C.steel,color:C.ink,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Compris"));
+  }
   function swapCard(){
     if (!swapPending) return null;
     return h("div",{style:{marginBottom:16,borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+(swapPending.candidate?C.green:C.rust)}},
@@ -5417,6 +5597,7 @@ function SeanceTab(props) {
     var previewItems = sortByExerciseOrder(adaptDayItems(day.items, exercises, exMap, currentGymId), function(it){return it.ex;}, exMap);
     return h("div", null,
       swapCard(),
+      autoFixCard(),
       (profile && profile.gyms && profile.gyms.length>1) ? h("div",{style:{marginBottom:16}},
         h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,marginBottom:6}}, "Salle actuelle"),
         h("div",{style:{display:"flex",flexWrap:"wrap",gap:6}},
@@ -6576,7 +6757,15 @@ function OptionsTab(props){
         onChange:function(v){set({alertVolume:v});}}),
       h("button",{onClick:function(){restAlert(profile.alertVolume!=null?profile.alertVolume:1);},
         style:{padding:"9px 16px",borderRadius:6,background:C.shroud,color:C.bone,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:13.5,fontWeight:600}},
-        "Tester le son")
+        "Tester le son"),
+      /* Ajouté le 12 sept. 2026 ("je veux que ça sonne même en silencieux") :
+         dire ce que l'appli fait pour ça et, surtout, ce qu'elle ne PEUT pas
+         faire — plutôt que de laisser croire à une promesse qu'une page web
+         n'est pas en mesure de tenir. Voir la longue note au-dessus de
+         restAlert pour le détail technique. */
+      h(InfoTip,{label:"Et si mon téléphone est en silencieux ?"},
+        "L'appli fait deux choses pour passer quand même. Elle déclare sa sortie audio comme de la LECTURE MÉDIA (navigator.audioSession, iOS 17 et plus) : sur iPhone, c'est la catégorie qui ignore l'interrupteur silencieux, alors que le son d'une page web part sinon sur un canal que cet interrupteur coupe. Et pendant toute la durée d'un repos, elle joue une piste silencieuse en boucle, ce qui bascule la page sur le canal média — la méthode utilisée depuis des années pour contourner ce comportement sur iPhone. Sur Android, le mode silencieux ne coupe en principe que la sonnerie et les notifications, pas le canal média : le bip devrait déjà passer, à condition que le volume MÉDIA (pas celui de la sonnerie) ne soit pas à zéro — appuie sur le volume pendant que le bip sonne pour régler le bon. "
+        +"Ce que l'appli ne peut pas faire, quel que soit le réglage : sonner si le volume média est à zéro ; sonner alors que tu as verrouillé l'écran ou changé d'application, parce que le téléphone gèle alors le code de la page — seule une vraie application installée depuis un store peut réveiller le téléphone à l'heure dite ; et passer outre un mode Concentration qui filtre tout. La vibration accompagne le bip là où le navigateur la propose (Android) ; Safari sur iPhone ne l'implémente pas du tout.")
     ),
 
     h("div",{style:{textAlign:"center",marginTop:4,marginBottom:20,fontSize:11,color:C.taupeDim}},
@@ -6862,7 +7051,8 @@ function AddToDay(props){
     h("button",{onClick:add, style:{padding:"0 16px",borderRadius:6,background:C.pin,color:C.ink,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Ajouter"));
 }
 function MachinesTab(props){
-  var exercises=props.exercises, program=props.program, persistConfig=props.persistConfig, sessions=props.sessions, updateExerciseInc=props.updateExerciseInc, goal=props.goal, profile=props.profile;
+  var exercises=props.exercises, program=props.program, persistConfig=props.persistConfig, sessions=props.sessions, updateExerciseInc=props.updateExerciseInc, goal=props.goal, profile=props.profile,
+      active=props.active, addToActiveSession=props.addToActiveSession;
   var avgSessions = avgSessionsPerWeek(profile);
   var exMapForDuration = {}; exercises.forEach(function(e){ exMapForDuration[e.id]=e; });
   var _m=useState(null), mode=_m[0], setMode=_m[1];
@@ -6894,14 +7084,43 @@ function MachinesTab(props){
      savait exactement où la mettre. La carte reste affichée, mais comme un
      COMPTE RENDU de ce qui vient d'être fait, avec un bouton pour revenir en
      arrière si on préfère la garder en réserve. */
+  /* COMPORTEMENT PAR DÉFAUT INVERSÉ le 12 sept. 2026, sur la raison réelle de
+     l'ajout : "je ne veux pas que quand j'ajoute une machine manuellement ça
+     reste sur les autres séances, parce qu'en général je le fais parce qu'il
+     n'y a pas de place sur les autres machines".
+
+     C'est l'information qui manquait. Depuis le 7 sept., toute machine ajoutée
+     entrait DIRECTEMENT dans le programme, sur un à deux jours, définitivement
+     — alors que le geste veut presque toujours dire "le poste que je voulais
+     est pris, je prends celle-ci à la place, AUJOURD'HUI". D'où des machines
+     qui s'accumulaient d'une visite à l'autre : c'est exactement comme ça que
+     deux machines à triceps se sont retrouvées dans Haut A, chacune imposant
+     son plancher de 3 séries, pour un muscle déjà largement au-dessus de sa
+     cible (voir proposePlacement).
+
+     Maintenant : la machine entre dans le MATÉRIEL, et dans la séance DU JOUR
+     si une séance est en cours — rien de permanent. Les séries du programme
+     sont quand même redistribuées (le catalogue a changé, c'est la demande du
+     7 sept.), mais sa COMPOSITION ne bouge pas. L'ajouter au programme pour de
+     bon reste possible en un bouton sur la carte de compte rendu. */
   function handleAdd(raw){
     var newEx = Object.assign({}, raw, { id: "u"+Date.now() });
     var withNew = exercises.concat([newEx]);
-    var placement = proposePlacement(newEx, exercises, program, goal, avgSessions);
-    var placed = applyPlacement(newEx, placement, withNew, program);
-    persistConfig(withNew, placed, {reflow:true});
+    persistConfig(withNew, program);
     setMode(null);
-    setProposal({ newEx: newEx, placement: placement, before: program });
+    var addedToToday = false;
+    if (active && addToActiveSession) { addToActiveSession(newEx.id, withNew); addedToToday = true; }
+    setProposal({ newEx: newEx, inProgram: false, addedToToday: addedToToday });
+  }
+  /* L'ajouter au programme pour de bon — action explicite, plus jamais
+     automatique (voir handleAdd). C'est ici, et seulement ici, qu'on replace
+     la machine dans des jours et qu'on relance la recomposition. */
+  function addToProgram(){
+    if (!proposal) return;
+    var placement = proposePlacement(proposal.newEx, exercises.filter(function(e){ return e.id !== proposal.newEx.id; }), program, goal, avgSessions);
+    var placed = applyPlacement(proposal.newEx, placement, exercises, program);
+    persistConfig(exercises, placed, {reflow:true});
+    setProposal(Object.assign({}, proposal, { inProgram: true, placement: placement }));
   }
   /* Retour en arrière : la machine RESTE dans le matériel (on ne l'a pas
      ajoutée par erreur), elle sort seulement des séances. */
@@ -6911,8 +7130,8 @@ function MachinesTab(props){
     var back = program.map(function(d){
       return Object.assign({}, d, { items: d.items.filter(function(it){ return it.ex !== id; }) });
     });
-    persistConfig(exercises, back);
-    setProposal(null);
+    persistConfig(exercises, back, {reflow:true});
+    setProposal(Object.assign({}, proposal, { inProgram: false, placement: null }));
   }
   /* Corrige/ajuste le palier poly/semi/isolation d'une machine déjà dans le
      matériel — utile pour les machines ajoutées avant que ce champ soit
@@ -7054,13 +7273,20 @@ function MachinesTab(props){
       h("button",{onClick:function(){setNotice(null);}, style:{marginTop:8,padding:"6px 12px",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:13}}, "Compris")) : null,
 
     proposal ? h("div",{style:{marginBottom:16,borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.green}},
-      h("div",{style:{fontFamily:sansCond,fontSize:15,fontWeight:600,marginBottom:6,color:C.green}}, proposal.newEx.name+" est dans ton programme"),
+      h("div",{style:{fontFamily:sansCond,fontSize:15,fontWeight:600,marginBottom:6,color:C.green}},
+        proposal.newEx.name + (proposal.inProgram ? " est dans ton programme" : " est dans ton matériel")),
       h("div",{style:{fontSize:13,color:C.taupe,lineHeight:1.5,marginBottom:10}},
-        describePlacement(proposal.placement)+" Ajoutée à "+proposal.placement.targetLabels.join(" et ")+"."
-        +" Toutes les séries de ton programme ont été redistribuées pour en tenir compte."),
+        proposal.inProgram
+          ? (describePlacement(proposal.placement)+" Ajoutée à "+proposal.placement.targetLabels.join(" et ")+". Toutes les séries de ton programme ont été redistribuées pour en tenir compte.")
+          : ((proposal.addedToToday
+              ? "Elle est dans ta séance d'aujourd'hui, et les séries de la séance ont été réparties pour en tenir compte. "
+              : "")
+             + "Elle ne change RIEN à tes autres séances : le programme reste tel quel. C'est ce qu'on veut quand on prend une machine parce que le poste habituel est occupé. Si tu comptes l'utiliser à chaque fois, mets-la au programme ci-dessous — elle prendra alors la place qui lui revient dans la rotation.")),
       h("div",{style:{display:"flex",gap:8}},
-        h("button",{onClick:function(){setProposal(null);}, style:{flex:1,padding:"8px 0",borderRadius:6,background:C.green,color:C.ink,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Parfait"),
-        h("button",{onClick:undoPlacement, style:{flex:1,padding:"8px 0",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:14}}, "Garder en réserve"))) : null,
+        proposal.inProgram
+          ? h("button",{onClick:undoPlacement, style:{flex:1,padding:"8px 0",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:14}}, "Finalement non, la retirer du programme")
+          : h("button",{onClick:addToProgram, style:{flex:1,padding:"8px 0",borderRadius:6,color:C.bone,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:14}}, "L'ajouter aussi au programme"),
+        h("button",{onClick:function(){setProposal(null);}, style:{flex:1,padding:"8px 0",borderRadius:6,background:C.green,color:C.ink,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Compris"))) : null,
 
     h(Section, {title:"Ajouter du matériel"},
       h("button",{onClick:function(){setMode(mode==="manual"?null:"manual");},
@@ -7686,11 +7912,15 @@ function App(props){
     restIdRef.current += 1;
     setRestTimer({ id: restIdRef.current, endTime: Date.now() + seconds*1000, duration: seconds, label: label });
     acquireWakeLock();
+    /* La piste silencieuse ne tourne QUE pendant un repos (voir la note sur la
+       sonnerie en mode silencieux). Démarrée ici, c'est-à-dire juste après un
+       appui — le seul moment où iOS accepte de lancer une lecture audio. */
+    silentTrackOn();
   }
   function adjustRestTimer(delta){
     setRestTimer(function(rt){ return rt ? Object.assign({}, rt, {endTime: rt.endTime + delta*1000}) : rt; });
   }
-  function stopRestTimer(){ setRestTimer(null); releaseWakeLock(); }
+  function stopRestTimer(){ setRestTimer(null); releaseWakeLock(); silentTrackOff(); }
 
   /* Réoptimisation automatique — demande du 6 sept. 2026 : "quand j'ajoute ou
      supprime ou change une machine, est-ce que mon programme se modifie dans
@@ -7740,7 +7970,7 @@ function App(props){
     setState({exercises:exercises, program:next});
   }
   function persistSessions(sessions){ setState({sessions:sessions}); }
-  function setActive(active){ if (!active) { setRestTimer(null); releaseWakeLock(); } setState({active:active}); }
+  function setActive(active){ if (!active) { setRestTimer(null); releaseWakeLock(); silentTrackOff(); } setState({active:active}); }
   function setDeloadForNextStart(v){ setState({deloadForNextStart:v}); }
   function snoozeDeload(){ setState(function(prev){ return Object.assign({},prev,{meta:{deloadSnoozeUntil: prev.sessions.filter(function(s){return s.done;}).length + 4}}); }); }
   function finishSession(){
@@ -7749,14 +7979,49 @@ function App(props){
     if (cleaned.entries.length===0) { setActive(null); return; }
     setRestTimer(null);
     releaseWakeLock();
+    silentTrackOff();
     var newSessions = state.sessions.concat([cleaned]);
     /* Recalibrage automatique et silencieux des séries prescrites (pas de la
        liste des machines — voir recalibrateProgramFromHistory) après CHAQUE
        séance terminée, libre ou programmée : les deux alimentent l'historique
        de volume réel par muscle utilisé pour ce recalibrage. */
     var recalibrated = recalibrateProgramFromHistory(state.program, state.exercises, state.profile.goal, avgSessionsPerWeek(state.profile), state.profile.muscleFocus || {}, newSessions, state.profile);
-    if (recalibrated !== state.program) {
-      setState({ sessions: newSessions, active: null, program: recalibrated });
+    /* RECOMPOSITION AUTOMATIQUE (12 sept. 2026, demande : "je veux que l'app
+       fasse elle-même le programme et ajuste elle-même").
+
+       Jusqu'ici, seul le NOMBRE de séries se réajustait tout seul ; changer la
+       COMPOSITION des séances (quelle machine dans quel jour) demandait
+       d'aller cliquer "Recalculer toutes mes séances maintenant" dans Options.
+       Personne ne pense à ce bouton — et c'est précisément ce qui laissait un
+       programme dériver jusqu'à 22 séries de triceps pour une cible de 12.
+
+       Déclenchée seulement quand il y a réellement quelque chose à corriger
+       (un muscle dont le PLANCHER dépasse déjà sa cible, ou une séance
+       au-dessus du repère de volume par muscle), et seulement à la fin d'une
+       séance : c'est le moment où le programme n'est pas sous les yeux, donc
+       le seul où le voir changer ne donne pas l'impression que l'appli défait
+       ce qu'on est en train de faire. Le résultat n'est jamais silencieux :
+       autoFix garde la liste de ce qui a bougé, affichée au retour sur
+       l'onglet Séance. */
+    var finalProgram = recalibrated;
+    var autoFix = null;
+    try {
+      var goalNow = state.profile.goal, avgNow = avgSessionsPerWeek(state.profile), mfNow = state.profile.muscleFocus || {};
+      var besoin = structuralOvershoot(finalProgram, state.exercises, goalNow, avgNow, mfNow).length > 0
+        || sessionVolumeOvershoot(finalProgram, state.exercises, goalNow).length > 0;
+      if (besoin) {
+        var reflowed = reflowProgramForCatalogue(finalProgram, state.exercises, goalNow, avgNow, mfNow, state.profile.currentGymId, state.profile);
+        var diff = describeProgramDiff(finalProgram, reflowed, state.exercises);
+        if (diff.changed) {
+          finalProgram = applyGoalToProgram(reflowed, state.exercises, goalNow, avgNow, mfNow, state.profile);
+          autoFix = diff;
+        }
+      }
+    } catch (e) {}
+    if (autoFix) {
+      setState({ sessions: newSessions, active: null, program: finalProgram, autoFix: autoFix });
+    } else if (finalProgram !== state.program) {
+      setState({ sessions: newSessions, active: null, program: finalProgram });
     } else {
       setState({ sessions: newSessions, active: null });
     }
@@ -7775,6 +8040,27 @@ function App(props){
      seul via le useEffect(...[state.exercises]) plus haut. */
   function updateExerciseInc(exId, inc){
     setState({ exercises: state.exercises.map(function(e){ return e.id===exId ? Object.assign({},e,{inc:inc}) : e; }) });
+  }
+  /* Ajouter une machine à la séance EN COURS depuis l'onglet Machines (12
+     sept. 2026) — même logique que le sélecteur "Ajouter une machine à cette
+     séance" de l'onglet Séance : pour aujourd'hui seulement, séries réparties
+     sur le volume déjà prévu du jour, machines déjà entamées intouchables.
+     Dupliqué ici parce que la version de SeanceTab lit son état local ; les
+     deux appellent les mêmes fonctions de calcul (rebalanceSessionSets,
+     resizeEntrySets), donc elles ne peuvent pas diverger sur le fond. */
+  function addExerciseToActiveSession(exId, exercisesList){
+    var act = state.active;
+    if (!exId || !act) return;
+    if (act.entries.some(function(e){ return e.ex===exId; })) return;
+    var list = exercisesList || state.exercises;
+    var ex = list.filter(function(e){ return e.id===exId; })[0];
+    var tierDef = tierDefaultsForGoal(state.profile.goal, ex ? exerciseOrderTier(ex) : 2);
+    var sets = Array.from({length:tierDef.sets}, function(){ return {weight:null, reps:null, rir:null, weakSide:null}; });
+    var newEntry = { ex: exId, sets: sets, adhoc: { min: tierDef.min, max: tierDef.max, rest: tierDef.rest, sets: tierDef.sets } };
+    var before = sessionVolumeByMuscle(act.entries, list);
+    var entries = act.entries.concat([newEntry]);
+    var counts = rebalanceSessionSets(entries, list, before);
+    setState({ active: Object.assign({}, act, { entries: entries.map(function(e,i){ return resizeEntrySets(e, counts[i]); }) }) });
   }
   function addBodyEntry(entry){
     setState({ bodyLog: (state.bodyLog||[]).concat([Object.assign({id:"b"+Date.now(), date: todayISO(), source:"manuel"}, entry)]) });
@@ -7806,11 +8092,13 @@ function App(props){
         active:state.active, setActive:setActive, finishSession:finishSession, startRestTimer:startRestTimer,
         deloadForNextStart:state.deloadForNextStart, setDeloadForNextStart:setDeloadForNextStart,
         snoozeDeload:snoozeDeload, deloadSuggested: !state.active && deloadSuggested, deloadReason:deloadReason,
+        autoFix: state.autoFix, clearAutoFix: function(){ setState({autoFix:null}); },
         updateExerciseOrder:updateExerciseOrder, updateExerciseInc:updateExerciseInc, persistConfig:persistConfig, goal:state.profile.goal,
         profile:state.profile, setProfile:setProfile }) : null,
       tab==="programme" ? h(ProgrammeTab,{ program:state.program, exercises:state.exercises, profile:state.profile, setProfile:setProfile, persistConfig:persistConfig, goal:state.profile.goal }) : null,
       tab==="historique" ? h(HistoriqueTab,{ sessions:state.sessions, exMap:exMap, program:state.program, deleteSession:deleteSession }) : null,
-      tab==="machines" ? h(MachinesTab,{ exercises:state.exercises, program:state.program, persistConfig:persistConfig, sessions:state.sessions, updateExerciseInc:updateExerciseInc, goal:state.profile.goal, profile:state.profile }) : null,
+      tab==="machines" ? h(MachinesTab,{ exercises:state.exercises, program:state.program, persistConfig:persistConfig, sessions:state.sessions, updateExerciseInc:updateExerciseInc, goal:state.profile.goal, profile:state.profile,
+        active:state.active, addToActiveSession:addExerciseToActiveSession }) : null,
       tab==="analyse" ? h(AnalyseTab,{ sessions:state.sessions, exercises:state.exercises, exMap:exMap, program:state.program, persistConfig:persistConfig, bodyLog:state.bodyLog, addBodyEntry:addBodyEntry, goal:state.profile.goal, profile:state.profile }) : null,
       tab==="options" ? h(OptionsTab,{ profile:state.profile, setProfile:setProfile, program:state.program, exercises:state.exercises, bodyLog:state.bodyLog, persistConfig:persistConfig }) : null),
     h("div",{style:{position:"fixed",bottom:0,left:0,right:0,zIndex:20}},
