@@ -3152,6 +3152,30 @@ function reflowProgramForCatalogue(program, exercises, goal, avgSessions, muscle
         if (v.sets > plafond + 0.05 && !(dejaAuPlafond[v.muscle] >= v.sets - 0.05)) depasse = true;
       });
       if (depasse) return;
+      /* SYMÉTRIQUE du refus ci-dessus, ajouté le 13 sept. 2026 sur signalement
+         ("ça réajuste pas correctement, Dos est toujours à 10").
+
+         Ce qui se passait : pour faire redescendre le biceps (16,5 pour une
+         cible de 12, donc DANS la fourchette 12-20 acceptée), la recomposition
+         retirait le Tirage vertical — qui fait aussi travailler le dos. Le dos
+         tombait à 10, c'est-à-dire SOUS la cible. Puis l'écran Machines
+         proposait aussitôt de remettre cette même machine pour combler le dos :
+         l'appli défaisait d'un côté ce qu'elle réclamait de l'autre.
+
+         La règle posée est "entre 12 et 20, au plus près de 12, jamais en
+         dessous de 12". Le plancher n'était qu'un poids fort dans le score
+         (×10), donc franchissable si le gain ailleurs était suffisant. Il
+         devient un REFUS SEC : aucun mouvement ne peut faire passer un muscle
+         sous sa cible s'il ne l'était pas déjà. Un muscle déjà en dessous peut
+         encore bouger (sinon plus rien ne serait réparable). */
+      var chute = false;
+      plannedVolume(applied, exercises, avgSessions).forEach(function(v){
+        var f2 = focusMultiplier(muscleFocus || {}, v.muscle);
+        var cible = baseT * f2;
+        var avant = dejaAuPlafond[v.muscle];
+        if (v.sets < cible - 0.05 && !(avant != null && avant < cible - 0.05)) chute = true;
+      });
+      if (chute) return;
       if (sc < bestMoveScore - 1e-9) { bestMove = cand; bestMoveScore = sc; }
     }
 
@@ -3442,7 +3466,7 @@ var PROGRAM_VERSION = 3;
    recommitée à la main — contrairement au lien Artifact qui se met à jour
    tout seul". Change cette date à chaque publication notable pour que la
    comparaison soit possible côté utilisateur. */
-var APP_BUILD = "2026-09-13b";
+var APP_BUILD = "2026-09-13c";
 
 function seedState() {
   return {
@@ -4016,6 +4040,32 @@ function sessionVolumeOvershoot(program, exercises, goal) {
    modifier les séances en silence (voir la recomposition automatique dans
    finishSession). On compare jour par jour : une machine retirée d'un jour et
    remise dans un autre apparaît comme un déplacement, pas comme deux gestes. */
+/* Le programme mérite-t-il d'être recomposé ? — élargi le 13 sept. 2026.
+
+   Signalement : "ça réajuste pas correctement, Dos est toujours à 10", puis
+   "18 séries de dos, y a dans le programme, ça calcule mal". Le calcul était
+   juste (5+4 séries sur Haut A et autant sur Haut B = 18/semaine), mais la
+   recomposition automatique ne se déclenchait PAS : elle ne regardait que deux
+   symptômes extrêmes — un PLANCHER de séries déjà au-dessus de la cible
+   (structuralOvershoot) et un dépassement du volume par séance. Un muscle
+   simplement alloué à 18 pour une cible de 12, ou tombé à 10, ne cochait
+   aucune de ces deux cases : l'appli constatait l'écart dans son tableau, le
+   coloriait, et ne faisait rien.
+
+   Le critère est désormais celui que l'utilisateur a énoncé lui-même le 7
+   sept. : "entre 12 et 20, au plus près de 12, jamais en dessous de 12". Tout
+   muscle SOUS sa cible, ou à plus de 15% au-dessus, déclenche une tentative.
+   Le coût reste nul quand il n'y a rien à faire : la recomposition n'est
+   lancée qu'ensuite, et si elle ne change rien, la signature du programme
+   empêche de recommencer (voir l'effet dans App). */
+function programHorsFourchette(program, exercises, goal, avgSessions, muscleFocus) {
+  var base = goalPreset(goal).targetSets || VOL_MIN;
+  return plannedVolume(program, exercises, avgSessions).some(function(v){
+    var cible = base * focusMultiplier(muscleFocus || {}, v.muscle);
+    if (!(cible > 0)) return false;
+    return v.sets < cible - 0.05 || v.sets > cible * 1.15 + 0.05;
+  });
+}
 function describeProgramDiff(before, after, exercises) {
   var name = {}; (exercises||[]).forEach(function(e){ name[e.id] = e.name; });
   function map(pr){ var m={}; (pr||[]).forEach(function(d){ d.items.forEach(function(it){ (m[it.ex]=m[it.ex]||[]).push(d.label); }); }); return m; }
@@ -7965,9 +8015,7 @@ function App(props){
     autoFixSig.current = sig;
     try {
       var g = state.profile.goal, avg = avgSessionsPerWeek(state.profile), mf = state.profile.muscleFocus || {};
-      var besoin = structuralOvershoot(state.program, state.exercises, g, avg, mf).length > 0
-        || sessionVolumeOvershoot(state.program, state.exercises, g).length > 0;
-      if (!besoin) return;
+      if (!programHorsFourchette(state.program, state.exercises, g, avg, mf)) return;
       var reflowed = reflowProgramForCatalogue(state.program, state.exercises, g, avg, mf, state.profile.currentGymId, state.profile);
       var diff = describeProgramDiff(state.program, reflowed, state.exercises);
       if (!diff.changed) return;
@@ -8126,9 +8174,7 @@ function App(props){
     var autoFix = null;
     try {
       var goalNow = state.profile.goal, avgNow = avgSessionsPerWeek(state.profile), mfNow = state.profile.muscleFocus || {};
-      var besoin = structuralOvershoot(finalProgram, state.exercises, goalNow, avgNow, mfNow).length > 0
-        || sessionVolumeOvershoot(finalProgram, state.exercises, goalNow).length > 0;
-      if (besoin) {
+      if (programHorsFourchette(finalProgram, state.exercises, goalNow, avgNow, mfNow)) {
         var reflowed = reflowProgramForCatalogue(finalProgram, state.exercises, goalNow, avgNow, mfNow, state.profile.currentGymId, state.profile);
         var diff = describeProgramDiff(finalProgram, reflowed, state.exercises);
         if (diff.changed) {
