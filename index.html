@@ -687,6 +687,44 @@ function estimateDayMinutes(day, exMap) {
    Ralston et al. 2018) : le volume total ne dit rien de la répartition dans
    la semaine, or ≥2×/semaine/muscle reste la recommandation pratique pour
    l'hypertrophie (voir GOAL_PRESETS.minFreq et la note plus bas). */
+/* Deux entrées d'un MÊME jour qui désignent la même machine (voir
+   sameMachineLikely) ne peuvent pas être faites deux fois : tu es dans UNE
+   salle, tu passes UNE fois sur la machine. L'onglet Séance le sait déjà — il
+   fusionne les deux lignes en une (voir adaptDayItems / mergedNote). Le calcul
+   de volume, lui, comptait les deux.
+
+   BUG RÉEL, trouvé le 13 sept. 2026 sur "non, ça compte bien mal". Avec trois
+   salles et la même machine enregistrée une fois par salle — sa situation
+   exacte — un jour contenant Upper Back (théâtre) 5 séries + Upper Back
+   (Rambouillet) 5 séries + Tirage vertical ×2 affichait :
+     onglet Séance  : Upper Back 5, Tirage vertical 5  = 10 séries
+     onglet Machines: Dos 18 séries/semaine
+   Presque le double. Et ce n'était pas qu'un affichage faux : c'est ce chiffre
+   gonflé qui pilote le score, les diagnostics et la recomposition automatique.
+   L'appli retirait donc des machines pour corriger un dépassement qui n'existe
+   PAS dans la séance réellement faite — puis l'écran Machines proposait de les
+   remettre, faute de volume. Les deux contradictions signalées viennent de là,
+   pas du réglage que je corrigeais depuis deux jours.
+
+   Le volume compte maintenant la séance TELLE QU'ELLE SERA FAITE, avec la même
+   règle de fusion que l'affichage (somme plafonnée à MAX_SETS_PER_EXERCISE),
+   pour que les deux écrans ne puissent plus diverger. */
+function effectiveDayItems(items, exMap) {
+  var out = [], seen = {};
+  (items||[]).forEach(function(it){
+    var ex = exMap[it.ex];
+    var key = ex ? normalizedExName(ex.name) : it.ex;
+    var prev = seen[key];
+    /* On ne fusionne QUE ce que l'affichage fusionne : deux machines portant
+       une vraie marque différente restent deux machines distinctes. */
+    if (prev && ex && exMap[prev.ex] && !sameMachineLikely(ex, exMap[prev.ex])) prev = null;
+    if (prev) { prev.sets = Math.min(MAX_SETS_PER_EXERCISE, (prev.sets||0) + (it.sets||0)); return; }
+    var copy = Object.assign({}, it);
+    seen[key] = copy;
+    out.push(copy);
+  });
+  return out;
+}
 function plannedVolume(program, exercises, avgSessions) {
   var exMap = {}; exercises.forEach(function(e){ exMap[e.id]=e; });
   var freqFactor = (avgSessions||SESSIONS_PER_WEEK) / Math.max(1, program.length);
@@ -694,7 +732,7 @@ function plannedVolume(program, exercises, avgSessions) {
   var m = {}, daysWith = {};
   program.forEach(function(d){
     var musclesToday = {};
-    d.items.forEach(function(it){
+    effectiveDayItems(d.items, exMap).forEach(function(it){
       var ex = exMap[it.ex]; if (!ex) return;
       allMuscles(ex).forEach(function(mu){
         m[mu] = (m[mu]||0) + it.sets * muscleWeight(ex, mu);
@@ -3466,7 +3504,7 @@ var PROGRAM_VERSION = 3;
    recommitée à la main — contrairement au lien Artifact qui se met à jour
    tout seul". Change cette date à chaque publication notable pour que la
    comparaison soit possible côté utilisateur. */
-var APP_BUILD = "2026-09-13c";
+var APP_BUILD = "2026-09-13d";
 
 function seedState() {
   return {
@@ -7740,6 +7778,48 @@ function AnalyseTab(props){
   var weightTrend = (bodyLog||[]).slice().sort(function(a,b){ return (a.date||"")<(b.date||"") ? -1 : 1; })
     .map(function(b,i){ return { x: b.date || ("mesure "+(i+1)), y: b.weightKg }; });
 
+  /* Voir le bouton "Exporter le programme (pour diagnostic)" plus bas. */
+  async function exportProgram(){
+    var dump = {
+      build: APP_BUILD,
+      objectif: goal,
+      seancesParSemaine: { min: profile.sessionsMin, max: profile.sessionsMax, utilise: avgSessions },
+      tempsParSeance: { min: profile.sessionMinutesMin, max: profile.sessionMinutesMax },
+      ordrePriorite: priorityOrderOf(profile),
+      prioriteParMuscle: profile.muscleFocus || {},
+      salles: (profile.gyms||[]).map(function(g){ return { id:g.id, nom:g.name }; }),
+      salleActuelle: profile.currentGymId || null,
+      machines: exercises.map(function(e){
+        return { id:e.id, nom:e.name, marque:e.brand||"", type:e.kind, palier:exerciseOrderTier(e),
+          muscles: allMuscles(e), intensites: e.muscleIntensity||{}, pas: e.inc,
+          salles: e.gymIds||[], suivi: e.trackBy||"reps" };
+      }),
+      programme: program.map(function(d){
+        return { jour:d.label, cle:d.key, machines: d.items.map(function(it){
+          var ex = exMap[it.ex];
+          return { id: it.ex, nom: ex?ex.name:"(supprimée)", series: it.sets, reps: it.min+"-"+it.max, repos: it.rest };
+        }) };
+      }),
+      volumeCalcule: plannedVolume(program, exercises, avgSessions),
+    };
+    var text = JSON.stringify(dump, null, 2);
+    setExportMsg("saving");
+    var dl = await getDownloadsCap();
+    if (dl) {
+      try { await dl.save({ filename: "sunglo-programme.json", data: text }); setExportMsg("Téléchargé."); }
+      catch (e) { setExportMsg(e && e.code === "declined" ? null : "Le téléchargement a échoué — réessaie."); }
+      return;
+    }
+    try {
+      var blob = new Blob([text], { type: "application/json;charset=utf-8" });
+      var url = URL.createObjectURL(blob);
+      var a2 = document.createElement("a");
+      a2.href = url; a2.download = "sunglo-programme.json";
+      document.body.appendChild(a2); a2.click(); document.body.removeChild(a2);
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
+      setExportMsg("Téléchargé — envoie ce fichier à Claude pour qu'il travaille sur tes vraies données.");
+    } catch (e) { setExportMsg("Le téléchargement a échoué — réessaie."); }
+  }
   async function exportText(){
     var lines = ["CARNET D'ENTRAÎNEMENT — EXPORT", "Format : charge kg × reps (reps en réserve)", ""];
     done.forEach(function(s){
@@ -7874,6 +7954,15 @@ function AnalyseTab(props){
     h(Section,{title:"Sortir les données"},
       h("button",{onClick:exportText, style:{width:"100%",padding:"12px 0",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",gap:8,color:C.pin,border:"1px solid "+C.pin,background:"transparent",fontFamily:sansCond,fontSize:15,fontWeight:600}},
         h(Icon,{name:"download",size:16}), "Télécharger le carnet en texte"),
+      /* Ajouté le 13 sept. 2026. Trois échanges de suite à reconstruire son
+         programme À LA MAIN depuis des captures d'écran, et à me tromper à
+         chaque fois sur un détail qui change le diagnostic. Ce bouton sort le
+         programme et le matériel TELS QU'ILS SONT, pour travailler sur les
+         vraies données plutôt que sur une reconstitution. Aucune donnée
+         personnelle dedans : ni poids, ni nutrition, ni historique — seulement
+         les machines, les jours, les séries et les salles. */
+      h("button",{onClick:exportProgram, style:{width:"100%",marginTop:8,padding:"10px 0",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",gap:8,color:C.bone,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:14,fontWeight:600}},
+        h(Icon,{name:"download",size:15}), "Exporter le programme (pour diagnostic)"),
       exportMsg && exportMsg!=="saving" ? h("p",{style:{fontSize:12.5,color: exportMsg.indexOf("Téléchargé")===0?C.green:C.rust, marginTop:8}}, exportMsg) : null,
       h("p",{style:{fontSize:12.5,color:C.taupe,marginTop:8,lineHeight:1.55}}, "Toutes les 6–8 semaines, exporte ce fichier et fais-le relire."))
   );
