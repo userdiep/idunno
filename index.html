@@ -2187,6 +2187,66 @@ function _applyGoalToProgramRaw(program, exercises, goal, avgSessions, muscleFoc
    plafond de durée, comme demandé le 6 sept. 2026 ("dépasser le temps visé
    plutôt que rogner l'équilibrage"). Ce choix reste le défaut ; il devient
    simplement réglable. */
+/* DERNIÈRE PASSE — remonter ce qui reste sous la cible (13 sept. 2026).
+
+   Mesuré sur le programme réel de l'utilisateur : la COMPOSITION laissait le
+   dos à 14 séries/semaine (Upper Back 5+5, Tirage vertical 4), et c'est la
+   répartition des séries qui le redescendait à 11 — elle rognait Upper Back à
+   4 et le tirage à 3 pour servir d'autres muscles. Le plancher "jamais sous
+   12" tenait donc au niveau des machines placées, mais pas au niveau des
+   séries allouées : l'allocateur arbitre au plus offrant, sans notion de
+   plancher absolu.
+
+   Cette passe fait le tour des muscles encore sous leur cible, du plus en
+   retard au moins en retard, et ajoute UNE série à la fois sur la machine où
+   ce muscle pèse le plus. Elle s'interdit trois choses : dépasser le maximum
+   de séries par machine, faire passer un autre muscle au-dessus de VOL_MAX
+   (le haut de la fourchette 12-20), et toucher un muscle qui est déjà servi.
+   Si rien ne peut monter sans casser une de ces règles, elle s'arrête — le
+   déficit restant est alors structurel (pas assez de machines pour ce muscle),
+   et c'est le diagnostic de l'onglet Machines qui le dit. */
+function liftMusclesBelowTarget(program, exercises, goal, avgSessions, muscleFocus) {
+  var exMap = {}; exercises.forEach(function(e){ exMap[e.id] = e; });
+  var base = goalPreset(goal).targetSets || VOL_MIN;
+  var maxSets = setsBoundsForGoal(goal).max;
+  var out = program.map(function(d){ return Object.assign({}, d, { items: d.items.map(function(it){ return Object.assign({}, it); }) }); });
+  function cible(mu){ return base * focusMultiplier(muscleFocus || {}, mu); }
+  for (var tour = 0; tour < 60; tour++) {
+    var vol = plannedVolume(out, exercises, avgSessions);
+    var parMuscle = {}; vol.forEach(function(v){ parMuscle[v.muscle] = v.sets; });
+    var manque = vol.filter(function(v){ return cible(v.muscle) > 0 && v.sets < cible(v.muscle) - 0.05; })
+      .sort(function(a,b){ return (a.sets/cible(a.muscle)) - (b.sets/cible(b.muscle)); });
+    if (!manque.length) return out;
+    var pose = false;
+    for (var k = 0; k < manque.length && !pose; k++) {
+      var mu = manque[k].muscle;
+      /* Machines qui travaillent ce muscle, la plus "dédiée" d'abord. */
+      var cands = [];
+      out.forEach(function(d, di){ d.items.forEach(function(it, ii){
+        var ex = exMap[it.ex]; if (!ex) return;
+        var w = allMuscles(ex).indexOf(mu) >= 0 ? muscleWeight(ex, mu) : 0;
+        if (w > 0 && it.sets < maxSets) cands.push({ di: di, ii: ii, w: w, sets: it.sets });
+      }); });
+      cands.sort(function(a,b){ return (b.w - a.w) || (a.sets - b.sets); });
+      for (var c = 0; c < cands.length && !pose; c++) {
+        var cd = cands[c], item = out[cd.di].items[cd.ii], ex2 = exMap[item.ex];
+        /* Refus si une série de plus pousse un autre muscle au-dessus du haut
+           de la fourchette : on ne répare pas un manque en créant un excès. */
+        var casse = false;
+        var facteur = (avgSessions || SESSIONS_PER_WEEK) / Math.max(1, out.length);
+        allMuscles(ex2).forEach(function(m2){
+          var apres = (parMuscle[m2] || 0) + muscleWeight(ex2, m2) * facteur;
+          if (apres > VOL_MAX * focusMultiplier(muscleFocus || {}, m2) + 0.05) casse = true;
+        });
+        if (casse) continue;
+        item.sets += 1;
+        pose = true;
+      }
+    }
+    if (!pose) return out;
+  }
+  return out;
+}
 function applyGoalToProgram(program, exercises, goal, avgSessions, muscleFocus, profile) {
   var order = priorityOrderOf(profile);
   var out = capSessionVolume(
@@ -2194,6 +2254,14 @@ function applyGoalToProgram(program, exercises, goal, avgSessions, muscleFocus, 
     exercises, goal);
   if (profile && priorityRank(order,"time") < priorityRank(order,"goal")) {
     out = trimToTimeBudget(out, exercises, profile.sessionMinutesMax, goal);
+    return clampSetsToBounds(out, goal);   /* temps prioritaire : on ne remonte rien */
+  }
+  /* La remontée ne s'applique QUE si l'objectif est la priorité n°1. Si tu as
+     mis "équilibrage" devant, tu demandes justement que tous les muscles
+     restent au niveau du plus faible : remonter ceux qui peuvent monter
+     défait exactement ce réglage (rattrapé par test_priority.js). */
+  if (priorityRank(order,"goal") === 0) {
+    out = liftMusclesBelowTarget(out, exercises, goal, avgSessions, muscleFocus);
   }
   return clampSetsToBounds(out, goal);
 }
@@ -2459,10 +2527,14 @@ function proposePlacement(newEx, exercises, program, goal, avgSessions) {
     return { muscle: mu, current: cur ? cur.sets : 0, target: target };
   });
   var current = perMuscle.length ? Math.min.apply(null, perMuscle.map(function(p){return p.current;})) : 0;
+  /* Filtre de région ajouté le 13 sept. 2026 (voir machineFitsDay) : une
+     machine de hanches n'a rien à faire dans un jour du haut du corps, même si
+     ce jour a de la place. */
+  var exMapP = {}; withNew.forEach(function(e){ exMapP[e.id] = e; });
   var daysTraining = program.filter(function(d){ return d.items.some(function(it){
     var ex = withNew.find(function(e){return e.id===it.ex;});
     return ex && allMuscles(ex).some(function(mu){ return newMuscles.indexOf(mu)>=0; });
-  }); });
+  }); }).filter(function(d){ return machineFitsDay(newEx, d, exMapP); });
   /* Corrigé le 12 sept. 2026 (signalement : "pourquoi y a 2 exos de triceps
      alors que c'est beaucoup plus que 12 séries par semaine ?"). La machine
      ajoutée était placée sur DEUX jours quoi qu'il arrive — y compris quand
@@ -2477,8 +2549,10 @@ function proposePlacement(newEx, exercises, program, goal, avgSessions) {
      cible, c'est un remplacement qu'on veut, pas un ajout. */
   var allCovered = perMuscle.length > 0 && perMuscle.every(function(p){ return p.current >= p.target; });
   var nDays = allCovered ? 1 : 2;
+  var repli = program.filter(function(d){ return machineFitsDay(newEx, d, exMapP); });
+  if (!repli.length) repli = program.slice();
   var targets = daysTraining.length > 0 ? daysTraining.slice(0, nDays)
-    : program.slice().sort(function(a,b){return a.items.length-b.items.length;}).slice(0, nDays);
+    : repli.sort(function(a,b){return a.items.length-b.items.length;}).slice(0, nDays);
   var tierDef = tierDefaultsForGoal(goal, exerciseOrderTier(newEx));
   var setsEach = current >= target ? tierDef.sets : tierDef.sets + 1;
   return { targets: targets.map(function(d){return d.key;}), targetLabels: targets.map(function(d){return d.label;}),
@@ -2571,6 +2645,40 @@ var SPLIT_TEMPLATES = [
     days:[{label:"Full A",g:["all"]},{label:"Full B",g:["all"]},{label:"Full C",g:["all"]},{label:"Full D",g:["all"]}] },
 ];
 function splitTemplate(k){ return SPLIT_TEMPLATES.find(function(t){ return t.k===k; }) || null; }
+/* Région dominante d'un jour (haut / bas / core), DÉDUITE de ce qu'il contient
+   déjà — pas de son libellé, qui peut être n'importe quoi après un changement
+   de split. Ajouté le 13 sept. 2026 sur signalement : "y a des séries de
+   hanche en upper alors qu'il faut pas, puisque j'enchaîne plusieurs séances à
+   la suite".
+
+   C'était exact et c'est un vrai trou : la recomposition ajoutait une machine
+   au jour qui faisait le plus baisser son score, sans AUCUNE notion de haut ou
+   de bas du corps. Sur ses données réelles, Adduction et Abduction des Hanches
+   s'étaient retrouvées dans "Haut A" — donc travaillées le jour du haut PUIS
+   le lendemain sur le jour du bas, exactement ce qu'un découpage haut/bas sert
+   à éviter quand on enchaîne les séances.
+
+   Le tronc (abdominaux, obliques, lombaires) n'est volontairement pas
+   contraint : il se place partout, c'est déjà la convention du fichier (voir
+   SPLIT_TEMPLATES, où "core" est rattaché à plusieurs jours). */
+function dayRegion(day, exMap) {
+  var n = { haut:0, bas:0 };
+  (day.items||[]).forEach(function(it){
+    var ex = exMap[it.ex]; if (!ex) return;
+    var r = REGION[allMuscles(ex)[0]];
+    if (r === "haut" || r === "bas") n[r] += 1;
+  });
+  if (n.haut === n.bas) return null;         // jour mixte ou vide : aucune contrainte
+  return n.haut > n.bas ? "haut" : "bas";
+}
+/* Cette machine a-t-elle sa place dans ce jour-là ? */
+function machineFitsDay(ex, day, exMap) {
+  var region = dayRegion(day, exMap);
+  if (!region) return true;
+  var r = REGION[allMuscles(ex)[0]];
+  if (r !== "haut" && r !== "bas") return true;   // tronc : partout
+  return r === region;
+}
 function dayAcceptsMuscle(dayDef, mu){
   return dayDef.g.some(function(g){ var f = SPLIT_GROUPS[g]; return f && f(mu); });
 }
@@ -3108,6 +3216,48 @@ function reflowProgramForCatalogue(program, exercises, goal, avgSessions, muscle
   function longestDay(pr){
     return pr.reduce(function(a,d){ return Math.max(a, estimateDayMinutes(d, exMap)); }, 0);
   }
+  /* PASSE PRÉALABLE — remettre les machines dans le bon type de jour (13 sept.
+     2026 : "y a des séries de hanche en upper alors qu'il faut pas, puisque
+     j'enchaîne plusieurs séances à la suite").
+
+     Séparée de la descente qui suit, et non soumise à son score, pour deux
+     raisons. D'abord parce que c'est une règle, pas un compromis : une machine
+     de hanches dans un jour du haut du corps est une erreur de rangement, quel
+     que soit le volume que ça rapporte. Ensuite parce que le score ne pouvait
+     PAS la corriger : retirer ces deux machines de "Haut A" fait passer
+     adducteurs et abducteurs de 12 à 8, donc SOUS leur cible — ce que le
+     garde-fou ajouté le même jour interdit précisément. Les deux règles se
+     bloquaient l'une l'autre ; celle-ci passe devant, et la perte de volume
+     est assumée : c'est ce qui a été demandé.
+
+     La région de chaque jour est figée AVANT de retirer quoi que ce soit,
+     sinon les retraits pourraient faire basculer la région en cours de route.
+     On ne vide jamais un jour, et on ne retire jamais la dernière machine qui
+     travaille un muscle en principal. */
+  (function remettreDansLeBonJour(){
+    var regions = prog.map(function(d){ return dayRegion(d, exMap); });
+    var primaires = {};
+    prog.forEach(function(d){ d.items.forEach(function(it){
+      var e = exMap[it.ex]; if (!e) return;
+      var mu = allMuscles(e)[0];
+      primaires[mu] = (primaires[mu] || 0) + 1;
+    }); });
+    prog = prog.map(function(d, di){
+      var region = regions[di];
+      if (!region) return d;
+      var gardes = d.items.filter(function(it){
+        var e = exMap[it.ex]; if (!e) return true;
+        var r = REGION[allMuscles(e)[0]];
+        if (r !== "haut" && r !== "bas") return true;   /* tronc : partout */
+        if (r === region) return true;
+        var mu = allMuscles(e)[0];
+        if ((primaires[mu] || 0) <= 1) return true;     /* seule machine de ce muscle */
+        primaires[mu] -= 1;
+        return false;
+      });
+      return gardes.length ? Object.assign({}, d, { items: gardes }) : d;
+    });
+  })();
   var best = score(prog);
   /* Le garde-fou de durée ne regarde QUE le candidat : "cette séance
      dépasserait-elle la fourchette réglée ?". Il a d'abord été écrit en
@@ -3271,6 +3421,10 @@ function reflowProgramForCatalogue(program, exercises, goal, avgSessions, muscle
         if (!ex || !exerciseAvailableAtGym(ex, gymId)) return;
         if (day.items.some(function(it){ return it.ex === ex.id; })) return;
         if (!allMuscles(ex).some(function(mu){ return sousCible[mu]; })) return;
+        /* Pas de machine du bas du corps dans un jour du haut, ni l'inverse
+           (voir machineFitsDay) — le découpage haut/bas ne sert à rien si la
+           recomposition le traverse pour gagner quelques séries. */
+        if (!machineFitsDay(ex, day, exMap)) return;
         var modele = null;
         prog.forEach(function(d){ d.items.forEach(function(it){ if (it.ex === ex.id && !modele) modele = it; }); });
         var td = tierDefaultsForGoal(goal, exerciseOrderTier(ex));
@@ -3403,9 +3557,12 @@ function recalibrateProgramFromHistory(program, exercises, goal, avgSessions, mu
     _applyGoalToProgramRaw(program, exercises, goal, avgSessions, muscleFocus, actualWeekly, order),
     exercises, goal);
   /* Même post-traitement que applyGoalToProgram, pour que les deux chemins
-     d'écriture du programme ne puissent pas diverger. */
+     d'écriture du programme ne puissent pas diverger — remontée des muscles
+     sous leur cible comprise (voir liftMusclesBelowTarget). */
   if (profile && priorityRank(order, "time") < priorityRank(order, "goal")) {
     recalibrated = trimToTimeBudget(recalibrated, exercises, profile.sessionMinutesMax, goal);
+  } else if (priorityRank(order, "goal") === 0) {
+    recalibrated = liftMusclesBelowTarget(recalibrated, exercises, goal, avgSessions, muscleFocus);
   }
   var newProgram = clampSetsToBounds(recalibrated, goal);
   var changed = false;
@@ -3529,7 +3686,7 @@ var PROGRAM_VERSION = 3;
    recommitée à la main — contrairement au lien Artifact qui se met à jour
    tout seul". Change cette date à chaque publication notable pour que la
    comparaison soit possible côté utilisateur. */
-var APP_BUILD = "2026-09-13e";
+var APP_BUILD = "2026-09-13i";
 
 function seedState() {
   return {
@@ -3877,6 +4034,30 @@ function withMuscleCorrections(state) {
    la participation est anatomiquement certaine mais dont aucun ratio %MVIC
    comparable n'a été trouvé en accès libre. */
 var SECONDARY_MUSCLE_UPDATES = [
+  /* CORRECTION du 13 sept. 2026, trouvée en vérifiant une par une les fiches
+     machines de l'utilisateur (demande : "vérifie aussi si les réglages
+     muscles etc. par machine sont corrects").
+
+     Son "Extension des Jambes Assis" (Life Fitness) était enregistrée en
+     POLYARTICULAIRE avec quadriceps + fessiers 0,5 + ischio-jambiers 0,5. Or
+     c'est le leg extension assis : une extension du genou, donc UN SEUL
+     mouvement articulaire et un seul muscle. Les sources sont unanimes — ni
+     fessiers ni ischio-jambiers n'y participent de façon notable, et c'est
+     même l'argument de vente de l'exercice (isoler le quadriceps sans
+     solliciter la chaîne postérieure ni le rachis).
+
+     Conséquence chiffrée de l'erreur : cette machine créditait des fessiers et
+     des ischio-jambiers qui ne travaillaient pas, donc l'appli croyait ces
+     muscles mieux servis qu'ils ne l'étaient et leur allouait moins de séries
+     ailleurs. Le palier "polyarticulaire" la faisait en plus placer en début
+     de séance, à la place d'un vrai mouvement composé.
+
+     La règle ne s'applique QUE si la machine est encore exactement dans cet
+     état (voir matchesMuscleConfig) : une fiche que tu as réglée toi-même
+     n'est jamais écrasée. */
+  { test:/leg extension|extension.*jambe|quad.*extension/,
+    from:{ muscles:["Quadriceps","Fessiers","Ischio-jambiers"], intensity:{Quadriceps:1,Fessiers:0.5,"Ischio-jambiers":0.5} },
+    to:{ muscles:["Quadriceps"], intensity:{Quadriceps:1}, order:3 } },
   { test:/chest press|developpe.*couche|developpe.*tronc|bench press|developpe.*poitrine|developpe.*pectoraux/,
     from:{ muscles:["Pectoraux","Triceps"], intensity:{Pectoraux:1,Triceps:0.5} },
     to:{ muscles:["Pectoraux","Épaules","Triceps"], intensity:{Pectoraux:1,"Épaules":0.75,Triceps:0.5} } },
@@ -3956,8 +4137,13 @@ function withSecondaryMuscleUpdates(state) {
       if (!u.test.test(n)) continue;
       if (!matchesMuscleConfig(e, u.from)) return e; // personnalisée ou déjà à jour
       changedAny = true;
-      return Object.assign({}, e, { muscle: u.to.muscles[0], muscles: u.to.muscles.slice(),
+      var next = Object.assign({}, e, { muscle: u.to.muscles[0], muscles: u.to.muscles.slice(),
         muscleIntensity: Object.assign({}, u.to.intensity) });
+      /* `order` optionnel : certaines corrections portent aussi sur le palier
+         poly/semi/isolation, quand la machine avait été classée à tort comme
+         polyarticulaire (voir l'extension des jambes assis ci-dessous). */
+      if (u.to.order) next.order = u.to.order;
+      return next;
     }
     return e;
   });
@@ -7819,6 +8005,59 @@ function AnalyseTab(props){
   var weightTrend = (bodyLog||[]).slice().sort(function(a,b){ return (a.date||"")<(b.date||"") ? -1 : 1; })
     .map(function(b,i){ return { x: b.date || ("mesure "+(i+1)), y: b.weightKg }; });
 
+  /* IMPORT d'un programme (13 sept. 2026).
+
+     Demande : échanger deux machines dans ses séances. Impossible à faire à sa
+     place — ses données vivent dans le téléphone, pas sur un serveur que je
+     pourrais toucher (la pastille dit "local"). L'export existait déjà pour que
+     je puisse DIAGNOSTIQUER sur ses vraies données ; il manquait le chemin
+     retour. Avec l'import, une correction se fait en un appui au lieu d'une
+     dizaine de manipulations dans "Composer les séances".
+
+     Ne remplace QUE le matériel et la composition des séances. L'historique
+     des séances, le suivi du poids et les réglages personnels ne sont jamais
+     touchés — ils ne sont même pas dans le fichier. Une machine du fichier
+     déjà connue (même id) est mise à jour ; une inconnue est ajoutée ; aucune
+     n'est supprimée. Un jour qui référence une machine inconnue la saute
+     plutôt que de faire échouer tout l'import. */
+  function applyImportedProgram(txt){
+    var data;
+    try { data = JSON.parse(txt); } catch (e) { setExportMsg("Fichier illisible — ce n'est pas un export de programme."); return; }
+    if (!data || !Array.isArray(data.programme) || !Array.isArray(data.machines)) {
+      setExportMsg("Fichier inattendu : il manque les machines ou le programme."); return;
+    }
+    var byId = {}; exercises.forEach(function(e){ byId[e.id] = e; });
+    var nextEx = exercises.slice();
+    data.machines.forEach(function(m){
+      if (!m || !m.id || !m.nom || !Array.isArray(m.muscles) || !m.muscles.length) return;
+      var champs = { name: m.nom, brand: m.marque || "", kind: m.type || "machine",
+        order: m.palier || 2, muscle: m.muscles[0], muscles: m.muscles.slice(),
+        muscleIntensity: Object.assign({}, m.intensites || {}),
+        inc: (typeof m.pas === "number" && m.pas > 0) ? m.pas : 2.5,
+        gymIds: Array.isArray(m.salles) ? m.salles.slice() : [], trackBy: m.suivi || "reps" };
+      if (byId[m.id]) {
+        nextEx = nextEx.map(function(e){ return e.id === m.id ? Object.assign({}, e, champs) : e; });
+      } else {
+        nextEx = nextEx.concat([Object.assign({ id: m.id, unilateral: false }, champs)]);
+      }
+    });
+    var connues = {}; nextEx.forEach(function(e){ connues[e.id] = true; });
+    var accents = [C.pin, C.taupe, C.pin, C.taupe, C.steel, C.green];
+    var nextProg = data.programme.map(function(j, i){
+      var items = (j.machines || []).filter(function(it){ return it && connues[it.id]; }).map(function(it){
+        var reps = String(it.reps || "8-12").split("-");
+        return { ex: it.id, sets: Math.max(1, it.series || 3),
+          min: Math.max(1, parseInt(reps[0], 10) || 8),
+          max: Math.max(1, parseInt(reps[1], 10) || parseInt(reps[0], 10) || 12),
+          rest: Math.max(15, it.repos || 90) };
+      });
+      return { key: j.cle || ("j" + i), label: j.jour || ("Jour " + (i + 1)),
+        accent: accents[i % accents.length], items: items };
+    }).filter(function(j){ return j.items.length; });
+    if (!nextProg.length) { setExportMsg("Aucune séance exploitable dans ce fichier."); return; }
+    persistConfig(nextEx, nextProg);
+    setExportMsg("Programme importé : " + nextProg.length + " séances, " + nextEx.length + " machines. Ton historique n'a pas bougé.");
+  }
   /* Voir le bouton "Exporter le programme (pour diagnostic)" plus bas. */
   async function exportProgram(){
     var dump = {
@@ -8005,6 +8244,23 @@ function AnalyseTab(props){
          les machines, les jours, les séries et les salles. */
       h("button",{onClick:exportProgram, style:{width:"100%",marginTop:8,padding:"10px 0",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",gap:8,color:C.bone,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:14,fontWeight:600}},
         h(Icon,{name:"download",size:15}), "Exporter le programme (pour diagnostic)"),
+      /* Import — volontairement en retrait (bordure seule, pas de couleur
+         d'action) : c'est une opération rare qui écrase la composition des
+         séances, elle n'a pas à attirer le doigt. */
+      h("label",{style:{width:"100%",marginTop:8,padding:"10px 0",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",gap:8,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:14,fontWeight:600,cursor:"pointer"}},
+        h(Icon,{name:"repeat",size:15}), "Importer un programme",
+        h("input",{type:"file", accept:"application/json,.json", style:{display:"none"},
+          onChange:function(e){
+            var f = e.target.files && e.target.files[0];
+            e.target.value = "";
+            if (!f) return;
+            var r = new FileReader();
+            r.onload = function(){ applyImportedProgram(String(r.result)); };
+            r.onerror = function(){ setExportMsg("Impossible de lire le fichier."); };
+            r.readAsText(f);
+          }})),
+      h("p",{style:{fontSize:11.5,color:C.taupe,lineHeight:1.45,marginTop:6}},
+        "L'import remplace tes machines et la composition de tes séances par celles du fichier. Ton historique de séances, ton suivi de poids et tes réglages personnels ne sont pas touchés."),
       exportMsg && exportMsg!=="saving" ? h("p",{style:{fontSize:12.5,color: exportMsg.indexOf("Téléchargé")===0?C.green:C.rust, marginTop:8}}, exportMsg) : null,
       h("p",{style:{fontSize:12.5,color:C.taupe,marginTop:8,lineHeight:1.55}}, "Toutes les 6–8 semaines, exporte ce fichier et fais-le relire."))
   );
