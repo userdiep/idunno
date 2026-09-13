@@ -3031,7 +3031,16 @@ function reflowProgramForCatalogue(program, exercises, goal, avgSessions, muscle
        séances de plus de deux heures, que personne ne fera ; la durée estimée
        reste affichée dans l'onglet Programme pour que le compromis soit
        visible, et le volume manquant reste signalé plutôt que masqué. */
-  var plafondMin = maxMin == null ? null : (timeFirst ? maxMin : Math.round(maxMin * 1.5));
+  /* Plafond de durée pendant la recomposition — resserré le 13 sept. 2026.
+     Il valait maxMin × 1,5 quand l'objectif passe avant le temps : sur un
+     programme réel, la recomposition corrigeait bien le dépassement de volume
+     (triceps 19,3 -> 12,7) mais faisait passer la séance la plus longue de 97
+     à 124 min, parce que rien dans le score ne coûte du temps. Corriger un
+     problème en en créant un autre n'est pas corriger.
+     Désormais : jamais plus long que ce que tu as DÉJÀ, ni que ton maximum
+     réglé — la recomposition peut donc raccourcir une séance, jamais
+     l'allonger au-delà de l'existant. */
+  var plafondMin = null;
   var exMap = {}; (exercises||[]).forEach(function(e){ exMap[e.id] = e; });
   function longestDay(pr){
     return pr.reduce(function(a,d){ return Math.max(a, estimateDayMinutes(d, exMap)); }, 0);
@@ -3085,6 +3094,18 @@ function reflowProgramForCatalogue(program, exercises, goal, avgSessions, muscle
      sécurité, pas un réglage : la descente s'arrête d'elle-même dès qu'aucun
      coup n'améliore. */
   for (var round = 0; round < 200; round++) {
+    /* Plafond de durée RECALCULÉ à chaque tour sur l'état COURANT : un
+       mouvement ne peut jamais rendre la séance la plus longue plus longue
+       qu'elle ne l'est déjà (ni dépasser le maximum réglé, si "temps" prime).
+       La durée la plus longue ne fait donc que baisser ou rester stable.
+       Un plafond figé sur l'état de DÉPART aurait été plus simple mais casse
+       la convergence — un second passage repartirait d'un plafond différent et
+       ne redonnerait pas le même programme (piège déjà rencontré le 7 sept.
+       2026 avec baseLongest, et re-tombé dedans aujourd'hui : c'est le test
+       "reflow converge" qui l'a rattrapé). */
+    plafondMin = timeFirst ? maxMin
+      : Math.max(maxMin == null ? 0 : maxMin,
+                 longestDay(applyGoalToProgram(prog, exercises, goal, avgSessions, muscleFocus, profile)));
     var bestMove = null, bestMoveScore = best;
 
     /* Muscles encore sous leur cible : c'est eux qu'on cherche à servir. */
@@ -3421,7 +3442,7 @@ var PROGRAM_VERSION = 3;
    recommitée à la main — contrairement au lien Artifact qui se met à jour
    tout seul". Change cette date à chaque publication notable pour que la
    comparaison soit possible côté utilisateur. */
-var APP_BUILD = "2026-09-13a";
+var APP_BUILD = "2026-09-13b";
 
 function seedState() {
   return {
@@ -7908,6 +7929,54 @@ function App(props){
     var i = state.program.findIndex(function(p){return p.key===d[d.length-1].dayKey;});
     return state.program[(i+1)%state.program.length].key;
   }, [state.sessions, state.program]);
+
+  /* RECOMPOSITION AUTOMATIQUE À L'OUVERTURE (13 sept. 2026).
+
+     Signalement : "t'as pas réglé le problème, regarde, trop de triceps et
+     2 exos de triceps à chaque fois !!!!" — avec des chiffres identiques à la
+     veille. C'était exact, et la faute est dans MON déclencheur : la
+     recomposition automatique ajoutée hier ne tournait qu'à la FIN d'une séance
+     enregistrée. Tant qu'aucune séance n'était terminée, elle ne tournait
+     jamais — donc un programme déjà déréglé le restait indéfiniment, et la
+     seule issue restait le bouton "Recalculer" d'Options, c'est-à-dire
+     exactement ce qu'on voulait lui épargner.
+
+     Elle tourne donc aussi À L'OUVERTURE, et après tout changement du
+     programme ou du matériel. Trois précautions :
+     - la DÉTECTION est gratuite (mesurée : 0 ms) et se fait à chaque passage ;
+       seule la recomposition elle-même coûte (~250 ms sur ordinateur, le temps
+       d'un battement de cils sur téléphone) et n'est lancée que s'il y a
+       vraiment quelque chose à corriger ;
+     - jamais pendant une séance en cours : on ne réorganise pas le programme
+       sous les yeux de quelqu'un qui est en train de s'en servir ;
+     - une signature du couple (programme, matériel) évite de recommencer en
+       boucle : une fois une situation traitée, elle n'est pas retraitée, même
+       si un reliquat de dépassement subsiste (il peut être arithmétiquement
+       incompressible — voir structuralOvershoot). */
+  var autoFixSig = useRef("");
+  function programSignature(pr, exs){
+    return (pr||[]).map(function(d){ return d.key+":"+d.items.map(function(it){ return it.ex+"x"+it.sets; }).join(","); }).join("|")
+      + "#" + (exs||[]).map(function(e){ return e.id; }).join(",");
+  }
+  useEffect(function(){
+    if (state.active) return;
+    var sig = programSignature(state.program, state.exercises);
+    if (autoFixSig.current === sig) return;
+    autoFixSig.current = sig;
+    try {
+      var g = state.profile.goal, avg = avgSessionsPerWeek(state.profile), mf = state.profile.muscleFocus || {};
+      var besoin = structuralOvershoot(state.program, state.exercises, g, avg, mf).length > 0
+        || sessionVolumeOvershoot(state.program, state.exercises, g).length > 0;
+      if (!besoin) return;
+      var reflowed = reflowProgramForCatalogue(state.program, state.exercises, g, avg, mf, state.profile.currentGymId, state.profile);
+      var diff = describeProgramDiff(state.program, reflowed, state.exercises);
+      if (!diff.changed) return;
+      var next = applyGoalToProgram(reflowed, state.exercises, g, avg, mf, state.profile);
+      autoFixSig.current = programSignature(next, state.exercises);
+      setState({ program: next, autoFix: diff });
+    } catch (e) {}
+    // eslint-disable-next-line
+  }, [state.program, state.exercises, state.active]);
 
   var deloadReactive = reactiveDeloadDue(state.sessions, state.exercises);
   var deloadProactive = proactiveDeloadDue(state.sessions, state.program);
