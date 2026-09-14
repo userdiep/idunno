@@ -163,7 +163,11 @@ var VOL_MIN = 5, VOL_MAX = 20;
 function avgSessionsPerWeek(profile) {
   if (!profile || profile.sessionsMin==null || profile.sessionsMax==null) return SESSIONS_PER_WEEK;
   var avg = (profile.sessionsMin + profile.sessionsMax) / 2;
-  return avg > 0 ? avg : SESSIONS_PER_WEEK;
+  /* Même filet que pickOptimalAvgSessions (14 sept. 2026) : une fréquence
+     aberrante venue d'un profil enregistré ne doit pas se propager dans tous
+     les calculs de volume. */
+  if (!isFinite(avg) || avg <= 0) return SESSIONS_PER_WEEK;
+  return Math.min(avg, SESSIONS_MAX_PLAUSIBLE);
 }
 /* Ancien seuil d'alerte "séance trop longue" (90 min) — retiré du calcul de
    volume le 4 sept. 2026 ("les séances doivent être adaptées selon le nb de
@@ -2433,9 +2437,22 @@ function sessionsNeededForMaxMinutes(program, exercises, goal, maxMinutes, muscl
    (voir allMuscles/muscleWeight) — l'"équilibre" demandé porte sur le volume
    par muscle sur la semaine, pas sur une réorganisation des séances. Pure
    fonction : ne modifie ni program ni exercises. */
+/* SESSIONS_MAX_PLAUSIBLE — plafond dur ajouté le 14 sept. 2026. Cette
+   fonction énumère les fréquences candidates de 0,5 en 0,5 entre le min et le
+   max réglés, et recalcule un programme complet pour chacune. Avec une valeur
+   aberrante dans le profil (999999 tapé dans Options, ou un fichier importé),
+   ça fait des millions d'itérations : l'appli se fige et l'onglet finit par
+   mourir — et comme la valeur est enregistrée, elle remeurt à chaque
+   ouverture. Deux séances par jour, 14 par semaine, est déjà au-delà de tout
+   ce qui se pratique : au-dessus, on borne au lieu de calculer. */
+var SESSIONS_MAX_PLAUSIBLE = 14;
 function pickOptimalAvgSessions(program, exercises, goal, sessionsMin, sessionsMax, minutesMin, minutesMax, muscleFocus) {
   var lo = Math.min(sessionsMin||0, sessionsMax||0);
   var hi = Math.max(sessionsMin||0, sessionsMax||0);
+  if (!isFinite(lo) || lo < 0) lo = 0;
+  if (!isFinite(hi) || hi < 0) hi = 0;
+  lo = Math.min(lo, SESSIONS_MAX_PLAUSIBLE);
+  hi = Math.min(hi, SESSIONS_MAX_PLAUSIBLE);
   if (!(hi > 0)) { lo = 2; hi = 4; }
   if (!(lo > 0)) lo = hi;
   var minFreq = goalPreset(goal).minFreq || 1;
@@ -3619,6 +3636,55 @@ function reflowProgramForCatalogue(program, exercises, goal, avgSessions, muscle
   })();
   return prog;
 }
+/* Recomposition jusqu'au POINT FIXE — ajouté le 14 sept. 2026 pendant l'audit
+   général ("checke si toutes les fonctionnalités ont pas de bug").
+
+   reflowProgramForCatalogue est une descente : elle joue le meilleur coup tant
+   qu'il améliore la note. Rien ne garantit pour autant que son résultat soit
+   déjà son propre point fixe — la note de départ du tour suivant n'est pas la
+   même, et certains garde-fous ("ne pas aggraver ce qui dépasse déjà", plafond
+   de durée) dépendent de l'état du DÉBUT d'appel. Mesuré par tirage aléatoire
+   sur 60 programmes tordus : 32 fois stable du premier coup, 24 fois au
+   deuxième passage, 3 fois au troisième — et UNE fois un cycle, c'est-à-dire
+   deux programmes qui alternent indéfiniment.
+
+   Ce dernier cas est le seul vraiment gênant, mais il l'est beaucoup : la
+   recomposition automatique tourne à chaque ouverture de l'appli tant que le
+   programme est hors cible. Un cycle, ce sont donc des séances qui changent
+   TOUTES SEULES à chaque ouverture, alternativement dans un sens puis dans
+   l'autre — exactement le va-et-vient déjà signalé le 13 sept.
+
+   D'où cette enveloppe, utilisée partout où l'appli recompose : on repasse
+   jusqu'à retomber sur un état déjà vu. Si c'est le précédent, c'est un point
+   fixe, on le rend. Si c'est plus ancien, c'est un cycle : on rend le
+   MEILLEUR état du cycle (au sens de la note de l'appli), qui est alors stable
+   au sens où il n'y a plus rien de mieux à en tirer. Coût : quelques passages
+   de plus, uniquement quand le programme change vraiment. */
+function reflowStable(program, exercises, goal, avgSessions, muscleFocus, gymId, profile) {
+  var vus = [], etats = [], prog = program;
+  function empreinte(p){ return JSON.stringify(p.map(function(d){ return d.items.map(function(i){ return i.ex+":"+i.sets; }); })); }
+  for (var i = 0; i < 8; i++) {
+    prog = reflowProgramForCatalogue(prog, exercises, goal, avgSessions, muscleFocus, gymId, profile);
+    var e = empreinte(prog);
+    var deja = vus.indexOf(e);
+    if (deja >= 0) {
+      if (deja === vus.length - 1) return prog;          // point fixe
+      var cycle = etats.slice(deja);                      // cycle : on garde le meilleur
+      var best = prog, bestScore = Infinity;
+      cycle.forEach(function(p2){
+        var sc;
+        try {
+          sc = programBalancePenalty(applyGoalToProgram(p2, exercises, goal, avgSessions, muscleFocus, profile),
+            exercises, goal, avgSessions, muscleFocus, profile, {corridor:true});
+        } catch (err) { sc = Infinity; }
+        if (sc < bestScore) { bestScore = sc; best = p2; }
+      });
+      return best;
+    }
+    vus.push(e); etats.push(prog);
+  }
+  return prog;
+}
 /* ============================================================
    RECALIBRAGE AUTOMATIQUE APRÈS SÉANCE — demande du 5 sept. 2026 : "après
    chaque séance libre, l'application met en équilibre selon les objectifs
@@ -3846,7 +3912,7 @@ var PROGRAM_VERSION = 4;
    recommitée à la main — contrairement au lien Artifact qui se met à jour
    tout seul". Change cette date à chaque publication notable pour que la
    comparaison soit possible côté utilisateur. */
-var APP_BUILD = "2026-09-13k";
+var APP_BUILD = "2026-09-14d";
 
 function seedState() {
   return {
@@ -4558,8 +4624,59 @@ function withTrackingDefaults(state) {
   });
   return changedAny ? Object.assign({}, state, { exercises: exercises }) : state;
 }
+/* FILET DE STRUCTURE — ajouté le 14 sept. 2026 pendant l'audit général
+   ("checke si toutes les fonctionnalités ont pas de bug, TOUS").
+
+   Constat, mesuré en chargeant l'appli sur des états volontairement abîmés :
+   un état sauvegardé auquel il manque une clé de premier niveau — `profile`
+   surtout, mais aussi `exercises`, `program`, `sessions` ou `bodyLog` — fait
+   planter le rendu au tout premier accès (`profile.theme` sur un profil
+   absent) et l'écran reste BLANC. Pas de message, pas de retour possible :
+   pour quelqu'un qui ne code pas, l'appli est simplement morte, alors que
+   toutes ses données sont encore là.
+
+   Aucune des migrations existantes ne rattrapait ça : elles commencent toutes
+   par `if (!state || !state.profile) return state;`, donc elles passent leur
+   tour précisément dans le cas où il faudrait réparer. Ce filet s'exécute
+   AVANT elles et garantit la forme ; elles remplissent ensuite les champs.
+
+   D'où ça peut venir : un état écrit à moitié (onglet fermé pendant la
+   sauvegarde), un data/state.json tronqué côté hébergement, un état recopié à
+   la main. Rare, mais le coût d'un écran blanc est sans commune mesure avec
+   celui de ces quelques lignes. On ne remplace QUE ce qui est absent ou du
+   mauvais type : aucune donnée valide n'est touchée. */
+function withStructureDefaults(state) {
+  if (!state || typeof state !== "object") return seedState();
+  var graine = null;
+  function base(){ if (!graine) graine = seedState(); return graine; }
+  var out = state, change = false;
+  function pose(clef, valide, secours) {
+    if (valide(state[clef])) return;
+    if (!change) { out = Object.assign({}, state); change = true; }
+    out[clef] = secours();
+  }
+  var tableau = function(x){ return Array.isArray(x); };
+  var tableauPlein = function(x){ return Array.isArray(x) && x.length > 0; };
+  var objet = function(x){ return x && typeof x === "object" && !Array.isArray(x); };
+  pose("v", function(x){ return typeof x === "number"; }, function(){ return STATE_VERSION; });
+  pose("exercises", tableauPlein, function(){ return base().exercises; });
+  pose("program", tableauPlein, function(){ return base().program; });
+  pose("sessions", tableau, function(){ return []; });
+  pose("bodyLog", tableau, function(){ return base().bodyLog; });
+  pose("meta", objet, function(){ return base().meta; });
+  pose("profile", objet, function(){ return base().profile; });
+  /* Un jour sans machine ne s'affiche pas et bloque plusieurs calculs : on le
+     retire plutôt que de laisser un programme à moitié valide. */
+  if (out.program.some(function(d){ return !d || !Array.isArray(d.items) || !d.items.length; })) {
+    var jours = out.program.filter(function(d){ return d && Array.isArray(d.items) && d.items.length; });
+    if (!change) { out = Object.assign({}, state); change = true; }
+    out.program = jours.length ? jours : base().program;
+  }
+  return change ? Object.assign({}, out, { _justMigrated: true }) : state;
+}
 function withAllMigrations(state) {
-  var s = withLatestProgram(state);
+  var s = withStructureDefaults(state);
+  s = withLatestProgram(s);
   s = withNutritionDefaults(s);
   s = withOptionsDefaults(s);
   s = withInferredOrderDefaults(s);
@@ -4710,9 +4827,24 @@ async function doPublish(state, onStatus) {
      deux Steppers doivent tenir sur une seule ligne.
    Les zones tactiles restent au-dessus de 44 px de haut (minHeight ci-dessous)
    même en compact — c'est la largeur qu'on réduit, pas la hauteur. */
+/* `max` ajouté le 14 sept. 2026 pendant l'audit général. Le compteur
+   n'imposait son plancher qu'aux boutons − et + : une valeur TAPÉE au clavier
+   n'était bornée nulle part. Conséquence mesurée en tapant 999999 dans
+   "Séances par semaine" : l'appli se fige puis l'onglet meurt, parce que le
+   choix de la fréquence optimale énumère les candidats de 0,5 en 0,5 entre le
+   min et le max — 2 millions de programmes recalculés. L'utilisateur n'a
+   aucun moyen de revenir en arrière : la valeur absurde est enregistrée, donc
+   l'appli re-plante à chaque ouverture.
+   Deux verrous plutôt qu'un, parce que les deux défauts sont réels et
+   indépendants : ici le plafond de saisie (seul le MAX est appliqué pendant la
+   frappe — appliquer aussi le min empêcherait de taper "12" dans un champ dont
+   le plancher est 10), et un plafond dur dans pickOptimalAvgSessions, pour
+   qu'un état déjà enregistré ou importé ne puisse pas figer l'appli. */
 function Stepper(props) {
   var value=props.value, onChange=props.onChange, step=props.step||1, min=props.min!=null?props.min:0,
+      max=props.max!=null?props.max:null,
       suffix=props.suffix||"", wide=props.wide, compact=props.compact;
+  function borne(v){ return (v!=null && max!=null && v>max) ? max : v; }
   var ph = props.placeholder||"";
   if (ph && suffix && ph === suffix) ph = "";
   var padX = props.flex ? 6 : (compact ? 8 : 10);
@@ -4729,11 +4861,11 @@ function Stepper(props) {
   var box = {display:"flex",alignItems:"stretch",borderRadius:6,overflow:"hidden",border:"1px solid "+C.taupeDim,minHeight:44};
   if (flexible) { box.flex = "1 1 0"; box.minWidth = 0; } else { box.flexShrink = 0; }
   return h("div", {className:"flex items-stretch", style:box},
-    h("button", {onClick:function(){onChange(Math.max(min, round((value||0)-step)));}, "aria-label":"Diminuer",
+    h("button", {onClick:function(){onChange(borne(Math.max(min, round((value||0)-step))));}, "aria-label":"Diminuer",
       style:{padding:"0 "+padX+"px",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",background:C.shroudDeep,color:C.taupe,border:"none"}},
       h(Icon,{name:"minus",size:14})),
     h("input", {type:"number", className:"stepper-input", inputMode:"decimal", value: value==null?"":value, placeholder:ph,
-      onChange:function(e){ onChange(e.target.value===""?null:parseFloat(e.target.value)); },
+      onChange:function(e){ onChange(e.target.value===""?null:borne(parseFloat(e.target.value))); },
       style:Object.assign({background:C.shroud, color:C.bone, fontFamily:sansBody, fontSize: flexible?16.5:18, fontWeight:600,
         fontVariantNumeric:"tabular-nums", border:"none", textAlign:"center", outline:"none", minWidth:0},
         /* minWidth sur la SAISIE : en mode flexible, c'est le chiffre qui doit
@@ -4750,7 +4882,7 @@ function Stepper(props) {
        doit toujours rester touchable. */
     suffix ? h("span",{style:Object.assign({display:"flex",alignItems:"center",paddingRight:6,background:C.shroud,color:C.taupe,fontSize:11},
       flexible ? {minWidth:0, overflow:"hidden"} : {})},suffix) : null,
-    h("button", {onClick:function(){onChange(round((value||0)+step));}, "aria-label":"Augmenter",
+    h("button", {onClick:function(){onChange(borne(round((value||0)+step)));}, "aria-label":"Augmenter",
       style:{padding:"0 "+padX+"px",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",background:C.shroudDeep,color:C.taupe,border:"none"}},
       h(Icon,{name:"plus",size:14}))
   );
@@ -5461,7 +5593,11 @@ function InfoTip(props){
     open ? h("div",{style:{marginTop:6,padding:"10px 12px",borderRadius:8,background:C.shroud,border:"1px solid "+C.taupeDim,fontSize:12,color:C.taupe,lineHeight:1.55}}, props.children) : null);
 }
 function TextField(props){
-  return h("input",{value:props.value, placeholder:props.placeholder, onChange:function(e){props.onChange(e.target.value);},
+  /* type:"text" explicite (14 sept. 2026) : sans attribut, l'élément SE COMPORTE
+     comme du texte mais n'est pas sélectionnable par input[type=text] — ce qui
+     rend ces champs invisibles à tout ce qui les cherche ainsi, tests comme
+     gestionnaires de mots de passe et outils d'accessibilité. */
+  return h("input",{type:"text", value:props.value, placeholder:props.placeholder, onChange:function(e){props.onChange(e.target.value);},
     style:{width:"100%",marginBottom:8,padding:"8px 12px",borderRadius:6,background:C.shroud,color:C.bone,
       border:"1px solid "+C.taupeDim, fontFamily:sansBody, fontSize:15, outline:"none"}});
 }
@@ -5646,9 +5782,11 @@ try {
   });
 } catch (e) {}
 
-/* Microwave-style alert: 4 short, sharp square-wave beeps (a harsher, more
+/* Microwave-style alert: 2 short, sharp square-wave beeps (a harsher, more
    "kitchen timer" tone than a single sine chime) + a matching vibration
-   pattern. `volume` is 0–1 (from profile.alertVolume, see Options tab); at
+   pattern. DEUX bips depuis le 14 sept. 2026 (demande : "il faut juste 2
+   bips") — c'était quatre, et la salve rapprochée s'entendait comme une
+   sonnerie continue plutôt que comme un signal. `volume` is 0–1 (from profile.alertVolume, see Options tab); at
    0 there's no point creating an AudioContext, just vibrate. Called once
    per repeat cycle by RestTimerBar — see the comment there for why it
    repeats instead of firing only once. */
@@ -5666,7 +5804,7 @@ function restAlert(volume) {
         var ctx = alertCtx;
         if (ctx.state === "suspended") { try { ctx.resume(); } catch (e2) {} }
         declarePlaybackSession();
-        var beeps = 4, beepDur = 0.11, gap = 0.09;
+        var beeps = 2, beepDur = 0.11, gap = 0.09;
         for (var i = 0; i < beeps; i++) {
           var delay = i * (beepDur + gap);
           var o = ctx.createOscillator(), g = ctx.createGain();
@@ -5685,7 +5823,7 @@ function restAlert(volume) {
       }
     } catch (e) {}
   }
-  if (navigator.vibrate) { try { navigator.vibrate([120, 60, 120, 60, 120, 60, 120]); } catch (e) {} }
+  if (navigator.vibrate) { try { navigator.vibrate([120, 60, 120]); } catch (e) {} }
 }
 
 
@@ -5719,12 +5857,77 @@ function RestTimerBar(props) {
      du curseur, donc un bip immédiat à chaque cran. */
   var volumeRef = useRef(volume);
   volumeRef.current = volume;
+  /* COUPER LA SONNERIE AVEC LE BOUTON VERROUILLAGE — SANS LA COUPER QUAND ON
+     PASSE SUR UNE AUTRE APPLICATION (14 sept. 2026 : "il faut qu'on entende
+     même quand je suis sur une autre appli").
+
+     Une page web ne reçoit PAS l'appui sur le bouton marche/veille : aucun
+     événement n'existe pour lui, et les touches de volume sont hors de portée
+     aussi. Ce qu'elle voit, c'est sa conséquence — l'écran s'allume ou
+     s'éteint, donc la page devient visible ou masquée (`visibilitychange`).
+     Et elle ne peut pas distinguer "écran verrouillé" de "passé sur une autre
+     application" : les deux donnent exactement le même `hidden`.
+
+     D'où la règle retenue, qui sert les deux demandes sans les opposer :
+     seul le retour à VISIBLE coupe le son ; devenir masqué ne coupe rien.
+       - sonnerie écran éteint (le cas courant, téléphone posé ou en poche) :
+         un appui sur marche/veille rallume l'écran, la page redevient
+         visible, le son s'arrête. C'est la demande d'hier, et elle marche.
+       - sonnerie pendant qu'on est sur une autre application : rien ne coupe,
+         ça continue de sonner jusqu'à ce qu'on revienne. C'est la demande
+         d'aujourd'hui.
+       - écran allumé sur l'appli : le bouton veille éteint l'écran sans
+         couper (on ne peut pas savoir que c'est un verrouillage) ; un second
+         appui rallume et coupe. À l'écran, la croix de la barre est de toute
+         façon sous le pouce.
+     `pagehide` a été retiré pour la même raison : il se déclenche en quittant
+     la page, donc justement quand il faut continuer à sonner.
+
+     Deuxième chemin, lui indépendant de tout ça : les commandes de lecture de
+     l'écran verrouillé (navigator.mediaSession — disponibles grâce à la piste
+     silencieuse qui fait déjà sonner l'appli en mode silencieux). Pause,
+     stop, piste suivante/précédente coupent la sonnerie sans déverrouiller ni
+     revenir dans l'appli.
+
+     Ce qui est coupé, c'est le SON, pas le chrono : le décompte continue en
+     rouge et la barre indique "Son coupé". */
+  var _s = useState(false), silenced = _s[0], setSilenced = _s[1];
+  useEffect(function(){ setSilenced(false); }, [timer.id]);
   useEffect(function(){
-    if (!over) return;
+    if (!over || silenced) return;
     restAlert(volumeRef.current);
-    var id = setInterval(function(){ restAlert(volumeRef.current); }, 4000);
-    return function(){ clearInterval(id); };
-  }, [over, timer.id]);
+    /* Toutes les 5 s (14 sept. 2026, demande : "que l'alarme sonne toutes les
+       5 sec plutôt que toutes les secondes") — c'était 4 s. L'intervalle
+       continue de tourner écran éteint ou appli en arrière-plan parce que la
+       piste silencieuse joue pendant tout le repos : un onglet qui LIT DU SON
+       échappe au gel et à l'étranglement des minuteries. */
+    var id = setInterval(function(){ restAlert(volumeRef.current); }, 5000);
+    function couper(){
+      setSilenced(true);
+      if (navigator.vibrate) { try { navigator.vibrate(0); } catch (e) {} }
+    }
+    function auRetour(){ if (!document.hidden) couper(); }
+    try { document.addEventListener("visibilitychange", auRetour); } catch (e) {}
+    var actions = ["pause","stop","nexttrack","previoustrack"];
+    try {
+      if (navigator.mediaSession && navigator.mediaSession.setActionHandler) {
+        actions.forEach(function(a){
+          try { navigator.mediaSession.setActionHandler(a, couper); } catch (e) {}
+        });
+      }
+    } catch (e) {}
+    return function(){
+      clearInterval(id);
+      try { document.removeEventListener("visibilitychange", auRetour); } catch (e) {}
+      try {
+        if (navigator.mediaSession && navigator.mediaSession.setActionHandler) {
+          actions.forEach(function(a){
+            try { navigator.mediaSession.setActionHandler(a, null); } catch (e) {}
+          });
+        }
+      } catch (e) {}
+    };
+  }, [over, timer.id, silenced]);
   var totalSec = Math.round(Math.abs(remainingMs) / 1000);
   var mm = Math.floor(totalSec / 60), ss = totalSec % 60;
   var text = (over ? "+" : "") + mm + ":" + (ss < 10 ? "0" : "") + ss;
@@ -5734,7 +5937,8 @@ function RestTimerBar(props) {
       h("div",{style:{height:"100%",width:(over?100:pct)+"%",background:over?C.rust:C.pin,transition:"width .25s linear"}})),
     h("div",{style:{display:"flex",alignItems:"center",gap:10}},
       h("div",{style:{minWidth:0,flex:1}},
-        h("div",{style:{fontFamily:sansCond,fontSize:10.5,color:C.taupe,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}, "Repos — "+timer.label),
+        h("div",{style:{fontFamily:sansCond,fontSize:10.5,color:C.taupe,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},
+          (over && silenced ? "Son coupé — " : "Repos — ")+timer.label),
         h("div",{style:{fontFamily:sansBody,fontSize:26,fontWeight:700,fontVariantNumeric:"tabular-nums",color: over?C.rust:C.bone, animation: over?"restPulse 1.2s ease-in-out infinite":"none"}}, text)),
       h("button",{onClick:function(){onAdjust(-15);}, "aria-label":"Moins 15 secondes",
         style:{padding:"8px 10px",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:13,fontWeight:600}}, "-15"),
@@ -5779,6 +5983,7 @@ function DeloadBanner(props){
 }
 
 var FREEFORM_LABEL = "Séance libre";
+var MSG_RIEN_A_ENREGISTRER = "Aucune série remplie : il n'y a rien à enregistrer. Note au moins un poids ou des répétitions, ou utilise \"Abandonner\" si tu ne fais pas cette séance.";
 function SeanceTab(props) {
   var program=props.program, exercises=props.exercises||[], exMap=props.exMap, sessions=props.sessions, nextDayKey=props.nextDayKey,
       active=props.active, setActive=props.setActive, finishSession=props.finishSession, startRestTimer=props.startRestTimer,
@@ -5809,6 +6014,10 @@ function SeanceTab(props) {
   var _fp = useState(""), freePick=_fp[0], setFreePick=_fp[1];
   var _sw = useState(null), swapPending=_sw[0], setSwapPending=_sw[1];
   var _sp = useState(""), sessionPick=_sp[0], setSessionPick=_sp[1];
+  /* Voir finishSession : quand aucune série n'est remplie, la séance RESTE
+     ouverte et l'écran dit pourquoi, au lieu de se vider en silence. */
+  var _re = useState(false), rienAEnregistrer=_re[0], setRienAEnregistrer=_re[1];
+  function tenterEnregistrer(){ setRienAEnregistrer(finishSession() === false); }
   /* Ajouté le 6 sept. 2026 — RISQUE DE PERTE DE DONNÉES trouvé en audit : le
      bouton "Abandonner" (séance programmée comme séance libre) appelait
      directement setActive(null), donc un seul appui effaçait TOUTE la séance
@@ -6005,7 +6214,16 @@ function SeanceTab(props) {
     if (active.entries.some(function(e){return e.ex===freePick;})) { setFreePick(""); return; }
     /* Retrié après chaque ajout : polyarticulaire d'abord, isolation en
        dernier, comme pour les séances de rotation (voir sortByExerciseOrder). */
-    var next = sortByExerciseOrder(active.entries.concat([{ex:freePick, sets:[]}]), function(e){return e.ex;}, exMap);
+    /* UNE série vide d'emblée (14 sept. 2026, audit général). La machine
+       ajoutée arrivait avec zéro ligne : l'écran affichait son nom, son pas de
+       charge... et aucun champ où taper quoi que ce soit tant qu'on n'avait pas
+       trouvé "+ Série". En séance programmée, les lignes sont là d'entrée ;
+       il n'y a pas de raison que la séance libre demande un geste de plus
+       avant de pouvoir noter la première série. "+ Série" garde tout son sens
+       pour les suivantes, et la croix de la ligne permet de la retirer. */
+    var next = sortByExerciseOrder(
+      active.entries.concat([{ex:freePick, sets:[{weight:null, reps:null, rir:null, weakSide:null}]}]),
+      function(e){return e.ex;}, exMap);
     setActive(Object.assign({}, active, { entries: next }));
     setFreePick("");
   }
@@ -6229,7 +6447,7 @@ function SeanceTab(props) {
                   h("div",{style:{flex:1,minWidth:0}},
                     h("div",{style:{fontSize:15.5,fontWeight:600,lineHeight:1.25}}, ex?ex.name:"Machine supprimée"),
                     h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,marginTop:1}}, brandLabel(ex))),
-                  ex ? h("button",{onClick:function(){requestSwap(ex);}, title:"Changer de machine",
+                  ex ? h("button",{onClick:function(){requestSwap(ex);}, title:"Changer de machine", "aria-label":"Changer de machine — "+ex.name,
                     style:{padding:7,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",flexShrink:0}}, h(Icon,{name:"repeat",size:14})) : null),
                 h("div",{style:{display:"flex",alignItems:"center",gap:10,marginTop:8,paddingLeft:27,flexWrap:"wrap",rowGap:8}},
                   h(StackPlate,{weight:p.weight, repMin:it.min, repMax:it.max, sets:p.setsOverride||it.sets, state:p.state, unit:unitLabel(ex)==="s"?"s":"", block:true}),
@@ -6359,7 +6577,7 @@ function SeanceTab(props) {
                 h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},
                   brandLabel(ex)+(ex?" · "+allMuscles(ex).join(", "):"")),
                 (ex && updateExerciseInc) ? h("div",{style:{marginTop:7}}, h(IncStepper,{value:ex.inc, onChange:function(v){updateExerciseInc(ex.id, v);}})) : null)),
-            h("button",{onClick:function(){removeFreeformEntry(idx);}, title:"Retirer cet exercice",
+            h("button",{onClick:function(){removeFreeformEntry(idx);}, title:"Retirer cet exercice", "aria-label":"Retirer cet exercice"+(ex?" — "+ex.name:""),
               style:{padding:6,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",flexShrink:0}}, h(Icon,{name:"x",size:14}))),
           note ? h("div",{style:{padding:"8px 12px",background:C.shroudDeep,borderTop:"1px solid "+C.shroud}},
             h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.45}}, note)) : null,
@@ -6418,8 +6636,9 @@ function SeanceTab(props) {
           h("option",{value:""}, "Ajouter une machine…"),
           available.map(function(e){ return h("option",{key:e.id,value:e.id}, e.name+" ("+brandLabel(e)+") — "+allMuscles(e).join(", ")); })),
         h("button",{onClick:addFreeformExercise, style:{width:"100%",padding:"10px 0",borderRadius:6,background:C.pin,color:C.ink,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Ajouter")),
-      h("button",{onClick:finishSession, style:{width:"100%",marginTop:8,padding:"14px 0",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:C.green,color:C.ink,fontFamily:sansCond,fontSize:16,fontWeight:700,border:"none"}},
+      h("button",{onClick:tenterEnregistrer, style:{width:"100%",marginTop:8,padding:"14px 0",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:C.green,color:C.ink,fontFamily:sansCond,fontSize:16,fontWeight:700,border:"none"}},
         h(Icon,{name:"check",size:18}), "Enregistrer la séance"),
+      rienAEnregistrer ? h("p",{style:{fontSize:12.5,color:C.rust,marginTop:8,lineHeight:1.5}}, MSG_RIEN_A_ENREGISTRER) : null,
       h("p",{style:{fontSize:12.5,color:C.taupe,marginTop:8,lineHeight:1.5}}, "Les séries vides sont ignorées. Cette séance compte comme une séance normale : historique et progression de charge.")
     );
   }
@@ -6504,9 +6723,9 @@ function SeanceTab(props) {
               h("div",{style:{fontSize:16.5,fontWeight:600,lineHeight:1.25}}, ex?ex.name:"Machine supprimée"),
               h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,marginTop:1}}, brandLabel(ex)+" · repos "+it.rest+"s"+(isAdhoc?" · ajoutée pour cette séance":"")+(it.gymSwappedFrom?" · remplace "+it.gymSwappedFrom+" (indispo dans cette salle)":"")+(it.gymMergedFrom?" · "+mergedNoteShort(it.gymMergedFrom):"")+(it.gymMissing?" · indisponible dans cette salle":""))),
             h("div",{style:{display:"flex",alignItems:"center",gap:6,flexShrink:0}},
-              ex ? h("button",{onClick:function(){requestSwap(ex);}, title:"Changer de machine",
+              ex ? h("button",{onClick:function(){requestSwap(ex);}, title:"Changer de machine", "aria-label":"Changer de machine — "+ex.name,
                 style:{padding:7,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent"}}, h(Icon,{name:"repeat",size:14})) : null,
-              h("button",{onClick:function(){removeFromActiveSession(idx);}, title:"Retirer de cette séance (le programme n'est pas modifié)",
+              h("button",{onClick:function(){removeFromActiveSession(idx);}, title:"Retirer de cette séance (le programme n'est pas modifié)", "aria-label":"Retirer de cette séance"+(ex?" — "+ex.name:""),
                 style:{padding:7,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent"}}, h(Icon,{name:"x",size:14})))),
           h("div",{style:{display:"flex",alignItems:"center",gap:10,marginTop:9,paddingLeft:27,flexWrap:"wrap",rowGap:8}},
             /* Le nombre de séries affiché en objectif suit les lignes
@@ -6572,8 +6791,9 @@ function SeanceTab(props) {
           h("option",{value:""}, "Ajouter une machine à cette séance…"),
           availableToAdd.map(function(e){ return h("option",{key:e.id,value:e.id}, e.name+" ("+brandLabel(e)+") — "+allMuscles(e).join(", ")); })),
         h("button",{onClick:function(){addToActiveSession(sessionPick);}, style:{padding:"0 16px",borderRadius:6,background:C.pin,color:C.ink,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Ajouter"))),
-    h("button",{onClick:finishSession, style:{width:"100%",marginTop:8,padding:"14px 0",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:C.green,color:C.ink,fontFamily:sansCond,fontSize:16,fontWeight:700,border:"none"}},
+    h("button",{onClick:tenterEnregistrer, style:{width:"100%",marginTop:8,padding:"14px 0",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:C.green,color:C.ink,fontFamily:sansCond,fontSize:16,fontWeight:700,border:"none"}},
       h(Icon,{name:"check",size:18}), "Enregistrer la séance"),
+    rienAEnregistrer ? h("p",{style:{fontSize:12.5,color:C.rust,marginTop:8,lineHeight:1.5}}, MSG_RIEN_A_ENREGISTRER) : null,
     h("p",{style:{fontSize:12.5,color:C.taupe,marginTop:8,lineHeight:1.5}}, "Les séries vides sont ignorées. Si tu finis systématiquement à 3+ reps en réserve, l'app monte la charge plus vite. Retirer ou ajouter une machine ne change que la séance du jour — le programme habituel revient au prochain tour.")
   );
 }
@@ -7058,19 +7278,19 @@ function OptionsTab(props){
       h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}},
         h("div",null,
           h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe}}, "Poids (kg)"),
-          h(Stepper,{value:profile.weightKg, step:0.1, min:30, onChange:function(v){set({weightKg:v});}})),
+          h(Stepper,{value:profile.weightKg, step:0.1, min:30, max:400, onChange:function(v){set({weightKg:v});}})),
         h("div",null,
           h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe}}, "Taille (cm)"),
-          h(Stepper,{value:profile.heightCm, step:1, min:120, suffix:"cm", onChange:function(v){set({heightCm:v});}}))),
+          h(Stepper,{value:profile.heightCm, step:1, min:120, max:250, suffix:"cm", onChange:function(v){set({heightCm:v});}}))),
       h("div",{style:{marginBottom:10}},
         h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe,display:"block",marginBottom:4}}, "% masse grasse (optionnel — écrase le dernier scan Boditrax loggé si renseigné)"),
-        h(Stepper,{value:profile.bodyFatPctManual, step:0.5, min:3, suffix:"%", onChange:function(v){set({bodyFatPctManual:v});}, placeholder:"auto"}),
+        h(Stepper,{value:profile.bodyFatPctManual, step:0.5, min:3, max:70, suffix:"%", onChange:function(v){set({bodyFatPctManual:v});}, placeholder:"auto"}),
         h("p",{style:{fontSize:11,color:C.taupe,lineHeight:1.5,marginTop:4,marginBottom:0}},
           "Sert uniquement à comparer ta cible protéique à un repère basé sur la masse maigre (voir plus bas) — laisse vide pour utiliser automatiquement ton dernier bodyLog avec un % masse grasse (ex. scan Boditrax).")),
       h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}},
         h("div",null,
           h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe}}, "Âge"),
-          h(Stepper,{value:profile.age, step:1, min:14, onChange:function(v){set({age:v});}})),
+          h(Stepper,{value:profile.age, step:1, min:14, max:110, onChange:function(v){set({age:v});}})),
         h("div",null,
           h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe,display:"block",marginBottom:4}}, "Sexe (pour DER/kcal)"),
           h("div",{style:{display:"flex",gap:8}},
@@ -7079,9 +7299,9 @@ function OptionsTab(props){
       h("div",{style:{marginBottom:4}},
         h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe,display:"block",marginBottom:4}}, "Séances par semaine (min–max)"),
         h("div",{style:{display:"flex",gap:8,alignItems:"center"}},
-          h(Stepper,{value:profile.sessionsMin, step:1, min:0, onChange:function(v){applyBalanceOrTimeChange({sessionsMin:v});}}),
+          h(Stepper,{value:profile.sessionsMin, step:1, min:0, max:14, onChange:function(v){applyBalanceOrTimeChange({sessionsMin:v});}}),
           h("span",{style:{color:C.taupe,fontSize:13}},"à"),
-          h(Stepper,{value:profile.sessionsMax, step:1, min:profile.sessionsMin||0, onChange:function(v){applyBalanceOrTimeChange({sessionsMax:v});}})),
+          h(Stepper,{value:profile.sessionsMax, step:1, min:profile.sessionsMin||0, max:14, onChange:function(v){applyBalanceOrTimeChange({sessionsMax:v});}})),
         h(InfoTip,{label:"Pourquoi "+recSessions.min+"–"+recSessions.max+" pour cet objectif ?"},
           "Le nombre de séances/semaine ne change pas le volume total visé (~"+goalPreset(goalNow).targetSets+" séries/semaine/muscle pour cet objectif, voir \"Volume prévu par semaine\" dans Machines) — il détermine juste comment ce volume est réparti dans la semaine. Pour la PRISE DE MUSCLE, à volume égal, la fréquence elle-même n'apporte rien de plus (Pelland et al. 2025, Sports Medicine : effet compatible avec zéro) ; l'intérêt de répartir est pratique — éviter d'entasser trop de séries d'affilée, dont la qualité baisse en fin de longue séance (Nunes et al. 2020/2021, effet d'ordre/fatigue). "
           /* Corrigé le 12 sept. 2026 en revérifiant les sources une par une : ce
@@ -7115,9 +7335,9 @@ function OptionsTab(props){
         "Un repère personnel — combien de temps tu comptes/veux passer par séance. Ce que l'appli en fait dépend de l'ordre de priorité réglé juste en dessous : par défaut elle se contente de comparer à la durée estimée réelle sans jamais rogner tes séances ; si tu classes « Temps et nombre de séances » en premier, elle retire au contraire des séries jusqu'à tenir dans ce maximum."),
       h("div",{style:{marginBottom:4}},
         h("div",{style:{display:"flex",gap:8,alignItems:"center"}},
-          h(Stepper,{value:profile.sessionMinutesMin, step:5, min:0, suffix:"min", onChange:function(v){applyBalanceOrTimeChange({sessionMinutesMin:v});}}),
+          h(Stepper,{value:profile.sessionMinutesMin, step:5, min:0, max:300, suffix:"min", onChange:function(v){applyBalanceOrTimeChange({sessionMinutesMin:v});}}),
           h("span",{style:{color:C.taupe,fontSize:13}},"à"),
-          h(Stepper,{value:profile.sessionMinutesMax, step:5, min:profile.sessionMinutesMin||0, suffix:"min", onChange:function(v){applyBalanceOrTimeChange({sessionMinutesMax:v});}})),
+          h(Stepper,{value:profile.sessionMinutesMax, step:5, min:profile.sessionMinutesMin||0, max:300, suffix:"min", onChange:function(v){applyBalanceOrTimeChange({sessionMinutesMax:v});}})),
         h(InfoTip,{label:"Combien de temps faut-il viser ?"},
           "Il n'existe pas de durée plafond validée par la recherche : le mythe d'une séance à ne pas dépasser 45-60 minutes (peur d'un pic de cortisol qui casserait le muscle) est réfuté — de larges cohortes (West & Phillips 2012) ne trouvent aucun lien entre la réponse hormonale aiguë d'une séance et les gains de force/masse à long terme. Ce qui pilote vraiment la durée, c'est le nombre de séries à faire pour ta cible hebdomadaire (~"+goalPreset(goalNow).targetSets+" séries/semaine/muscle pour cet objectif) divisé par ton nombre de séances/semaine : à volume hebdo égal, plus de séances = des séances plus courtes, pas l'inverse. Si une séance te semble trop longue, la vraie question est \"combien de séances/semaine\" (voir l'info-bulle juste au-dessus), pas \"combien de séries couper\".")),
       h("div",{style:{padding:"10px 12px",borderRadius:8,background:C.shroudDeep,border:"1px solid "+(meetsTimeMax?C.taupeDim:C.steel)}},
@@ -7193,7 +7413,7 @@ function OptionsTab(props){
           var w = focusMultiplier(muscleFocus, mu);
           return h("div",{key:mu, style:{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}},
             h("span",{style:{fontSize:13.5,color: w!==1?C.pin:C.bone,fontWeight: w!==1?700:500}}, mu),
-            h(Stepper,{value:w, step:0.5, min:0.25, suffix:"×", onChange:function(v){ setMuscleFocusFor(mu, v); }}));
+            h(Stepper,{value:w, step:0.5, min:0.25, max:3, suffix:"×", onChange:function(v){ setMuscleFocusFor(mu, v); }}));
         })),
       muscleFocusCustomized ? h("button",{onClick:function(){ setFocusOpen(false); resetMuscleFocus(); },
         style:{width:"100%",padding:"8px 0",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:13,fontWeight:600}}, "Tout équilibrer (remettre 1× partout)") : null
@@ -7219,7 +7439,7 @@ function OptionsTab(props){
           "Valeur mesurée (ex. balance Boditrax) plutôt que calculée"),
         !profile.useBmrFormula ? h("div",{style:{display:"flex",gap:8,alignItems:"center"}},
           h("span",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,width:110}}, "DER (kcal/jour)"),
-          h(Stepper,{value:profile.bmrMeasured, step:10, min:800, suffix:"kcal", onChange:function(v){set({bmrMeasured:v});}}))
+          h(Stepper,{value:profile.bmrMeasured, step:10, min:800, max:6000, suffix:"kcal", onChange:function(v){set({bmrMeasured:v});}}))
         : h("div",{style:{fontSize:12,color:C.taupe,lineHeight:1.5}}, "Sans mesure, on utilise la formule de Mifflin–St Jeor à partir du poids, de la taille, de l'âge et du sexe renseignés ci-dessus.")
       )
     ),
@@ -7227,7 +7447,7 @@ function OptionsTab(props){
     h(Section, {title:"Activité quotidienne"},
       h("div",{style:{marginBottom:4}},
         h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe,display:"block",marginBottom:4}}, "Nombre de pas / jour en moyenne"),
-        h(Stepper,{value:profile.dailySteps, step:500, min:0, suffix:"pas", wide:true, onChange:function(v){set({dailySteps:v});}})),
+        h(Stepper,{value:profile.dailySteps, step:500, min:0, max:100000, suffix:"pas", wide:true, onChange:function(v){set({dailySteps:v});}})),
       h("div",{style:{marginBottom:4}},
         h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe,display:"block",marginBottom:4}}, "Niveau d'activité (mode déficit uniquement)"),
         h(Select,{value:profile.activityMultiplier, onChange:function(v){set({activityMultiplier:parseFloat(v)});}},
@@ -7245,10 +7465,10 @@ function OptionsTab(props){
       profile.targetMode==="manual" ? h("div",{style:{display:"flex",flexDirection:"column",gap:10,marginBottom:4}},
         h("div",{style:{display:"flex",gap:8,alignItems:"center"}},
           h("span",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,width:110}}, "Cible / jour"),
-          h(Stepper,{value:profile.manualTargetKcal, step:25, min:0, suffix:"kcal", onChange:function(v){set({manualTargetKcal:v});}})),
+          h(Stepper,{value:profile.manualTargetKcal, step:25, min:0, max:12000, suffix:"kcal", onChange:function(v){set({manualTargetKcal:v});}})),
         h("div",{style:{display:"flex",gap:8,alignItems:"center"}},
           h("span",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,width:110}}, "Protéines"),
-          h(Stepper,{value:profile.manualProteinG, step:5, min:0, suffix:"g", onChange:function(v){set({manualProteinG:v});}})))
+          h(Stepper,{value:profile.manualProteinG, step:5, min:0, max:1000, suffix:"g", onChange:function(v){set({manualProteinG:v});}})))
       : profile.targetMode==="steps" ? h("p",{style:{fontSize:12,color:C.taupe,lineHeight:1.6,marginBottom:8}},
           "TDEE = DER + kcal estimées à partir du nombre de pas + kcal estimées d'entraînement (durée moyenne de séance × moyenne des séances/semaine renseignées ci-dessus). Le détail apparaît sous les résultats.")
       : h("div",{style:{display:"flex",flexDirection:"column",gap:0}},
@@ -7312,14 +7532,15 @@ function OptionsTab(props){
       h("button",{onClick:function(){restAlert(profile.alertVolume!=null?profile.alertVolume:1);},
         style:{padding:"9px 16px",borderRadius:6,background:C.shroud,color:C.bone,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:13.5,fontWeight:600}},
         "Tester le son"),
-      /* Ajouté le 12 sept. 2026 ("je veux que ça sonne même en silencieux") :
-         dire ce que l'appli fait pour ça et, surtout, ce qu'elle ne PEUT pas
-         faire — plutôt que de laisser croire à une promesse qu'une page web
-         n'est pas en mesure de tenir. Voir la longue note au-dessus de
-         restAlert pour le détail technique. */
+      /* Ajouté le 14 sept. 2026 avec la coupure au bouton veille : un réglage
+         qu'on ne sait pas utiliser n'existe pas. */
+      h(InfoTip,{label:"Comment couper la sonnerie une fois qu'elle sonne ?"},
+        "Deux bips toutes les 5 secondes, tant que le repos n'est pas terminé — y compris écran éteint ou pendant que tu es sur une autre application. Pour couper : rallume l'écran ou reviens dans l'appli. Concrètement, téléphone posé écran éteint, un appui sur le bouton marche/veille suffit : la page redevient visible et le son s'arrête. Les commandes de lecture de l'écran verrouillé (pause, piste suivante) le coupent aussi, sans avoir à déverrouiller. "
+        +"Pourquoi pas l'inverse (couper quand l'écran s'éteint) : une page web ne reçoit pas l'appui sur marche/veille, elle voit seulement qu'elle est masquée — et elle ne peut pas faire la différence entre \"écran verrouillé\" et \"passé sur une autre appli\". Couper dans ce sens-là rendrait l'alarme inaudible dès que tu changes d'application. Les boutons de volume, eux, restent hors de portée d'une page web : ils baissent le son, ils n'arrêtent pas l'alarme. "
+        +"Le chrono, lui, continue : la barre reste affichée, indique \"Son coupé\", et le décompte continue en rouge."),
       h(InfoTip,{label:"Et si mon téléphone est en silencieux ?"},
         "L'appli fait deux choses pour passer quand même. Elle déclare sa sortie audio comme de la LECTURE MÉDIA (navigator.audioSession, iOS 17 et plus) : sur iPhone, c'est la catégorie qui ignore l'interrupteur silencieux, alors que le son d'une page web part sinon sur un canal que cet interrupteur coupe. Et pendant toute la durée d'un repos, elle joue une piste silencieuse en boucle, ce qui bascule la page sur le canal média — la méthode utilisée depuis des années pour contourner ce comportement sur iPhone. Sur Android, le mode silencieux ne coupe en principe que la sonnerie et les notifications, pas le canal média : le bip devrait déjà passer, à condition que le volume MÉDIA (pas celui de la sonnerie) ne soit pas à zéro — appuie sur le volume pendant que le bip sonne pour régler le bon. "
-        +"Ce que l'appli ne peut pas faire, quel que soit le réglage : sonner si le volume média est à zéro ; sonner alors que tu as verrouillé l'écran ou changé d'application, parce que le téléphone gèle alors le code de la page — seule une vraie application installée depuis un store peut réveiller le téléphone à l'heure dite ; et passer outre un mode Concentration qui filtre tout. La vibration accompagne le bip là où le navigateur la propose (Android) ; Safari sur iPhone ne l'implémente pas du tout.")
+        +"Ce que l'appli ne peut pas faire, quel que soit le réglage : sonner si le volume média est à zéro ; sonner alors que tu as verrouillé l'écran AVANT la fin du repos et que la piste silencieuse n'a pas tenu, parce que le téléphone gèle alors le code de la page — seule une vraie application installée depuis un store peut réveiller le téléphone à l'heure dite ; et passer outre un mode Concentration qui filtre tout. La vibration accompagne le bip là où le navigateur la propose (Android) ; Safari sur iPhone ne l'implémente pas du tout.")
     ),
 
     h("div",{style:{textAlign:"center",marginTop:4,marginBottom:20,fontSize:11,color:C.taupeDim}},
@@ -7341,7 +7562,22 @@ function HistoriqueTab(props){
   }
   return h(Section, {title: done.length+" séance"+(done.length>1?"s":"")+" enregistrée"+(done.length>1?"s":"")}, done.map(function(s){
     var day = program.find(function(d){return d.key===s.dayKey;});
-    var tonnage = s.entries.reduce(function(a,e){ return a + e.sets.reduce(function(b,x){ return b + (x.weight||0)*(x.reps||0); },0); },0);
+    /* Le TONNAGE (somme des kg × reps) affiché ici a été retiré le 14 sept.
+       2026 sur remarque de l'utilisateur : "ça sert à rien de suivre le poids
+       total par séance". Il a raison, et pas seulement par préférence :
+       - il additionne des charges incomparables — 200 kg de presse à cuisses
+         et 15 kg d'élévation latérale entrent dans la même somme, si bien
+         qu'une séance de jambes écrase toujours une séance de haut du corps ;
+       - il MONTE quand on fait plus de répétitions avec moins lourd, donc il
+         peut progresser pendant que la charge, elle, stagne — exactement ce
+         que la progression de l'appli surveille par ailleurs (voir prescribe
+         et stallInfo) ;
+       - rien d'autre dans l'appli ne s'en sert : ni le volume par muscle, ni
+         le recalibrage, ni les diagnostics. C'était un chiffre décoratif.
+       Remplacé par l'unité dans laquelle TOUT le reste de l'appli raisonne :
+       le nombre de machines et de séries réellement faites. */
+    var nbSeries = s.entries.reduce(function(a,e){ return a + e.sets.filter(function(x){ return x.reps!=null; }).length; },0);
+    var resume = s.entries.length + " machine" + (s.entries.length>1?"s":"") + " · " + nbSeries + " série" + (nbSeries>1?"s":"");
     var rirs = []; s.entries.forEach(function(e){ e.sets.forEach(function(x){ if (x.rir!=null) rirs.push(x.rir); }); });
     var avgRir = rirs.length ? (rirs.reduce(function(a,b){return a+b;},0)/rirs.length) : null;
     var effortWord = effortLabelForRir(avgRir);
@@ -7351,7 +7587,7 @@ function HistoriqueTab(props){
         h("div",null,
           h("div",{style:{fontFamily:sansCond,fontSize:16,fontWeight:600,color:day?day.accent:C.bone}}, (day?day.label:s.dayKey)+(s.deload?" · décharge":"")),
           h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe}},
-            new Date(s.date).toLocaleDateString("fr-FR",{weekday:"short",day:"numeric",month:"short"}) + " · " + Math.round(tonnage).toLocaleString("fr-FR") + " kg" + (effortWord?" · ressenti "+effortWord:""))),
+            new Date(s.date).toLocaleDateString("fr-FR",{weekday:"short",day:"numeric",month:"short"}) + " · " + resume + (effortWord?" · ressenti "+effortWord:""))),
         h(Icon,{name:isOpen?"chevronDown":"chevronRight", size:17, color:C.taupe})),
       isOpen ? h("div",{style:{background:C.shroud}},
         s.entries.map(function(e,i){ var ex=exMap[e.ex]; return h("div",{key:i, style:{padding:"8px 12px",borderTop:"1px solid "+C.shroudDeep}},
@@ -7580,12 +7816,20 @@ function ManualAdd(props){
       "Exercice unilatéral (un bras / une jambe à la fois)"),
     h("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:12}},
       h("span",{style:{fontFamily:sansCond,fontSize:13,color:C.taupe}}, "Plus petit incrément"),
-      h(Stepper,{value:d.inc, step:0.5, min:0.5, suffix:"kg", onChange:function(v){setD(Object.assign({},d,{inc:v}));}})),
+      h(Stepper,{value:d.inc, step:0.5, min:0.5, max:50, suffix:"kg", onChange:function(v){setD(Object.assign({},d,{inc:v}));}})),
     h("p",{style:{fontSize:11.5,color:C.taupe,lineHeight:1.5,marginBottom:10}},
       "Le palier poly/semi/isolation est déterminé automatiquement à partir du nom — reconnaît aussi les exercices de callisthénie/street workout (tractions, pompes, dips, muscle-up, fentes, gainage...), pas que les noms de machines — modifiable ensuite via le petit rond numéroté en séance ou dans la liste ci-dessous si besoin. Sans lest ajouté, laisse le poids à 0 kg au moment de logger une série et progresse via les répétitions (ou via le temps tenu pour du gainage/planche, détecté automatiquement — voir \"Suivi\" dans la liste ci-dessous si besoin de corriger)."),
     h("button",{onClick:function(){ if (canAdd) onAdd(Object.assign({},d,{name:d.name.trim(), brand:d.brand.trim(), muscle:d.muscles[0], order: inferOrderTier(d.name, d.muscles.join(" ")), trackBy: inferTrackBy(d.name)})); },
       style:{width:"100%",padding:"10px 0",borderRadius:6,background:canAdd?C.pin:C.shroud,color:canAdd?C.ink:C.taupe,fontFamily:sansCond,fontSize:15,fontWeight:700,border:"none"}},
-      "Ajouter au matériel"));
+      "Ajouter au matériel"),
+    /* Dire ce qui manque (14 sept. 2026, audit général) : le bouton était
+       simplement grisé et inerte. Un nom que l'appli ne reconnaît pas ne
+       remplit aucun muscle tout seul — on appuie donc sur un bouton qui ne
+       fait rien, sans savoir pourquoi. */
+    !canAdd ? h("p",{style:{fontSize:11.5,color:C.rust,marginTop:6,lineHeight:1.45}},
+      !d.name.trim()
+        ? "Donne d'abord un nom à cette machine."
+        : "Choisis au moins un muscle ci-dessus : sans ça, l'appli ne peut pas compter son volume ni la placer dans une séance.") : null);
 }
 function AddToDay(props){
   var day=props.day, exercises=props.exercises, program=props.program, persistConfig=props.persistConfig, goal=props.goal;
@@ -8616,7 +8860,7 @@ function App(props){
     try {
       var g = state.profile.goal, avg = avgSessionsPerWeek(state.profile), mf = state.profile.muscleFocus || {};
       if (!programHorsFourchette(state.program, state.exercises, g, avg, mf)) return;
-      var reflowed = reflowProgramForCatalogue(state.program, state.exercises, g, avg, mf, state.profile.currentGymId, state.profile);
+      var reflowed = reflowStable(state.program, state.exercises, g, avg, mf, state.profile.currentGymId, state.profile);
       var diff = describeProgramDiff(state.program, reflowed, state.exercises);
       if (!diff.changed) return;
       var next = applyGoalToProgram(reflowed, state.exercises, g, avg, mf, state.profile);
@@ -8728,7 +8972,7 @@ function App(props){
     var mf = prof.muscleFocus || {};
     var prog = program;
     if (opts && opts.reflow) {
-      prog = reflowProgramForCatalogue(prog, exercises, prof.goal, avgSessionsPerWeek(prof), mf, prof.currentGymId, prof);
+      prog = reflowStable(prog, exercises, prof.goal, avgSessionsPerWeek(prof), mf, prof.currentGymId, prof);
     }
     var pick = pickOptimalAvgSessions(prog, exercises, prof.goal,
       prof.sessionsMin, prof.sessionsMax,
@@ -8743,7 +8987,14 @@ function App(props){
   function finishSession(){
     var active = state.active;
     var cleaned = Object.assign({}, active, { done:true, entries: cleanSessionEntries(active) });
-    if (cleaned.entries.length===0) { setActive(null); return; }
+    /* RIEN À ENREGISTRER — corrigé le 14 sept. 2026 (audit général). Avant :
+       la séance était fermée en silence (setActive(null)) et disparaissait de
+       l'écran sans un mot, alors que l'utilisateur venait d'appuyer sur
+       "Enregistrer la séance". Rien n'était perdu (il n'y avait rien à
+       perdre), mais c'était impossible à distinguer d'un bug — ou pire, d'un
+       enregistrement raté. Maintenant la séance RESTE ouverte et la fonction
+       renvoie false : l'écran affiche pourquoi. */
+    if (cleaned.entries.length===0) return false;
     setRestTimer(null);
     releaseWakeLock();
     silentTrackOff();
@@ -8775,7 +9026,7 @@ function App(props){
     try {
       var goalNow = state.profile.goal, avgNow = avgSessionsPerWeek(state.profile), mfNow = state.profile.muscleFocus || {};
       if (programHorsFourchette(finalProgram, state.exercises, goalNow, avgNow, mfNow)) {
-        var reflowed = reflowProgramForCatalogue(finalProgram, state.exercises, goalNow, avgNow, mfNow, state.profile.currentGymId, state.profile);
+        var reflowed = reflowStable(finalProgram, state.exercises, goalNow, avgNow, mfNow, state.profile.currentGymId, state.profile);
         var diff = describeProgramDiff(finalProgram, reflowed, state.exercises);
         if (diff.changed) {
           finalProgram = applyGoalToProgram(reflowed, state.exercises, goalNow, avgNow, mfNow, state.profile);
