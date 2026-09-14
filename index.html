@@ -1962,6 +1962,42 @@ var PRIORITY_META = {
    d'après historique (voir recalibrateProgramFromHistory), qui refaisait
    jusqu'ici sa propre répartition — avec l'ANCIEN algorithme bogué. Omis :
    comportement inchangé (base = séries de palier du programme). */
+/* Muscles QU'AUCUNE MACHINE NE TRAVAILLE EN PRINCIPAL — ajouté le 14 sept.
+   2026 après l'export de son état réel : biceps bloqué à 16,5 pour une cible
+   de 12, et l'appli qui considérait ça comme un point fixe, sans rien changer
+   d'une ouverture à l'autre.
+
+   Chez lui, les avant-bras ne sont le muscle principal d'AUCUNE de ses 29
+   machines : ils ne reçoivent que des miettes (0,5× sur les deux machines de
+   biceps) et resteront sous leur cible quoi qu'on fasse — l'onglet Machines le
+   dit déjà, c'est la carte "Muscles sans machine dédiée". Le moteur, lui, les
+   traitait comme n'importe quel muscle en retard. Or un manque coûte six fois
+   plus cher qu'un excès (choix volontaire : on ne sacrifie pas un muscle pour
+   rogner le dépassement d'un autre). Ce manque éternel donnait donc un droit de
+   veto à toute machine qui les effleure : retirer une série de biceps creusait
+   le manque d'avant-bras (cher) pour rogner le dépassement du biceps (bon
+   marché), donc on ne retirait jamais rien.
+
+   Un muscle sans machine dédiée ne peut pas être piloté : son volume est ce
+   qui retombe du travail des autres. Il cesse donc de peser comme un manque à
+   combler — ni dans l'équilibrage des séries, ni dans la décision d'ajouter
+   une machine. Tous les autres muscles, y compris ceux qui sont sous leur
+   cible pour une raison réparable (deltoïdes postérieurs, abducteurs...),
+   gardent exactement la protection qu'ils avaient.
+
+   Le chiffre affiché ne change pas : le manque reste visible tel quel dans
+   "Volume prévu par semaine", avec son explication dans l'onglet Machines. */
+function musclesSansMachineDediee(exercises) {
+  var principal = {}, tous = {};
+  (exercises || []).forEach(function(e){
+    var ms = allMuscles(e); if (!ms.length) return;
+    principal[ms[0]] = true;
+    ms.forEach(function(mu){ tous[mu] = true; });
+  });
+  var out = {};
+  Object.keys(tous).forEach(function(mu){ if (!principal[mu]) out[mu] = true; });
+  return out;
+}
 function _applyGoalToProgramRaw(program, exercises, goal, avgSessions, muscleFocus, baselineByMuscle, priorityOrder) {
   var exMap = {}; exercises.forEach(function(e){ exMap[e.id]=e; });
   var factor = (avgSessions||SESSIONS_PER_WEEK) / Math.max(1, program.length);
@@ -2128,14 +2164,28 @@ function _applyGoalToProgramRaw(program, exercises, goal, avgSessions, muscleFoc
      différence entre les deux priorités tient maintenant uniquement aux poids
      de la recherche locale ci-dessous, ce qui est à la fois plus simple et
      réellement conforme à ce que chaque mode annonce. */
+  /* Poids fort au manque, SAUF pour un muscle hors d'atteinte (voir
+     reachableByMuscle) : celui-là restera sous sa cible quoi qu'on fasse, et
+     lui laisser le poids du manque revenait à interdire tout retrait de série
+     sur les machines qui le touchent — c'est ce qui figeait le biceps à 16,5
+     pour une cible de 12. Il compte toujours, mais au tarif de l'excès, et
+     mesuré par rapport à ce qu'il PEUT atteindre plutôt qu'à une cible hors de
+     portée : sans ce second point, l'écart resterait énorme (5 pour 12), donc
+     le moindre dixième retiré coûterait plus cher que tout le dépassement
+     qu'on corrige, et le blocage resterait entier. */
+  var sansMachine = musclesSansMachineDediee(exercises);
   var effNeeded = needed;
-  function pen(a, n){ if (!(n > 0)) return 0; var d = (a-n)/n; return d < 0 ? UNDER_W*d*d : OVER_W*d*d; }
+  /* Un muscle sans machine dédiée ne pèse plus comme un manque (voir
+     musclesSansMachineDediee) : son volume n'est pas pilotable, et le traiter
+     comme rattrapable revenait à figer toutes les machines qui le touchent. */
+  function poidsManque(mu){ return sansMachine[mu] ? 0 : UNDER_W; }
+  function pen(a, n, mu){ if (!(n > 0)) return 0; var d = (a-n)/n; return d < 0 ? poidsManque(mu)*d*d : OVER_W*d*d; }
   function moveGain(ref, delta){
     var g = 0;
     for (var i=0;i<ref.muscles.length;i++){
       var m = ref.muscles[i], n = effNeeded[m.mu];
       if (!(n > 0)) continue;
-      g += pen(achieved[m.mu], n) - pen(achieved[m.mu] + delta*m.w, n);
+      g += pen(achieved[m.mu], n, m.mu) - pen(achieved[m.mu] + delta*m.w, n, m.mu);
     }
     return g; // > 0 = amélioration
   }
@@ -2204,10 +2254,22 @@ function liftMusclesBelowTarget(program, exercises, goal, avgSessions, muscleFoc
   var maxSets = setsBoundsForGoal(goal).max;
   var out = program.map(function(d){ return Object.assign({}, d, { items: d.items.map(function(it){ return Object.assign({}, it); }) }); });
   function cible(mu){ return base * focusMultiplier(muscleFocus || {}, mu); }
+  /* Un muscle sans machine dédiée n'est plus remonté ICI (voir
+     musclesSansMachineDediee) :
+     ajouté le 14 sept. 2026 après l'export de son état réel. Cette boucle
+     voyait les avant-bras à 5 pour une cible de 12 et ajoutait des séries aux
+     machines de biceps qui les effleurent à 0,5× — remontant les avant-bras de
+     quelques dixièmes et le biceps à 16,5. Pire : elle défaisait à chaque
+     passage le retrait que l'équilibrage fin venait de faire, ce qui figeait
+     le programme dans cet état. Les avant-bras resteront sous leur cible tant
+     qu'aucune machine ne les travaille en principal — c'est ce que dit
+     "Muscles sans machine dédiée" dans l'onglet Machines, et c'est la vraie
+     réponse, pas du volume de biceps en plus. */
+  var sansMachine = musclesSansMachineDediee(exercises);
   for (var tour = 0; tour < 60; tour++) {
     var vol = plannedVolume(out, exercises, avgSessions);
     var parMuscle = {}; vol.forEach(function(v){ parMuscle[v.muscle] = v.sets; });
-    var manque = vol.filter(function(v){ return cible(v.muscle) > 0 && v.sets < cible(v.muscle) - 0.05; })
+    var manque = vol.filter(function(v){ return cible(v.muscle) > 0 && !sansMachine[v.muscle] && v.sets < cible(v.muscle) - 0.05; })
       .sort(function(a,b){ return (a.sets/cible(a.muscle)) - (b.sets/cible(b.muscle)); });
     if (!manque.length) return out;
     var pose = false;
@@ -2959,13 +3021,20 @@ function suggestProgramCompletion(program, exercises, goal, avgSessions, muscleF
        placement brut — sans ça le débordement ne se voit pas ici. */
     var avant = plannedVolume(applyGoalToProgram(program, exercises, goal, avgSessions, muscleFocus, null), exercises, avgSessions);
     var apres = plannedVolume(applyGoalToProgram(applyPlacement(best, placement, exercises, program), exercises, goal, avgSessions, muscleFocus, null), exercises, avgSessions);
-    var casse = apres.some(function(v){
-      var plafond = (baseTarget * focusMultiplier(muscleFocus || {}, v.muscle)) * 1.15 + 0.05;
-      if (!(plafond > 0) || v.sets <= plafond) return false;
+    /* Même arbitrage que dans la recomposition (voir evalMove, 14 sept. 2026) :
+       ce que la machine comble sous la cible compte triple, ce qu'elle crée
+       au-dessus compte pour un demi, et un "gain" sur un muscle sans machine
+       dédiée ne compte pas du tout. */
+    var sansMachineS = musclesSansMachineDediee(exercises);
+    var gainS = 0, coutS = 0;
+    apres.forEach(function(v){
+      var cibleV = baseTarget * focusMultiplier(muscleFocus || {}, v.muscle);
       var av = avant.find(function(x){ return x.muscle === v.muscle; });
-      return !av || v.sets > av.sets + 0.05;   // au-dessus du plafond ET aggravé par cette machine
+      if (!(cibleV > 0) || !av) return;
+      if (!sansMachineS[v.muscle]) gainS += Math.max(0, Math.min(v.sets, cibleV) - Math.min(av.sets, cibleV));
+      coutS += Math.max(0, v.sets - Math.max(av.sets, cibleV));
     });
-    if (casse) return;
+    if (coutS > 6 * gainS + 0.05) return;
     chosen[best.id] = true;
     out.push({ ex: best, forMuscle: c.muscle, covers: allMuscles(best).filter(function(mu){ return !!pending[mu]; }), placement: placement });
     allMuscles(best).forEach(function(mu){ delete pending[mu]; });
@@ -3479,15 +3548,31 @@ function reflowProgramForCatalogue(program, exercises, goal, avgSessions, muscle
          creuse plus qu'il ne comble est refusé. Les déplacements et les retraits
          ne sont pas concernés : ils ne peuvent pas créer ce déséquilibre-là. */
       if (ajout) {
+        /* Révisé le 14 sept. 2026 sur son état réel. Deux corrections :
+           - un gain sur un muscle SANS MACHINE DÉDIÉE (voir
+             musclesSansMachineDediee) ne compte pas : c'est ce qui faisait
+             passer l'ajout d'une deuxième machine de biceps pour un progrès,
+             au prétexte de remonter des avant-bras qui resteront sous leur
+             cible de toute façon ;
+           - combler un manque vaut plus cher que créer un excès, dans le même
+             rapport que le reste du moteur (manque ×3 contre excès ×0,5) :
+             sinon un ajout utile était refusé pour un dépassement secondaire
+             plus gros que le manque comblé. Mesuré chez lui : le Reverse Fly,
+             seule machine capable de remonter les deltoïdes postérieurs de 10
+             à 12, était refusé parce qu'il ajoutait 2,7 séries de trapèzes
+             pour 2 séries de deltoïdes gagnées. C'est pourtant exactement
+             l'échange voulu : "jamais moins de 12" passe avant "au plus près
+             de 12". */
+        var sansMachineA = musclesSansMachineDediee(exercises);
         var gain = 0, cout = 0;
         plannedVolume(applied, exercises, avgSessions).forEach(function(v){
           var cibleV = baseT * focusMultiplier(muscleFocus || {}, v.muscle);
           var av = dejaAuPlafond[v.muscle];
           if (!(cibleV > 0) || av == null) return;
-          gain += Math.max(0, Math.min(v.sets, cibleV) - Math.min(av, cibleV));
+          if (!sansMachineA[v.muscle]) gain += Math.max(0, Math.min(v.sets, cibleV) - Math.min(av, cibleV));
           cout += Math.max(0, v.sets - Math.max(av, cibleV));
         });
-        if (cout > gain + 0.05) return;
+        if (cout > 6 * gain + 0.05) return;
       }
       /* REPÈRE DE VOLUME PAR SÉANCE, ajouté le 13 sept. 2026 en montant le
          catalogue de départ à 29 machines. La recomposition raisonnait
@@ -3663,27 +3748,45 @@ function reflowProgramForCatalogue(program, exercises, goal, avgSessions, muscle
 function reflowStable(program, exercises, goal, avgSessions, muscleFocus, gymId, profile) {
   var vus = [], etats = [], prog = program;
   function empreinte(p){ return JSON.stringify(p.map(function(d){ return d.items.map(function(i){ return i.ex+":"+i.sets; }); })); }
-  for (var i = 0; i < 8; i++) {
+  /* Choix du meilleur état visité — à note ÉGALE, on départage par l'empreinte
+     (ordre alphabétique). Sans ce départage, deux états de même qualité
+     s'alternaient indéfiniment d'un appel à l'autre : le programme changeait à
+     chaque ouverture sans que rien ne s'améliore. Avec, le choix ne dépend plus
+     de l'état de départ : repartir du résultat retombe sur le même, donc c'est
+     un point fixe. */
+  function meilleurEtat(liste){
+    var best = null, bestScore = Infinity, bestKey = null;
+    liste.forEach(function(p2){
+      var sc = note(p2), key = empreinte(p2);
+      if (best === null || sc < bestScore - 1e-9 || (Math.abs(sc - bestScore) <= 1e-9 && key < bestKey)) {
+        best = p2; bestScore = sc; bestKey = key;
+      }
+    });
+    return best;
+  }
+  function note(p2){
+    try {
+      return programBalancePenalty(applyGoalToProgram(p2, exercises, goal, avgSessions, muscleFocus, profile),
+        exercises, goal, avgSessions, muscleFocus, profile, {corridor:true});
+    } catch (err) { return Infinity; }
+  }
+  for (var i = 0; i < 10; i++) {
     prog = reflowProgramForCatalogue(prog, exercises, goal, avgSessions, muscleFocus, gymId, profile);
     var e = empreinte(prog);
     var deja = vus.indexOf(e);
     if (deja >= 0) {
-      if (deja === vus.length - 1) return prog;          // point fixe
-      var cycle = etats.slice(deja);                      // cycle : on garde le meilleur
-      var best = prog, bestScore = Infinity;
-      cycle.forEach(function(p2){
-        var sc;
-        try {
-          sc = programBalancePenalty(applyGoalToProgram(p2, exercises, goal, avgSessions, muscleFocus, profile),
-            exercises, goal, avgSessions, muscleFocus, profile, {corridor:true});
-        } catch (err) { sc = Infinity; }
-        if (sc < bestScore) { bestScore = sc; best = p2; }
-      });
-      return best;
+      if (deja === vus.length - 1) return prog;          // point fixe : rien ne bouge plus
+      /* CYCLE — deux états (ou plus) qui alternent. On rend le MEILLEUR de
+         tous ceux vus, au sens de la note de l'appli : chaque appel ne peut
+         donc qu'améliorer, jamais osciller vers le pire. Ça ne garantit pas un
+         point fixe du premier coup, mais une suite d'appels qui s'améliore et
+         s'arrête — la note est bornée. */
+      return meilleurEtat(etats.concat([prog]));
     }
     vus.push(e); etats.push(prog);
   }
-  return prog;
+  /* Budget épuisé sans point fixe : même règle, on rend le meilleur état vu. */
+  return meilleurEtat(etats.concat([prog]));
 }
 /* ============================================================
    RECALIBRAGE AUTOMATIQUE APRÈS SÉANCE — demande du 5 sept. 2026 : "après
@@ -3912,7 +4015,7 @@ var PROGRAM_VERSION = 4;
    recommitée à la main — contrairement au lien Artifact qui se met à jour
    tout seul". Change cette date à chaque publication notable pour que la
    comparaison soit possible côté utilisateur. */
-var APP_BUILD = "2026-09-14d";
+var APP_BUILD = "2026-09-14e";
 
 function seedState() {
   return {
