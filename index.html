@@ -1262,11 +1262,21 @@ function swapRecommendation(oldEx, newEx, program, goal) {
      réellement. Choix confirmé par l'utilisateur le 12 sept. 2026 après lui
      avoir présenté les trois options (0,5% / 0,7% / garder 1%).
 
-     LIMITE CONNUE, non corrigée : deficitKcal est un nombre de kcal FIXE,
-     calibré sur ~85 kg. À un poids nettement différent il ne correspond plus
-     au même pourcentage hebdomadaire — un déficit exprimé en % du poids
-     serait plus juste, mais changerait la signification du réglage
-     "Déficit calorique" d'Options, que l'utilisateur peut régler à la main.
+     CORRIGÉ le 14 sept. 2026 (demande : "fais en fonction du poids qu'on
+     met"). Le déficit était un nombre de kcal FIXE calibré sur ~85 kg : à 65
+     kg, les 650 kcal/j de "Perte de gras" faisaient 0,9 %/semaine au lieu de
+     0,7 — bien au-delà de ce que les sources ci-dessus soutiennent — et à 110
+     kg ils ne faisaient plus que 0,54 %. Ça n'avait rien d'anecdotique depuis
+     que d'autres personnes utilisent l'appli : chacune héritait d'un déficit
+     réglé pour le poids de quelqu'un d'autre.
+     Chaque préréglage porte donc maintenant le POURCENTAGE hebdomadaire de la
+     source (deficitPctPerWeek), converti en kcal/jour d'après le poids
+     renseigné dans Options — équivalence usuelle 7700 kcal par kg de masse
+     grasse. Les objectifs de prise de masse, eux, portent leur surplus en %
+     du TDEE (surplusPctOfTdee, ~5 % — Oranchuk/Helms/Spence 2023), qui suit
+     déjà le poids par construction. `deficitKcal` reste dans chaque preset
+     comme valeur de repli quand le poids n'est pas renseigné, et le réglage
+     manuel du curseur reste possible et prioritaire (voir deficitMode).
 
      Les presets combinés à hypertrophie/force restent plus prudents
      (350-450 kcal/j, soit ~0,32-0,42%/sem), cohérent avec la recommandation
@@ -1552,7 +1562,7 @@ var GOAL_PRESETS = {
   // séances de durée raisonnable — pas une règle stricte, juste le calcul
   // affiché en clair dans Options pour que tu voies le compromis réel de TON
   // réglage actuel plutôt que de deviner.
-  loss:           { nutrition: { activityMultiplier: 1.55, deficitKcal: 650, proteinPerKg: 2.3 }, targetSets: 12, minFreq: 2, setsMin: 3, setsMax: 5, recommendedSessions: {min:4, max:5},
+  loss:           { nutrition: { activityMultiplier: 1.55, deficitKcal: 650, deficitPctPerWeek: 0.007, proteinPerKg: 2.3 }, targetSets: 12, minFreq: 2, setsMin: 3, setsMax: 5, recommendedSessions: {min:4, max:5},
     tiers: { 1: {sets:4, min:8,  max:12, rest:90},  2: {sets:4, min:10, max:15, rest:75}, 3: {sets:4, min:12, max:15, rest:60} } },
   // Hypertrophie seule : léger SURPLUS calorique (mise à jour du 4 sept.
   // 2026, remplace la maintenance d'avant — voir note "Prise de masse" plus
@@ -1568,7 +1578,7 @@ var GOAL_PRESETS = {
   // sur la semaine (voir note fréquence — pas un effet indépendant
   // démontré, juste plus facile à bien exécuter réparti que tout en une
   // séance).
-  hyper:          { nutrition: { activityMultiplier: 1.55, deficitKcal: -125, proteinPerKg: 1.8 }, targetSets: 12, minFreq: 2, setsMin: 3, setsMax: 5, recommendedSessions: {min:4, max:5},
+  hyper:          { nutrition: { activityMultiplier: 1.55, deficitKcal: -125, surplusPctOfTdee: 0.05, proteinPerKg: 1.8 }, targetSets: 12, minFreq: 2, setsMin: 3, setsMax: 5, recommendedSessions: {min:4, max:5},
     tiers: { 1: {sets:4, min:6,  max:10, rest:110}, 2: {sets:4, min:8,  max:12, rest:95}, 3: {sets:4, min:10, max:15, rest:90} } },
   // Force seule : léger SURPLUS (mise à jour du 4 sept. 2026, voir note
   // "Prise de masse" plus haut — l'essai Oranchuk/Helms/Spence 2023 a
@@ -1590,7 +1600,7 @@ var GOAL_PRESETS = {
   // tient dans des séances courtes (~90-130 min) sans avoir besoin d'en
   // faire plus — contrairement aux 5 autres objectifs, ici minimiser le
   // temps total ne coûte rien niveau fréquence.
-  strength:       { nutrition: { activityMultiplier: 1.55, deficitKcal: -125, proteinPerKg: 1.8 }, targetSets: 6, minFreq: 2, setsMin: 3, setsMax: 5, recommendedSessions: {min:2, max:3},
+  strength:       { nutrition: { activityMultiplier: 1.55, deficitKcal: -125, surplusPctOfTdee: 0.05, proteinPerKg: 1.8 }, targetSets: 6, minFreq: 2, setsMin: 3, setsMax: 5, recommendedSessions: {min:2, max:3},
     tiers: { 1: {sets:3, min:4,  max:6,  rest:180}, 2: {sets:3, min:5,  max:8,  rest:150}, 3: {sets:3, min:8,  max:12, rest:90} } },
   // targetSets:12 comme "hyper" (baissé de 14 à 12 le 4 sept. 2026, voir
   // note détaillée sur "Perte de gras" plus haut) — la recomposition (prise
@@ -1599,7 +1609,7 @@ var GOAL_PRESETS = {
   // et les notes Roth et al. 2023 / EJCN 2026 sur le déficit, plus haut).
   // Nutrition/tiers eux-mêmes restent les réglages historiques, volontairement
   // inchangés.
-  loss_hyper:     { nutrition: { activityMultiplier: 1.55, deficitKcal: 350, proteinPerKg: 2.0 }, targetSets: 12, minFreq: 2, setsMin: 3, setsMax: 5, recommendedSessions: {min:4, max:5},  // = réglages historiques (recomposition), nutrition volontairement inchangée ; recommendedSessions même logique que "loss"/"hyper" (même targetSets/minFreq)
+  loss_hyper:     { nutrition: { activityMultiplier: 1.55, deficitKcal: 350, deficitPctPerWeek: 0.00375, proteinPerKg: 2.0 }, targetSets: 12, minFreq: 2, setsMin: 3, setsMax: 5, recommendedSessions: {min:4, max:5},  // = réglages historiques (recomposition), nutrition volontairement inchangée ; recommendedSessions même logique que "loss"/"hyper" (même targetSets/minFreq)
     tiers: { 1: {sets:3, min:8,  max:12, rest:110}, 2: {sets:3, min:10, max:15, rest:85}, 3: {sets:3, min:12, max:15, rest:65} } },
   // Perte de gras + Force : déficit plus prudent que "Perte de gras" seule
   // (préserver la performance/force pendant la restriction, cf. Helms :
@@ -1610,7 +1620,7 @@ var GOAL_PRESETS = {
   // 12 ou 14) — entre le plancher force (6) et la cible hypertrophie (12),
   // reflète que cet objectif garde des mouvements lourds à faible volume
   // (force) ET des accessoires qui profitent du volume hypertrophique.
-  loss_strength:  { nutrition: { activityMultiplier: 1.55, deficitKcal: 450, proteinPerKg: 2.1 }, targetSets: 8, minFreq: 2, setsMin: 3, setsMax: 5, recommendedSessions: {min:4, max:5},
+  loss_strength:  { nutrition: { activityMultiplier: 1.55, deficitKcal: 450, deficitPctPerWeek: 0.0048, proteinPerKg: 2.1 }, targetSets: 8, minFreq: 2, setsMin: 3, setsMax: 5, recommendedSessions: {min:4, max:5},
     tiers: { 1: {sets:3, min:5,  max:8,  rest:120}, 2: {sets:3, min:6,  max:10, rest:100}, 3: {sets:3, min:10, max:15, rest:75} } },
   // Hypertrophie + Force ("powerbuilding") : léger SURPLUS (mise à jour du
   // 4 sept. 2026, remplace la maintenance d'avant — voir note "Prise de
@@ -1622,7 +1632,7 @@ var GOAL_PRESETS = {
   // détaillée plus haut sur "Perte de gras"/"Hypertrophie"), les mouvements
   // lourds tirant vers moins de séries (logique "force") tandis que les
   // accessoires restent proches du volume hypertrophique.
-  hyper_strength: { nutrition: { activityMultiplier: 1.55, deficitKcal: -125, proteinPerKg: 1.9 }, targetSets: 10, minFreq: 2, setsMin: 3, setsMax: 5, recommendedSessions: {min:4, max:5},
+  hyper_strength: { nutrition: { activityMultiplier: 1.55, deficitKcal: -125, surplusPctOfTdee: 0.05, proteinPerKg: 1.9 }, targetSets: 10, minFreq: 2, setsMin: 3, setsMax: 5, recommendedSessions: {min:4, max:5},
     tiers: { 1: {sets:4, min:5,  max:8,  rest:130}, 2: {sets:4, min:8,  max:12, rest:100}, 3: {sets:4, min:12, max:15, rest:85} } },
 };
 function goalPreset(goal) { return GOAL_PRESETS[goal] || GOAL_PRESETS.loss_hyper; }
@@ -3935,6 +3945,57 @@ var TRAINING_KCAL_COEF = { M: 0.0713, F: 0.0637, DEFAULT: 0.0675 };
    average training volume, see Options tab). avgSessionMinutes is only used
    by "steps" mode and is derived from the actual program (estimateDayMinutes
    averaged across days), passed in by the caller. */
+/* Équivalence énergétique usuelle d'un kilo de masse grasse. Chiffre de
+   référence (Wishnofsky, 1958) : approximation commode, pas une constante
+   biologique — la perte réelle n'est jamais 100 % du gras, et le métabolisme
+   s'adapte en cours de route. Utilisé ici uniquement pour convertir un
+   POURCENTAGE de poids par semaine (ce que recommandent les sources, voir
+   GOAL_PRESETS) en kcal/jour affichables. */
+var KCAL_PER_KG_FAT = 7700;
+/* Déficit (ou surplus) recommandé pour un objectif, RAPPORTÉ AU POIDS de la
+   personne — ajouté le 14 sept. 2026 ("fais en fonction du poids qu'on met").
+   Renvoie des kcal/jour, arrondies à 25 près comme le pas du curseur.
+   - objectif de perte : pourcentage du poids par semaine (deficitPctPerWeek) ;
+   - objectif de prise : pourcentage du TDEE (surplusPctOfTdee), donc négatif
+     puisque computeNutrition fait target = tdee - deficit ;
+   - poids (ou TDEE) non renseigné : on retombe sur la valeur fixe du preset,
+     comme avant. */
+function autoDeficitKcal(goal, weightKg, tdee) {
+  var n = goalPreset(goal).nutrition || {};
+  if (n.deficitPctPerWeek && weightKg > 0) {
+    var kcalJour = (n.deficitPctPerWeek * weightKg * KCAL_PER_KG_FAT) / 7;
+    return Math.round(kcalJour / 25) * 25;
+  }
+  if (n.surplusPctOfTdee && tdee > 0) {
+    return -Math.round((tdee * n.surplusPctOfTdee) / 25) * 25;
+  }
+  return n.deficitKcal || 0;
+}
+/* Le curseur "Déficit calorique" reste maître dès qu'on y touche :
+   profile.deficitMode === "manual" fige la valeur réglée à la main, "auto"
+   (défaut) la recalcule d'après le poids. */
+/* Rythme visé, en fraction du poids par semaine — le préréglage de l'objectif
+   par défaut, ou la valeur choisie par l'utilisateur (deficitPctPerWeek dans
+   son profil). Ajouté le 14 sept. 2026 : régler un nombre de KCAL à la main
+   fige la valeur et lui fait perdre le lien avec le poids qu'on venait tout
+   juste d'établir — or c'est bien un RYTHME qu'on choisit ("je peux monter à
+   650 ?" veut dire "je peux viser 0,7 %/semaine ?"). En réglant le rythme, la
+   valeur en kcal continue de suivre le poids toute seule, y compris quand il
+   descend. */
+function deficitPctForProfile(profile) {
+  if (!profile) return null;
+  if (typeof profile.deficitPctPerWeek === "number" && profile.deficitPctPerWeek >= 0) return profile.deficitPctPerWeek;
+  return (goalPreset(profile.goal).nutrition || {}).deficitPctPerWeek || null;
+}
+function deficitForProfile(profile, tdee) {
+  if (!profile) return 0;
+  if (profile.deficitMode === "manual") return profile.deficitKcal || 0;
+  var pct = deficitPctForProfile(profile);
+  if (pct != null && profile.weightKg > 0) {
+    return Math.round((pct * profile.weightKg * KCAL_PER_KG_FAT) / 7 / 25) * 25;
+  }
+  return autoDeficitKcal(profile.goal, profile.weightKg, tdee);
+}
 function computeNutrition(profile, avgSessionMinutes) {
   /* BUG CORRIGÉ le 6 sept. 2026 (audit des cas limites) : le champ Poids est
      effaçable (le Stepper renvoie null sur un champ vidé), et tous les calculs
@@ -3972,7 +4033,7 @@ function computeNutrition(profile, avgSessionMinutes) {
     proteinG = profile.manualProteinG;
   } else {
     if (!bmr || !weight) return null;
-    target = tdee - (profile.deficitKcal||0);
+    target = tdee - deficitForProfile(profile, tdee);
     proteinG = Math.round(weight * profile.proteinPerKg);
   }
   var proteinKcal = proteinG * 4;
@@ -4015,7 +4076,7 @@ var PROGRAM_VERSION = 4;
    recommitée à la main — contrairement au lien Artifact qui se met à jour
    tout seul". Change cette date à chaque publication notable pour que la
    comparaison soit possible côté utilisateur. */
-var APP_BUILD = "2026-09-14e";
+var APP_BUILD = "2026-09-14g";
 
 function seedState() {
   return {
@@ -4166,6 +4227,25 @@ function withOptionsDefaults(state) {
       },
       state.profile
     ),
+    _justMigrated: true,
+  });
+}
+/* Mode du déficit calorique — ajouté le 14 sept. 2026 avec le passage du
+   déficit en POURCENTAGE DU POIDS (voir autoDeficitKcal). "auto" recalcule le
+   déficit d'après le poids renseigné ; "manual" fige la valeur réglée à la
+   main sur le curseur.
+   Pour un profil qui existait déjà : on ne bascule en "auto" que si sa valeur
+   correspond encore au préréglage de son objectif (à 25 kcal près, le pas du
+   curseur). Quelqu'un qui avait délibérément mis autre chose garde SON
+   chiffre — on ne lui change pas sa cible dans le dos. */
+function withDeficitModeDefault(state) {
+  if (!state || !state.profile) return state;
+  if (state.profile.deficitMode !== undefined) return state;
+  var preset = (goalPreset(state.profile.goal).nutrition || {}).deficitKcal || 0;
+  var actuel = state.profile.deficitKcal;
+  var intact = (actuel == null) || Math.abs(actuel - preset) <= 25;
+  return Object.assign({}, state, {
+    profile: Object.assign({}, state.profile, { deficitMode: intact ? "auto" : "manual" }),
     _justMigrated: true,
   });
 }
@@ -4785,6 +4865,7 @@ function withAllMigrations(state) {
   s = withInferredOrderDefaults(s);
   s = withBodyFatDefault(s);
   s = withGoalDefault(s);
+  s = withDeficitModeDefault(s);   // après withGoalDefault : a besoin de connaître l'objectif
   s = withThemeDefault(s);
   s = withGymsDefault(s);
   s = withSessionMinutesDefault(s);
@@ -7120,6 +7201,27 @@ function OptionsTab(props){
     ? Math.round(program.reduce(function(a,d){return a+estimateDayMinutes(d, exMap);},0) / program.length)
     : 0;
   var nut = computeNutrition(profile, avgSessionMinutes);
+  /* Déficit réellement appliqué et sa traduction en rythme hebdomadaire —
+     ajouté le 14 sept. 2026 avec le passage du déficit en pourcentage du poids
+     (voir autoDeficitKcal). Affiché sous le curseur pour qu'on voie ce que le
+     chiffre veut dire : "450 kcal/j" ne parle à personne, "0,5 %/semaine, soit
+     ~0,43 kg" se compare directement aux recommandations. */
+  var deficitUtilise = deficitForProfile(profile, nut ? nut.tdee : null);
+  var pctActuel = deficitPctForProfile(profile);
+  var rythmeReglable = profile.deficitMode !== "manual" && pctActuel != null && profile.weightKg > 0;
+  var presetNut = goalPreset(profile.goal).nutrition || {};
+  var presetTexte = presetNut.deficitPctPerWeek
+    ? ("un déficit de " + (presetNut.deficitPctPerWeek*100).toFixed(2).replace(/0+$/,"").replace(/\.$/,"").replace(".", ",") + " % de ton poids par semaine")
+    : (presetNut.surplusPctOfTdee ? ("un surplus de " + Math.round(presetNut.surplusPctOfTdee*100) + " % de ta dépense quotidienne")
+      : (presetNut.deficitKcal ? ("un déficit de " + presetNut.deficitKcal + " kcal/j") : "la maintenance"));
+  var rythmeTexte = (function(){
+    if (!profile.weightKg || !deficitUtilise) return "À 0, le poids reste stable (maintenance).";
+    var kgSem = (deficitUtilise * 7) / KCAL_PER_KG_FAT;
+    var pct = (kgSem / profile.weightKg) * 100;
+    var sens = deficitUtilise > 0 ? "perte" : "prise";
+    return "Soit environ " + Math.abs(kgSem).toFixed(2).replace(".", ",") + " kg de " + sens + " par semaine, "
+      + Math.abs(pct).toFixed(2).replace(".", ",") + " % de ton poids — repère théorique (7700 kcal ≈ 1 kg de gras), pas une garantie.";
+  })();
   /* Aperçu "combien de séances/semaine pour être opti" — voir
      previewSessionStats plus haut et la discussion qui l'a motivé.
      currentSessionPreview = ce que donne TON réglage actuel de séances/
@@ -7253,7 +7355,10 @@ function OptionsTab(props){
      jour dans le même geste, y compris la prochaine séance puisqu'elle est
      lue depuis le programme. */
   function applyGoal(g){
-    applyBalanceOrTimeChange(Object.assign({goal:g, targetMode:"steps", manualTarget:false}, goalPreset(g).nutrition));
+    /* deficitMode repasse en "auto" : le nouveau préréglage s'exprime en % du
+       poids (voir autoDeficitKcal), donc on repart de son calcul plutôt que de
+       garder le nombre de kcal de l'objectif précédent. */
+    applyBalanceOrTimeChange(Object.assign({goal:g, targetMode:"steps", manualTarget:false, deficitMode:"auto"}, goalPreset(g).nutrition));
     setReapplyPrompt(false);
   }
   /* Utilise optPick.n (voir pickOptimalAvgSessions) plutôt que le simple
@@ -7586,11 +7691,31 @@ function OptionsTab(props){
              mot selon le signe ici. Plage -450 à 600 : couvre large des deux
              côtés (jusqu'à ~15% de surplus pour un TDEE ~3000, le "gros
              surplus" de l'essai cité, pour comparaison/exploration). */
-          h(Slider,{label: profile.deficitKcal<0 ? "Surplus calorique" : "Déficit calorique", min:-450, max:600, step:25, value:profile.deficitKcal,
-            display: profile.deficitKcal<0 ? ("+"+(-profile.deficitKcal)+" kcal/j (surplus)") : (profile.deficitKcal+" kcal/j"+(profile.deficitKcal===0?" (maintenance)":"")),
-            onChange:function(v){set({deficitKcal:v});}}),
+          /* Le curseur affiche et règle le déficit RÉELLEMENT utilisé : la
+             valeur calculée d'après le poids tant qu'on est en mode auto (voir
+             autoDeficitKcal, 14 sept. 2026 — "fais en fonction du poids qu'on
+             met"), la valeur figée dès qu'on y touche. */
+          /* En mode automatique sur un objectif de PERTE, on règle le RYTHME
+             (% du poids par semaine) et non un nombre de kcal : c'est ce que
+             recommandent les sources, et ça continue de suivre le poids quand
+             il descend. Le réglage en kcal reste accessible juste en dessous
+             pour qui veut figer une valeur (14 sept. 2026). */
+          (rythmeReglable
+            ? h(Slider,{label:"Rythme de perte visé", min:0.1, max:1, step:0.05, value:+(pctActuel*100).toFixed(2),
+                display: (pctActuel*100).toFixed(2).replace(/0$/,"").replace(".", ",")+" %/sem · "+deficitUtilise+" kcal/j",
+                onChange:function(v){ set({deficitPctPerWeek: v/100, deficitMode:"auto"}); }})
+            : h(Slider,{label: deficitUtilise<0 ? "Surplus calorique" : "Déficit calorique", min:-450, max:600, step:25, value:deficitUtilise,
+                display: (deficitUtilise<0 ? ("+"+(-deficitUtilise)+" kcal/j (surplus)") : (deficitUtilise+" kcal/j"+(deficitUtilise===0?" (maintenance)":"")))
+                  + (profile.deficitMode==="manual" ? " · réglé à la main" : " · calculé sur "+(profile.weightKg||"?")+" kg"),
+                onChange:function(v){set({deficitKcal:v, deficitMode:"manual"});}})),
+          h("div",{style:{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}},
+            h("span",{style:{fontSize:11.5,color:C.taupe,lineHeight:1.5,flex:"1 1 160px",minWidth:0}},
+              rythmeTexte),
+            h("button",{onClick:function(){ set(profile.deficitMode==="manual" ? {deficitMode:"auto"} : {deficitMode:"manual", deficitKcal:deficitUtilise}); },
+              style:{padding:"5px 10px",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:11.5,flexShrink:0}},
+              profile.deficitMode==="manual" ? "Recalculer sur mon poids" : "Figer en kcal")),
           h("p",{style:{fontSize:11,color:C.taupe,lineHeight:1.5,margin:"0 0 10px"}},
-            "Négatif = surplus (prise de masse), positif = déficit (perte de gras), 0 = maintenance. Le préréglage de ton objectif actuel (\""+((GOALS.find(function(g){return g.k===(profile.goal||"loss_hyper");})||{}).label||"")+"\") est "+(goalPreset(profile.goal).nutrition.deficitKcal<0?"un surplus de "+(-goalPreset(profile.goal).nutrition.deficitKcal)+" kcal/j":goalPreset(profile.goal).nutrition.deficitKcal===0?"la maintenance":"un déficit de "+goalPreset(profile.goal).nutrition.deficitKcal+" kcal/j")+" — ajustable ici sans changer d'objectif."),
+            "Négatif = surplus (prise de masse), positif = déficit (perte de gras), 0 = maintenance. Le préréglage de ton objectif actuel (\""+((GOALS.find(function(g){return g.k===(profile.goal||"loss_hyper");})||{}).label||"")+"\") n'est pas un nombre de kcal fixe : c'est "+presetTexte+", converti d'après le poids que tu as renseigné plus haut. Bouge le curseur pour fixer ta propre valeur — elle ne bougera plus avec ton poids tant que tu ne demandes pas de la recalculer."),
           h(Slider,{label:"Protéines cible", min:1.6, max:2.7, step:0.1, value:profile.proteinPerKg, display:profile.proteinPerKg.toFixed(1)+" g/kg",
             onChange:function(v){set({proteinPerKg:v});}})),
 
