@@ -382,6 +382,35 @@ var SEED_EXERCISES = [
   { id: "u1788761248906", name: "Tirage vertical", brand: "Technogym", muscle: "Dos", muscles: ["Dos", "Biceps", "Trapèzes"], muscleIntensity: {"Dos": 1, "Biceps": 0.5, "Trapèzes": 0.5}, kind: "machine", inc: 5, unilateral:false, order:1 },
   { id: "u1788769758052", name: "Extension dorsale", brand: "Life fitness", muscle: "Lombaires", muscles: ["Lombaires", "Fessiers"], muscleIntensity: {"Lombaires": 1, "Fessiers": 0.4}, kind: "machine", inc: 7.5, unilateral:false, order:2 },
   { id: "u1788773897255", name: "Corde triceps", brand: "", muscle: "Triceps", kind: "cable", inc: 5, unilateral:false, order:3 },
+  /* CARDIO (17 sept. 2026) — `met` donne les équivalents métaboliques par
+     intensité, utilisés uniquement pour estimer les calories (voir cardioKcal).
+     Valeurs du Compendium of Physical Activities : elliptique ~5,0 modéré ;
+     rameur 4,8 modéré / 8,5 soutenu ; tapis 3,5-5 en marche, 8-11 en course ;
+     vélo d'appartement 5,5 modéré / 8,0 vigoureux ; escalier ~9. Estimations
+     d'appareil, pas des mesures individuelles — d'où l'interrupteur qui permet
+     de ne PAS les compter dans la dépense (voir countCardioKcal). */
+  { id: "c-velo",        name: "Vélo d'appartement", brand: "", muscle: "Autre", kind: "cardio", inc: 1, unilateral:false, order:2, trackBy:"time", met: {facile:4, modere:6.8, intense:8.8} },
+  { id: "c-elliptique",  name: "Vélo elliptique",    brand: "", muscle: "Autre", kind: "cardio", inc: 1, unilateral:false, order:2, trackBy:"time", met: {facile:4.6, modere:5.0, intense:7.5} },
+  { id: "c-rameur",      name: "Rameur",             brand: "", muscle: "Autre", kind: "cardio", inc: 1, unilateral:false, order:2, trackBy:"time", met: {facile:4.8, modere:7.0, intense:8.5} },
+  { id: "c-tapis",       name: "Tapis de course",    brand: "", muscle: "Autre", kind: "cardio", inc: 1, unilateral:false, order:2, trackBy:"time", distance:true, deniv:true, energy:"run", met: {facile:3.5, modere:6.0, intense:9.8} },
+  { id: "c-escalier",    name: "Escalier / Stepper", brand: "", muscle: "Autre", kind: "cardio", inc: 1, unilateral:false, order:2, trackBy:"time", met: {facile:5.0, modere:7.5, intense:9.0} },
+  /* DEHORS, SANS MACHINE (18 sept. 2026 : "faudrait aussi rajouter course et
+     vélo sans machine et pouvoir rajouter le niveau d'intensité/dénivelé/nb de
+     km"). Trois différences avec les appareils ci-dessus :
+
+     - `gymIds` absent, comme partout ailleurs : dehors, ce n'est aucune salle,
+       donc disponible partout (voir exerciseAvailableAtGym) ;
+     - `distance` / `deniv` : ces deux-là se saisissent en kilomètres et en
+       mètres de D+ pendant la séance, en plus de la durée ;
+     - `energy` : les calories ne viennent plus d'un MET forfaitaire mais de
+       ce qui a réellement été fait — allure et pente pour la course,
+       vitesse pour le vélo (voir cardioKcal). Le MET par intensité reste en
+       repli quand la distance n'est pas renseignée.
+     Le tapis porte `distance`/`deniv`/`energy:"run"` pour la même raison : sa
+     console affiche km et pente, et l'équation ACSM de la course est
+     justement établie sur tapis. */
+  { id: "c-course",      name: "Course à pied (dehors)", brand: "", muscle: "Autre", kind: "cardio", inc: 1, unilateral:false, order:2, trackBy:"time", dehors:true, distance:true, deniv:true, energy:"run",  met: {facile:6.0, modere:9.8, intense:11.8} },
+  { id: "c-velo-route",  name: "Vélo (dehors)",          brand: "", muscle: "Autre", kind: "cardio", inc: 1, unilateral:false, order:2, trackBy:"time", dehors:true, distance:true, deniv:true, energy:"bike", met: {facile:5.8, modere:8.0, intense:12.0} },
 ];
 
 /* Programme de départ — issu du sien après réajustement automatique par
@@ -443,7 +472,332 @@ var SEED_PROGRAM = [
    l'exercice) avant d'ajouter du lest (gilet/ceinture) ou une variante plus
    difficile — l'app suit déjà les séries/répétitions cible par palier
    (GOAL_PRESETS) de la même façon que pour une machine. */
-var KIND_LABEL = { machine: "Machine guidée", cable: "Poulie", free: "Poids libre", bodyweight: "Poids du corps" };
+var KIND_LABEL = { machine: "Machine guidée", cable: "Poulie", free: "Poids libre", bodyweight: "Poids du corps", cardio: "Cardio" };
+/* ============================================================
+   CARDIO — ajouté le 17 sept. 2026 (demande : "je veux ajouter les vélos
+   elliptiques, rameurs, tapis de course etc. pour ceux qui veulent faire en
+   plus de la cardio ou que de la cardio, faut pouvoir choisir entre
+   cardio/muscu ou les 2 pour chaque objectif").
+
+   CHOIX DE STRUCTURE — le cardio ne vit PAS dans `day.items` mais dans
+   `day.cardio`. Deux raisons :
+   1. tout le moteur de volume (plannedVolume, l'allocateur de séries, la
+      recomposition, les plafonds par séance, les diagnostics) raisonne en
+      séries par muscle. Une machine de cardio n'a pas de muscle cible au sens
+      de ce calcul : la glisser dans `items` obligerait à ajouter une
+      exception dans une trentaine d'endroits, et la moindre oubliée fausserait
+      silencieusement le volume — exactement le type de bug qui a déjà coûté
+      deux jours ici ("ça compte bien mal").
+   2. la progression n'est pas la même : on ne monte pas une charge, on
+      allonge une durée ou on monte d'intensité.
+   Le cardio est donc une liste à part, rendue à la suite des machines dans la
+   séance, comptée dans la DURÉE de la séance et (en option) dans la dépense
+   calorique, mais jamais dans les séries par muscle.
+
+   INTERFÉRENCE AVEC LA MUSCU — vérifié plutôt que supposé. La méta-analyse de
+   référence (Schumann M, Feuerbacher JF, Sünkeler M, Freitag N, Rønnestad BR,
+   Doma K, Lundberg TR. "Compatibility of Concurrent Aerobic and Strength
+   Training for Skeletal Muscle Size and Function", Sports Medicine 2022;52:
+   601-612) conclut que le cardio ne compromet NI l'hypertrophie (SMD -0,01,
+   non significatif) NI la force maximale (SMD -0,06, non significatif). Seule
+   la force EXPLOSIVE est réduite (SMD -0,28, p=0,007), et c'est le seul
+   résultat que le moment de la séance module : l'atteinte est plus marquée
+   quand cardio et muscu sont faits dans la MÊME séance plutôt qu'espacés d'au
+   moins 3 heures. Le type de cardio (vélo vs course), la fréquence
+   hebdomadaire, l'âge et le niveau ne modifient rien de significatif.
+   Conséquence pour le placement : "à la fin de la séance" n'est PAS un
+   problème pour prendre du muscle ou de la force — c'est pour ça que l'appli
+   ne l'évite que sur les objectifs contenant une part de FORCE, et pour le
+   reste décide selon la seule contrainte qui gêne vraiment : la durée de
+   séance déjà réglée dans Options. */
+function isCardio(ex){ return !!ex && ex.kind === "cardio"; }
+/* Intensités — repères ACSM (150-300 min/semaine d'intensité modérée, ou
+   75-150 min d'intensité élevée). Le test de la parole est le seul repère
+   utilisable sans cardiofréquencemètre, ce qui est le cas ici. Les METs
+   servent uniquement à estimer les calories (voir cardioKcal) ; ils viennent
+   du Compendium of Physical Activities pour chaque type d'appareil. */
+var CARDIO_ZONES = [
+  { k:"facile",  label:"Facile",  short:"F", talk:"Tu peux parler en phrases complètes, respiration à peine montée.", rpe:"3-4/10" },
+  { k:"modere",  label:"Modéré",  short:"M", talk:"Tu peux parler, mais par phrases courtes. C'est l'intensité \"modérée\" des recommandations.", rpe:"5-6/10" },
+  { k:"intense", label:"Intense", short:"I", talk:"Quelques mots seulement entre deux respirations. Compte double dans les recommandations.", rpe:"7-8/10" },
+];
+function cardioZone(k){ return CARDIO_ZONES.find(function(z){ return z.k===k; }) || CARDIO_ZONES[1]; }
+/* Dose de cardio prescrite par objectif — ajouté le 17 sept. 2026 (demande :
+   "faut pouvoir choisir entre cardio/muscu ou les 2 en meme temps pour chaque
+   objectif"). Les minutes ne sont PAS inventées : elles viennent des repères
+   ACSM, les seuls chiffrés et consensuels sur le sujet.
+     - Santé / maintien : 150 à 300 min/semaine d'intensité MODÉRÉE (ou
+       75-150 min d'intensité élevée). C'est le plancher de la recommandation
+       générale, indépendante de l'objectif.
+     - Perte de gras : la position stand ACSM sur l'activité physique et le
+       poids situe le seuil d'une perte cliniquement significative AU-DESSUS
+       de ~225 min/semaine, et le maintien de la perte autour de 200+ min ;
+       l'IOM va jusqu'à 60 min/jour (420 min/semaine) pour la prévention de
+       la prise de poids. D'où les 5x45 = 225 min du mode "cardio seul" sur
+       les objectifs de perte, exactement ce seuil.
+   Le mode "les 2" prescrit volontairement MOINS que ces seuils : il s'ajoute
+   à 4-5 séances de muscu déjà longues, et le déficit calorique reste piloté
+   par l'alimentation (voir autoDeficitKcal) — pas par le cardio. Mieux vaut
+   une dose tenue toutes les semaines qu'un chiffre théorique jamais atteint.
+   L'écran Options affiche le total hebdo réel et le compare à la fourchette
+   ACSM, pour que le compromis soit visible plutôt que caché.
+
+   Intensité prescrite : "modéré" partout, parce que c'est l'intensité sur
+   laquelle les minutes ci-dessus sont définies. Rien n'empêche de saisir
+   "facile" ou "intense" pendant la séance — l'appli enregistre ce qui a été
+   fait, pas ce qui était prévu. */
+var GOAL_CARDIO = {
+  loss:           { both: { sessions: 4, minutes: 30 }, cardio: { sessions: 5, minutes: 45 } },
+  loss_hyper:     { both: { sessions: 3, minutes: 30 }, cardio: { sessions: 5, minutes: 45 } },
+  loss_strength:  { both: { sessions: 3, minutes: 25 }, cardio: { sessions: 5, minutes: 45 } },
+  hyper:          { both: { sessions: 2, minutes: 25 }, cardio: { sessions: 5, minutes: 30 } },
+  strength:       { both: { sessions: 2, minutes: 20 }, cardio: { sessions: 5, minutes: 30 } },
+  hyper_strength: { both: { sessions: 2, minutes: 20 }, cardio: { sessions: 5, minutes: 30 } },
+};
+var CARDIO_DEFAULT_ZONE = "modere";
+var TRAINING_MODES = [
+  { k: "muscu",  label: "Muscu seule",  desc: "Aucun cardio programmé." },
+  { k: "both",   label: "Muscu + cardio", desc: "Du cardio en plus des séances de muscu." },
+  { k: "cardio", label: "Cardio seul",  desc: "Que du cardio, plus de séances de muscu." },
+];
+function trainingMode(profile) {
+  var m = profile && profile.trainingMode;
+  return (m === "cardio" || m === "both") ? m : "muscu";
+}
+/* Prescription effective pour ce profil : {sessions, minutes, zone, mode} —
+   null si le profil ne fait pas de cardio. */
+function cardioPlanFor(profile) {
+  var mode = trainingMode(profile);
+  if (mode === "muscu") return null;
+  var t = GOAL_CARDIO[(profile && profile.goal) || ""] || GOAL_CARDIO.loss_hyper;
+  var p = mode === "cardio" ? t.cardio : t.both;
+  return { sessions: p.sessions, minutes: p.minutes, zone: CARDIO_DEFAULT_ZONE, mode: mode };
+}
+function goalHasStrength(goal) { return goal === "strength" || goal === "loss_strength" || goal === "hyper_strength"; }
+/* Où placer le cardio quand on fait les deux — c'est LA question sur laquelle
+   je m'étais trompé en posant la question, et je le corrige ici noir sur blanc.
+
+   Ce que la littérature montre vraiment (Schumann et al. 2022, Sports Medicine
+   52:601-612, méta-analyse actualisée) : l'entraînement concurrent ne diminue
+   NI l'hypertrophie (SMD -0,01 ; IC95% -0,16 à 0,18 ; p=0,92) NI la force
+   MAXIMALE (SMD -0,06 ; IC95% -0,20 à 0,09 ; p=0,45). La seule qualité
+   réellement atteinte est la force EXPLOSIVE (SMD -0,28 ; IC95% -0,48 à
+   -0,08 ; p=0,007), et c'est aussi la seule pour laquelle le moment compte :
+   dans la MÊME séance (<20 min d'écart) l'effet est significatif (SMD -0,31 ;
+   p=0,043), à >=3 h d'écart il ne l'est plus. Le type d'appareil, la
+   fréquence, l'âge et le niveau ne modulent rien de significatif.
+
+   Donc : séparer les séances n'est PAS une règle générale "anti-interférence"
+   (sur le muscle et la force max, ça ne change rien de démontré). L'appli ne
+   sépare que dans deux cas :
+     1. l'objectif contient une part de FORCE — la seule chose que le cardio
+        dégrade, et seulement en même séance ;
+     2. la séance deviendrait plus longue que le temps par séance réglé dans
+        Options — contrainte réelle et personnelle, pas théorique.
+   Une réserve honnête sur le point 1 : une seconde méta-analyse 2022 sur les
+   fibres (Sports Medicine, effet global SMD -0,23 ; p=0,050) trouve une
+   atténuation des fibres de type I propre à la COURSE (SMD -0,81) et pas au
+   vélo — d'où le choix d'appareil ci-dessous, qui évite le tapis quand
+   l'objectif contient de la force. */
+function cardioNeedsSeparateDay(program, exercises, profile, plan) {
+  if (!plan) return false;
+  if (goalHasStrength(profile && profile.goal)) return true;
+  var jours = (program || []).filter(function(d){ return d && Array.isArray(d.items) && d.items.length; });
+  if (!jours.length) return true;
+  if (plan.sessions > jours.length) return true;
+  var exMap = {}; (exercises||[]).forEach(function(e){ exMap[e.id] = e; });
+  var plafond = (profile && profile.sessionMinutesMax) || 0;
+  if (plafond > 0) {
+    var pire = 0;
+    jours.forEach(function(d){ pire = Math.max(pire, estimateDayMinutes(Object.assign({}, d, {cardio:null}), exMap)); });
+    if (pire + plan.minutes > plafond) return true;
+  }
+  return false;
+}
+/* Appareil par défaut : le premier cardio disponible dans la salle courante,
+   en évitant le tapis quand l'objectif contient de la force (voir la réserve
+   "fibres de type I / course" ci-dessus). Purement un point de départ —
+   l'appareil se change à la main dans la séance. */
+function chooseCardioMachine(exercises, goal, gymId, prefere) {
+  var dispo = (exercises||[]).filter(function(e){
+    return isCardio(e) && exerciseAvailableAtGym(e, gymId);
+  });
+  if (!dispo.length) return null;
+  /* Choix explicite de l'utilisateur (Options > Cardio) — il passe avant tout
+     le reste, y compris la règle "pas de tapis sur un objectif de force" :
+     c'est lui qui sait ce qu'il va faire. */
+  if (prefere && dispo.some(function(e){ return e.id === prefere; })) return prefere;
+  if (goalHasStrength(goal)) {
+    var sansTapis = dispo.filter(function(e){ return e.id !== "c-tapis"; });
+    if (sansTapis.length) dispo = sansTapis;
+  }
+  return dispo[0].id;
+}
+/* Répartir k créneaux sur n jours en les espaçant au maximum (k<=n).
+   n=4,k=3 -> [0,1,3] : deux jours consécutifs au pire, jamais trois. */
+function repartirCreneaux(n, k) {
+  var out = [];
+  if (n <= 0 || k <= 0) return out;
+  if (k >= n) { for (var j=0;j<n;j++) out.push(j); return out; }
+  for (var i=0;i<k;i++) out.push(Math.round(i * n / k));
+  return out.filter(function(v,i,a){ return a.indexOf(v)===i; });
+}
+/* Calories d'une session de cardio.
+
+   TROIS CHEMINS, du plus renseigné au moins renseigné (18 sept. 2026 —
+   avant, tout passait par un MET forfaitaire par intensité, ce qui donnait le
+   même chiffre pour 10 km en 40 min et 10 km en 70 min).
+
+   1. COURSE (energy:"run"), dès qu'une distance est saisie — équations
+      métaboliques de l'ACSM, celles qui servent à prescrire l'effort sur
+      tapis :
+          course  : VO2 = 3,5 + 0,2 x v + 0,9 x v x pente
+          marche  : VO2 = 3,5 + 0,1 x v + 1,8 x v x pente
+      v en m/min, pente en décimal, VO2 en ml/kg/min ; puis 5 kcal par litre
+      d'O2. On bascule sur l'équation de MARCHE sous 100 m/min (6 km/h), sa
+      borne haute de validité ; l'équation de course, elle, est établie
+      au-dessus de 134 m/min (8 km/h) et reste utilisable en petites foulées
+      en dessous tant qu'il y a une phase de suspension. Entre les deux
+      (6-8 km/h) aucune des deux n'est chez elle : c'est une zone où le
+      chiffre est indicatif, pas juste.
+
+      PROPRIÉTÉ UTILE du terme de pente : sur la durée, il vaut
+      0,9 x v x pente x t = 0,9 x D+ (en mètres). Le coût du dénivelé ne
+      dépend donc QUE du dénivelé total, pas de la façon dont il est réparti —
+      500 m avalés d'un coup ou étalés sur 15 km donnent le même supplément.
+      C'est ce qui rend le calcul honnête sur un parcours vallonné, où une
+      "pente moyenne" n'aurait aucun sens.
+
+   2. VÉLO (energy:"bike"), dès qu'une distance est saisie — MET par VITESSE
+      du Compendium of Physical Activities (16-19 km/h : 6,8 ; 19-22 : 8,0 ;
+      22-25 : 10,0 ; 26-31 : 12,0 ; au-delà de 32 : 16,8), et on retient le
+      PLUS GRAND des deux entre ce MET-là et celui de l'intensité déclarée.
+
+      POURQUOI PAS DE TERME DE DÉNIVELÉ ICI, contrairement à la course : je
+      n'ai pas trouvé, pour le vélo en extérieur, d'équation validée
+      équivalente à celle de l'ACSM. J'ai bien essayé de calculer le travail
+      mécanique (masse x g x D+, divisé par un rendement brut) — mais ce
+      calcul donne, sur une sortie vallonnée d'une heure, à peu près le DOUBLE
+      de ce que donne la table du Compendium pour la même sortie. Les deux
+      méthodes sont défendables séparément, elles ne sont pas additionnables,
+      et je n'ai pas de quoi trancher honnêtement entre elles : les constantes
+      qu'il faudrait (surface frontale, résistance au roulement, rendement)
+      sont des hypothèses, pas des mesures. Le dénivelé est donc ENREGISTRÉ et
+      AFFICHÉ, mais il ne rentre pas dans l'estimation.
+
+      Ce que le "plus grand des deux" rattrape quand même : un col monté à
+      8 km/h de moyenne tomberait dans la catégorie la plus basse de la table
+      (3,5 MET), ce qui est manifestement faux. Marquer la sortie "Intense"
+      remonte alors l'estimation à 12 MET. C'est aussi ce qui rend le
+      sélecteur d'intensité utile à vélo, où la vitesse seule ne dit rien du
+      terrain.
+
+   3. REPLI, tout le reste (et les deux premiers si la distance est vide) :
+      MET par intensité x 3,5 x poids / 200 x minutes.
+
+   PRÉCISION RÉELLE, à dire clairement : l'erreur type de l'équation ACSM de
+   course est d'environ 7 %, le "3,5 ml/kg/min" de repos surestime
+   systématiquement chez les personnes lourdes, et les 5 kcal/L surestiment à
+   basse intensité. Ces chiffres restent des ESTIMATIONS — c'est aussi pour ça
+   que l'interrupteur "compter dans la dépense" est sur NON par défaut :
+     1. le TDEE de l'appli part déjà d'un facteur d'activité (1,55 = "modéré,
+        sport 3-5x/semaine", voir GOAL_PRESETS.nutrition.activityMultiplier),
+        qui INCLUT déjà l'entraînement — recompter le cardio par-dessus, c'est
+        le compter deux fois et s'autoriser à manger un déficit qui n'existe
+        pas ;
+     2. même juste, c'est une estimation : deux personnes du même poids à la
+        même allure ne dépensent pas la même chose.
+   L'interrupteur existe quand même parce que quelqu'un qui règle son facteur
+   d'activité sur "sédentaire" et compte son sport à part a, lui, un calcul
+   cohérent. */
+var KCAL_PAR_LITRE_O2 = 5;
+/* Vitesse moyenne en km/h, null si la distance ou la durée manque. */
+function cardioVitesse(c) {
+  if (!c || !(c.km > 0) || !(c.min > 0)) return null;
+  return c.km / (c.min / 60);
+}
+/* Allure en min/km — ce que lit un coureur, là où un cycliste lit des km/h. */
+function cardioAllure(c) {
+  var v = cardioVitesse(c);
+  if (!v || v <= 0) return null;
+  return 60 / v;
+}
+function formatAllure(minParKm) {
+  if (minParKm == null || !isFinite(minParKm)) return "";
+  var m = Math.floor(minParKm), sec = Math.round((minParKm - m) * 60);
+  if (sec === 60) { m += 1; sec = 0; }
+  return m + "'" + (sec < 10 ? "0" : "") + sec + "\"/km";
+}
+/* MET du vélo selon la vitesse moyenne — Compendium of Physical Activities,
+   catégories converties des mph aux km/h. */
+function metVeloVitesse(kmh) {
+  if (kmh >= 32) return 16.8;
+  if (kmh >= 25.7) return 12.0;
+  if (kmh >= 22.5) return 10.0;
+  if (kmh >= 19.3) return 8.0;
+  if (kmh >= 16.1) return 6.8;
+  if (kmh >= 14) return 5.8;
+  return 3.5;
+}
+function cardioKcal(ex, c, weightKg) {
+  if (!ex || !c || !(c.min > 0) || !(weightKg > 0)) return 0;
+  var kmh = cardioVitesse(c);
+  var deniv = (c.deniv > 0) ? c.deniv : 0;
+  if (kmh && ex.energy === "run") {
+    var v = kmh * 1000 / 60;                                  /* m/min */
+    var pente = deniv > 0 ? (deniv / (c.km * 1000)) : 0;
+    var vo2 = (v >= 100) ? (3.5 + 0.2 * v + 0.9 * v * pente)
+                         : (3.5 + 0.1 * v + 1.8 * v * pente);
+    return Math.round(vo2 * weightKg / 1000 * c.min * KCAL_PAR_LITRE_O2);
+  }
+  if (kmh && ex.energy === "bike") {
+    var parZone = (ex.met || {})[c.zone] || 0;
+    var met = Math.max(metVeloVitesse(kmh), parZone);
+    return Math.round(met * 3.5 * weightKg / 200 * c.min);
+  }
+  var mets = ex.met || {};
+  var met = mets[c.zone] || mets.modere || 6;
+  return Math.round(met * 3.5 * weightKg / 200 * c.min);
+}
+function dayCardio(day) { return (day && Array.isArray(day.cardio)) ? day.cardio : []; }
+/* Cardio réellement fait dans une séance (enregistrée ou en cours) : seules
+   les lignes avec une durée comptent. Une séance de cardio pur n'a aucune
+   série — sans ça, "Enregistrer la séance" la refuserait comme vide (voir
+   MSG_RIEN_A_ENREGISTRER). */
+function sessionCardio(session) {
+  return ((session && session.cardio) || []).filter(function(c){ return c && c.min > 0; });
+}
+/* Les jours de MUSCU, c'est-à-dire la rotation dont parle tout le moteur de
+   volume. Un jour de cardio pur n'en fait pas partie : il s'AJOUTE à la
+   semaine, il ne prend pas la place d'une séance de muscu.
+
+   Sans cette distinction, ajouter 3 journées de cardio à une rotation de 4
+   jours ferait passer le facteur de fréquence de 4/4 à 4/7 : sur ses données
+   réelles, les biceps tombaient de 17 à 9,7 séries/semaine — l'appli aurait
+   alors "corrigé" ce manque en rajoutant des machines partout. Exactement le
+   type de contamination silencieuse que la séparation items/cardio sert à
+   éviter (voir applyCardioToProgram). Attrapé par un test, pas par hasard. */
+function musculationDays(program) {
+  return (program || []).filter(function(d){ return d && (d.items || []).length > 0; });
+}
+function rotationLength(program) { return Math.max(1, musculationDays(program).length); }
+function cardioMinutesOfDay(day) {
+  return dayCardio(day).reduce(function(t,c){ return t + (c && c.min > 0 ? c.min : 0); }, 0);
+}
+/* Calories de cardio par JOUR, lissées sur la semaine — pour la dépense
+   quotidienne (voir computeNutrition). 0 si l'interrupteur est sur NON. */
+function weeklyCardioKcalPerDay(program, exercises, profile) {
+  if (!profile || !profile.countCardioKcal) return 0;
+  var exMap = {}; (exercises||[]).forEach(function(e){ exMap[e.id] = e; });
+  var total = 0;
+  (program || []).forEach(function(d){
+    dayCardio(d).forEach(function(c){ total += cardioKcal(exMap[c.ex], c, profile.weightKg); });
+  });
+  return Math.round(total / 7);
+}
+function weeklyCardioMinutes(program) {
+  return (program || []).reduce(function(t,d){ return t + cardioMinutesOfDay(d); }, 0);
+}
 /* Ajouté le 5 sept. 2026 (demande : "pouvoir mettre des machines sans
    marque par ex pour les altères ou streetworkout ou gainage") — la marque
    ("brand") n'a jamais vraiment de sens pour du poids libre générique
@@ -640,11 +994,18 @@ function reactiveDeloadDue(sessions, exercises){
   if (tracked < 3) return false;
   return stalledCount(sessions, exercises) / tracked >= 0.5;
 }
-function cyclesCompleted(sessions, program){ return Math.floor(sessions.filter(function(s){return s.done;}).length / program.length); }
+/* `musculationDays` et pas `program` : une séance de cardio ne fatigue pas les
+   mêmes tissus et ne doit ni avancer le compteur de cycles ni déclencher une
+   décharge (voir musculationDays). */
+function sessionsMuscu(sessions, program){
+  var cles = {}; musculationDays(program).forEach(function(d){ cles[d.key] = true; });
+  return (sessions||[]).filter(function(s){ return s.done && cles[s.dayKey]; });
+}
+function cyclesCompleted(sessions, program){ return Math.floor(sessionsMuscu(sessions, program).length / rotationLength(program)); }
 function proactiveDeloadDue(sessions, program){
-  var done = sessions.filter(function(s){return s.done;}).length;
+  var done = sessionsMuscu(sessions, program).length;
   var c = cyclesCompleted(sessions, program);
-  return c > 0 && c % 6 === 0 && done % program.length === 0;
+  return c > 0 && c % 6 === 0 && done % rotationLength(program) === 0;
 }
 
 /* Estimated real session length: ~40s of work per set + its rest, plus ~70s
@@ -662,12 +1023,22 @@ function proactiveDeloadDue(sessions, program){
    existants, même s'il ne sert plus dans cette fonction. */
 function estimateDayMinutes(day, exMap) {
   var total = 0;
-  day.items.forEach(function(it) {
+  (day.items || []).forEach(function(it) {
     total += it.sets * (40 + it.rest);
   });
-  total += Math.max(0, day.items.length - 1) * 70;
+  total += Math.max(0, (day.items || []).length - 1) * 70;
   total += 300;
-  return Math.round(total / 60);
+  var min = Math.round(total / 60);
+  /* Cardio du jour (voir applyCardioToProgram) : durée prescrite + 3 min
+     d'installation par appareil. Un jour de cardio pur n'a pas d'items, donc
+     pas les 5 min d'échauffement/rangement comptées ci-dessus — mais il a bien
+     ces 3 min-là. */
+  var c = cardioMinutesOfDay(day);
+  if (c > 0) {
+    if (!(day.items || []).length) min = 0;
+    min += c + 3 * dayCardio(day).length;
+  }
+  return min;
 }
 
 /* Planned weekly volume, by muscle, from the program as configured.
@@ -732,7 +1103,7 @@ function effectiveDayItems(items, exMap) {
    gymId (appels internes de simulation), comportement d'avant. */
 function plannedVolume(program, exercises, avgSessions, gymId) {
   var exMap = {}; exercises.forEach(function(e){ exMap[e.id]=e; });
-  var freqFactor = (avgSessions||SESSIONS_PER_WEEK) / Math.max(1, program.length);
+  var freqFactor = (avgSessions||SESSIONS_PER_WEEK) / rotationLength(program);
   var factor = freqFactor;
   var m = {}, daysWith = {};
   program.forEach(function(d){
@@ -872,6 +1243,11 @@ function optimizationScore(program, exercises, goal, avgSessions, muscleFocus) {
    le palier. Optionnel : omis, tous les candidats sont à égalité dessus
    (comportement identique à avant l'ajout). */
 function bestCandidate(candidates, referenceOrder, referenceMuscles) {
+  if (!candidates.length) return null;
+  /* Une machine de cardio ne remplace pas une machine de muscu, ni l'inverse
+     (17 sept. 2026) : elles partagent le muscle fourre-tout "Autre", ce qui
+     suffirait à les rendre candidates l'une pour l'autre. */
+  candidates = candidates.filter(function(e){ return !isCardio(e); });
   if (!candidates.length) return null;
   var refM = referenceMuscles || [];
   var scored = candidates.map(function(e, i){
@@ -2000,6 +2376,12 @@ var PRIORITY_META = {
 function musclesSansMachineDediee(exercises) {
   var principal = {}, tous = {};
   (exercises || []).forEach(function(e){
+    /* Un appareil de CARDIO n'est la machine dédiée d'aucun muscle : il ne
+       porte pas de séries et le moteur refuse de le placer (voir
+       applyCardioToProgram). Le compter ici ferait croire au moteur qu'il
+       existe un moyen de combler ce muscle, alors qu'il n'en existe aucun —
+       exactement le veto éternel que cette fonction sert à supprimer. */
+    if (isCardio(e)) return;
     var ms = allMuscles(e); if (!ms.length) return;
     principal[ms[0]] = true;
     ms.forEach(function(mu){ tous[mu] = true; });
@@ -2010,7 +2392,7 @@ function musclesSansMachineDediee(exercises) {
 }
 function _applyGoalToProgramRaw(program, exercises, goal, avgSessions, muscleFocus, baselineByMuscle, priorityOrder) {
   var exMap = {}; exercises.forEach(function(e){ exMap[e.id]=e; });
-  var factor = (avgSessions||SESSIONS_PER_WEEK) / Math.max(1, program.length);
+  var factor = (avgSessions||SESSIONS_PER_WEEK) / rotationLength(program);
   var baseTarget = goalPreset(goal).targetSets || VOL_MIN;
 
   var refs = []; // { it, muscles:[{mu,w}], base, extra }
@@ -2781,7 +3163,7 @@ function buildProgramFromSplit(tplKey, exercises, goal, gymId){
   var days = tpl.days.map(function(d, i){
     return { key: tplKey+"-"+i, label: d.label, accent: accents[i % accents.length], items: [], def: d };
   });
-  var pool = exercises.filter(function(e){ return exerciseAvailableAtGym(e, gymId); });
+  var pool = exercises.filter(function(e){ return !isCardio(e) && exerciseAvailableAtGym(e, gymId); });
   /* Répartition — corrigée le 6 sept. 2026 après mesure : la première version
      alternait par MUSCLE (1re machine de pectoraux au jour 1, 2e au jour 2...).
      Sur un full body, où chaque jour accepte tous les muscles, la plupart des
@@ -2813,6 +3195,99 @@ function buildProgramFromSplit(tplKey, exercises, goal, gymId){
   return days.filter(function(d){ return d.items.length > 0; })
     .map(function(d){ return { key:d.key, label:d.label, accent:d.accent,
       items: sortByExerciseOrder(d.items, function(it){return it.ex;}, exMap) }; });
+}
+/* Placer (ou retirer) le cardio dans le programme — ajouté le 17 sept. 2026.
+
+   RÈGLE STRUCTURELLE, à ne jamais contourner : le cardio vit dans `day.cardio`,
+   JAMAIS dans `day.items`. Tout le moteur de volume (plannedVolume, allocation
+   des séries, reflow, plafond par séance, diagnostics) raisonne en séries par
+   muscle ; y glisser un vélo obligerait à ajouter une exception dans une
+   trentaine d'endroits, et il suffirait d'en oublier un pour que le volume
+   soit faux en silence — exactement le bug qui a déjà coûté deux jours ici
+   ("ça compte bien mal"). Le cardio est donc une couche à part, ajoutée par
+   cette fonction et lue uniquement par l'affichage, la durée et les calories.
+
+   Jamais appelée automatiquement : c'est une action explicite depuis Options
+   (comme applyGoalToProgram), pour ne pas réécrire un programme dans le dos. */
+var CARDIO_DAY_ACCENTS = [C.steel, C.green, C.bone, C.taupe, C.pin, C.rust];
+function isCardioOnlyDay(day) {
+  return !!day && (!day.items || !day.items.length) && dayCardio(day).length > 0;
+}
+function stripCardio(program) {
+  return (program || [])
+    .filter(function(d){ return !isCardioOnlyDay(d); })
+    .map(function(d){
+      if (!d || d.cardio === undefined) return d;
+      /* La clé est RETIRÉE, pas mise à null : repasser en "muscu seule" doit
+         rendre exactement le programme d'avant, à l'octet près (test). */
+      var copie = {}; Object.keys(d).forEach(function(k){ if (k !== "cardio") copie[k] = d[k]; });
+      return copie;
+    });
+}
+function makeCardioDay(i, exId, minutes, zone) {
+  return { key: "cardio-" + i, label: "Cardio " + (i + 1), accent: CARDIO_DAY_ACCENTS[i % CARDIO_DAY_ACCENTS.length],
+           items: [], cardio: [{ ex: exId, min: minutes, zone: zone }] };
+}
+function applyCardioToProgram(program, exercises, profile) {
+  var base = stripCardio(program);
+  var plan = cardioPlanFor(profile);
+  if (!plan) return base;
+  var exId = chooseCardioMachine(exercises, profile && profile.goal, profile && profile.currentGymId, profile && profile.cardioEx);
+  if (!exId) return base;                     // aucun appareil de cardio dans cette salle
+  var i;
+  if (plan.mode === "cardio") {
+    var seuls = [];
+    for (i = 0; i < plan.sessions; i++) seuls.push(makeCardioDay(i, exId, plan.minutes, plan.zone));
+    return seuls;
+  }
+  if (!cardioNeedsSeparateDay(base, exercises, profile, plan)) {
+    var creneaux = repartirCreneaux(base.length, plan.sessions);
+    return base.map(function(d, idx){
+      return creneaux.indexOf(idx) >= 0
+        ? Object.assign({}, d, { cardio: [{ ex: exId, min: plan.minutes, zone: plan.zone }] })
+        : d;
+    });
+  }
+  var out = base.slice();
+  for (i = 0; i < plan.sessions; i++) out.push(makeCardioDay(i, exId, plan.minutes, plan.zone));
+  return out;
+}
+/* Changer de mode d'entraînement, profil ET programme dans le même geste
+   (même logique que applyBalanceOrTimeChange pour l'objectif).
+
+   Le seul cas délicat est "cardio seul" : il n'y a plus de séance de muscu
+   dans le programme. Plutôt que de jeter un programme réglé machine par
+   machine, on le MET EN PAUSE dans le profil (programMuscuEnPause) et on le
+   rend tel quel dès qu'on repasse en "muscu seule" ou "les 2". Rien n'est
+   perdu, et faire l'aller-retour redonne exactement le programme d'avant —
+   c'est vérifié par un test. */
+function applyTrainingModeChange(mode, program, exercises, profile) {
+  var nouveau = Object.assign({}, profile, { trainingMode: mode });
+  var muscu = musculationDays(program).length ? stripCardio(program) : null;
+  if (mode === "cardio") {
+    if (muscu && muscu.length) nouveau.programMuscuEnPause = muscu;
+    return { profile: nouveau, program: applyCardioToProgram(program, exercises, nouveau) };
+  }
+  var base = program;
+  if (!musculationDays(program).length && profile && profile.programMuscuEnPause && profile.programMuscuEnPause.length) {
+    base = profile.programMuscuEnPause;
+    delete nouveau.programMuscuEnPause;
+  }
+  return { profile: nouveau, program: applyCardioToProgram(base, exercises, nouveau) };
+}
+/* Ce que l'app fera si on applique — pour l'afficher AVANT de confirmer. */
+function cardioPlacementPreview(program, exercises, profile) {
+  var plan = cardioPlanFor(profile);
+  if (!plan) return { mode: "muscu", texte: "Aucun cardio programmé." };
+  var total = plan.sessions * plan.minutes;
+  if (plan.mode === "cardio") {
+    return { mode: "cardio", plan: plan, total: total, separe: true,
+      texte: plan.sessions + " séances de cardio de " + plan.minutes + " min (" + total + " min/semaine). Les séances de muscu sont retirées du programme." };
+  }
+  var separe = cardioNeedsSeparateDay(stripCardio(program), exercises, profile, plan);
+  return { mode: "both", plan: plan, total: total, separe: separe,
+    texte: plan.sessions + " × " + plan.minutes + " min (" + total + " min/semaine), "
+      + (separe ? "sur des journées de cardio à part" : "à la fin de " + plan.sessions + " séances de muscu") + "." };
 }
 /* Simule chaque split sur le matériel et le rythme réels, pour que le choix se
    fasse sur des chiffres (voir la note en tête de section). Renvoie pour
@@ -2990,7 +3465,9 @@ function suggestProgramCompletion(program, exercises, goal, avgSessions, muscleF
       adaptDayItems(d.items, exercises, exMapG, gymId).forEach(function(it){ inProgram[it.ex] = true; });
     });
   }
-  var pool = exercises.filter(function(e){ return !inProgram[e.id] && exerciseAvailableAtGym(e, gymId); });
+  /* Le cardio ne fait pas partie du volume par muscle et vit dans day.cardio,
+     jamais dans day.items (voir isCardio) : il n'a rien à faire ici. */
+  var pool = exercises.filter(function(e){ return !inProgram[e.id] && !isCardio(e) && exerciseAvailableAtGym(e, gymId); });
   if (!pool.length) return [];
 
   var pending = {}; capped.forEach(function(c){ pending[c.muscle] = c; });
@@ -3626,7 +4103,7 @@ function reflowProgramForCatalogue(program, exercises, goal, avgSessions, muscle
        évaluerait tout le catalogue × tous les jours à chaque tour. */
     prog.forEach(function(day, di){
       exercises.forEach(function(ex){
-        if (!ex || !exerciseAvailableAtGym(ex, gymId)) return;
+        if (!ex || isCardio(ex) || !exerciseAvailableAtGym(ex, gymId)) return;
         if (day.items.some(function(it){ return it.ex === ex.id; })) return;
         if (!allMuscles(ex).some(function(mu){ return sousCible[mu]; })) return;
         /* Pas de machine du bas du corps dans un jour du haut, ni l'inverse
@@ -3996,7 +4473,7 @@ function deficitForProfile(profile, tdee) {
   }
   return autoDeficitKcal(profile.goal, profile.weightKg, tdee);
 }
-function computeNutrition(profile, avgSessionMinutes) {
+function computeNutrition(profile, avgSessionMinutes, cardioKcalDay) {
   /* BUG CORRIGÉ le 6 sept. 2026 (audit des cas limites) : le champ Poids est
      effaçable (le Stepper renvoie null sur un champ vidé), et tous les calculs
      qui en dépendent — kcal des pas, kcal d'entraînement, protéines par kg —
@@ -4019,8 +4496,16 @@ function computeNutrition(profile, avgSessionMinutes) {
     var avgSessions = ((profile.sessionsMin||0) + (profile.sessionsMax||0)) / 2;
     var coef = profile.sex === "F" ? TRAINING_KCAL_COEF.F : profile.sex === "M" ? TRAINING_KCAL_COEF.M : TRAINING_KCAL_COEF.DEFAULT;
     var trainingKcal = Math.round((avgSessionMinutes||0) * weight * coef * avgSessions / 7);
-    tdee = bmr + stepsKcal + trainingKcal;
-    breakdown = { stepsKcal: stepsKcal, trainingKcal: trainingKcal, avgSessions: avgSessions, avgSessionMinutes: avgSessionMinutes||0 };
+    /* Cardio — ajouté le 17 sept. 2026, et UNIQUEMENT dans ce mode-ci.
+       "DER + pas + séances" est le seul mode qui construit la dépense pièce
+       par pièce : y ajouter une ligne de cardio est cohérent. Le mode
+       "facteur d'activité" (1,55 = "sport 3-5×/semaine") compte DÉJÀ
+       l'entraînement dans son multiplicateur — ajouter le cardio par-dessus
+       le compterait deux fois. Et même ici, ça reste sur NON par défaut :
+       voir cardioKcal pour le détail. */
+    var cardioKcal = (profile.countCardioKcal && cardioKcalDay > 0) ? Math.round(cardioKcalDay) : 0;
+    tdee = bmr + stepsKcal + trainingKcal + cardioKcal;
+    breakdown = { stepsKcal: stepsKcal, trainingKcal: trainingKcal, cardioKcal: cardioKcal, avgSessions: avgSessions, avgSessionMinutes: avgSessionMinutes||0 };
   } else {
     tdee = bmr ? bmr * profile.activityMultiplier : null;
   }
@@ -4067,7 +4552,7 @@ var STATE_VERSION = 1;
    ne supprime jamais rien, et ne remplace son programme que s'il est devenu
    inexploitable — tout ce qu'il a loggé (séances, poids, profil, séance en
    cours) est préservé dans tous les cas. */
-var PROGRAM_VERSION = 4;
+var PROGRAM_VERSION = 6;   /* 6 (18 sept. 2026) : course et vélo dehors ; 5 (17 sept.) : les 5 appareils de cardio */
 /* Repère de build visible dans Options > tout en bas — demande implicite
    suite à plusieurs allers-retours où un changement publié semblait "ne pas
    arriver" (voir historique de la conversation, 5 sept. 2026) : sans repère
@@ -4076,7 +4561,7 @@ var PROGRAM_VERSION = 4;
    recommitée à la main — contrairement au lien Artifact qui se met à jour
    tout seul". Change cette date à chaque publication notable pour que la
    comparaison soit possible côté utilisateur. */
-var APP_BUILD = "2026-09-14g";
+var APP_BUILD = "2026-09-18a";
 
 function seedState() {
   return {
@@ -4100,6 +4585,7 @@ function seedState() {
       targetMode: "manual", dailySteps: 8000, sessionsMin: 3, sessionsMax: 4, alertVolume: 1,
       wheyLabel: "HSN Whey Protein Isolate (scoop 30 g)", wheyKcal: 116, wheyProtein: 27.9,
       goal: "loss_hyper", bodyFatPctManual: null, theme: "dark",
+      trainingMode: "muscu", countCardioKcal: false,
     },
   };
 }
@@ -4181,9 +4667,11 @@ function withLatestProgram(state) {
      enregistré tient encore debout (au moins un jour dont toutes les
      machines existent toujours), on le garde tel quel ; on ne retombe sur
      le catalogue que s'il ne reste rien d'exploitable. */
+  /* `|| dayCardio(d).length` : un jour de cardio pur n'a aucun `items` et
+     serait jeté par ce filtre — voir applyCardioToProgram. */
   var userProgram = (state.program || [])
     .map(function(d){ return Object.assign({}, d, { items: (d.items||[]).filter(function(it){ return known[it.ex]; }) }); })
-    .filter(function(d){ return d.items.length > 0; });
+    .filter(function(d){ return d.items.length > 0 || dayCardio(d).length > 0; });
   var mergedProgram = userProgram.length ? userProgram : SEED_PROGRAM
     .map(function(d){ return Object.assign({}, d, { items: d.items.filter(function(it){ return known[it.ex]; }) }); })
     .filter(function(d){ return d.items.length > 0; });
@@ -4663,7 +5151,7 @@ function structuralOvershoot(program, exercises, goal, avgSessions, muscleFocus)
   var baseTarget = goalPreset(goal).targetSets || VOL_MIN;
   var floor = setsBoundsForGoal(goal).min;
   var exMap = {}; exercises.forEach(function(e){ exMap[e.id]=e; });
-  var factor = (avgSessions||SESSIONS_PER_WEEK) / Math.max(1, program.length);
+  var factor = (avgSessions||SESSIONS_PER_WEEK) / rotationLength(program);
   var minPossible = {};
   program.forEach(function(d){ d.items.forEach(function(it){
     var ex = exMap[it.ex]; if (!ex) return;
@@ -4850,12 +5338,59 @@ function withStructureDefaults(state) {
   pose("profile", objet, function(){ return base().profile; });
   /* Un jour sans machine ne s'affiche pas et bloque plusieurs calculs : on le
      retire plutôt que de laisser un programme à moitié valide. */
-  if (out.program.some(function(d){ return !d || !Array.isArray(d.items) || !d.items.length; })) {
-    var jours = out.program.filter(function(d){ return d && Array.isArray(d.items) && d.items.length; });
+  if (out.program.some(function(d){ return !d || (!Array.isArray(d.items) && !dayCardio(d).length) || (!(d.items||[]).length && !dayCardio(d).length); })) {
+    var jours = out.program.filter(function(d){ return d && ((Array.isArray(d.items) && d.items.length) || dayCardio(d).length); })
+      .map(function(d){ return Array.isArray(d.items) ? d : Object.assign({}, d, { items: [] }); });
     if (!change) { out = Object.assign({}, state); change = true; }
     out.program = jours.length ? jours : base().program;
   }
   return change ? Object.assign({}, out, { _justMigrated: true }) : state;
+}
+/* Cardio — ajouté le 17 sept. 2026. Deux réglages, tous deux choisis pour ne
+   RIEN changer à un profil existant :
+     - trainingMode:"muscu"  : personne ne se retrouve avec du cardio imposé ;
+     - countCardioKcal:false : les calories du cardio ne sont pas ajoutées à la
+       dépense (voir cardioKcal pour le pourquoi : le facteur d'activité du
+       TDEE compte déjà l'entraînement, les additionner revient à les compter
+       deux fois). */
+/* Les appareils de cardio livrés HIER n'avaient ni `distance`, ni `deniv`, ni
+   `energy` : withLatestProgram n'ajoute que les machines ABSENTES et ne
+   retouche jamais celles déjà en place (c'est voulu — il ne doit pas écraser
+   les réglages de l'utilisateur). Le tapis déjà distribué resterait donc sans
+   saisie de kilomètres. Cette migration ne pose que ces trois drapeaux, et
+   uniquement sur les appareils du CATALOGUE reconnus par leur id : ni les
+   muscles, ni le nom, ni les salles, ni rien de ce que l'utilisateur peut
+   avoir réglé. */
+var CARDIO_CHAMPS_CATALOGUE = (function(){
+  var m = {};
+  SEED_EXERCISES.forEach(function(e){
+    if (!isCardio(e)) return;
+    var champs = {};
+    ["dehors","distance","deniv","energy"].forEach(function(k){ if (e[k] !== undefined) champs[k] = e[k]; });
+    if (Object.keys(champs).length) m[e.id] = champs;
+  });
+  return m;
+})();
+function withCardioFieldUpdates(state) {
+  if (!state || !state.exercises) return state;
+  var change = false;
+  var out = state.exercises.map(function(e){
+    var champs = CARDIO_CHAMPS_CATALOGUE[e.id];
+    if (!champs) return e;
+    var manque = Object.keys(champs).some(function(k){ return e[k] === undefined; });
+    if (!manque) return e;
+    change = true;
+    return Object.assign({}, e, champs);
+  });
+  return change ? Object.assign({}, state, { exercises: out }) : state;
+}
+function withCardioDefaults(state) {
+  if (!state || !state.profile) return state;
+  if (state.profile.trainingMode !== undefined && state.profile.countCardioKcal !== undefined) return state;
+  var p = Object.assign({}, state.profile);
+  if (p.trainingMode === undefined) p.trainingMode = "muscu";
+  if (p.countCardioKcal === undefined) p.countCardioKcal = false;
+  return Object.assign({}, state, { profile: p });
 }
 function withAllMigrations(state) {
   var s = withStructureDefaults(state);
@@ -4874,6 +5409,8 @@ function withAllMigrations(state) {
   s = withSecondaryMuscleUpdates(s); // enrichit les machines DÉJÀ migrées (voir la note)
   s = withSecondaryMuscleDefaults(s);
   s = withTrackingDefaults(s);
+  s = withCardioDefaults(s);
+  s = withCardioFieldUpdates(s);
   return s;
 }
 /* Nettoyage des séries au moment d'enregistrer une séance — sorti de
@@ -5665,6 +6202,19 @@ function EditRow(props){
    6 sept. 2026 pour être partagée entre l'aperçu du split de l'onglet Séance et
    celui de l'onglet Programme (demande : "je parlais aussi dans l'onglet
    Programme"), plutôt que d'en écrire deux versions qui divergeraient. */
+/* Ligne "Cardio" affichée sous la liste des machines d'un jour. */
+function CardioLine(props){
+  var liste = dayCardio(props.day), exMap = props.exMap || {};
+  if (!liste.length) return null;
+  return h("div", null, liste.map(function(c,i){
+    var ex = exMap[c.ex];
+    return h("div",{key:i, style:{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderTop:"1px solid "+C.shroudDeep}},
+      h("span",{style:{fontFamily:sansCond,fontSize:10.5,fontWeight:700,color:C.steel,border:"1px solid "+C.steel,borderRadius:4,padding:"2px 5px",flexShrink:0}}, "CARDIO"),
+      h("div",{style:{flex:1,minWidth:0}},
+        h("div",{style:{fontSize:13.5,lineHeight:1.3}}, ex ? ex.name : "Appareil de cardio"),
+        h("div",{style:{fontFamily:sansCond,fontSize:11,color:C.taupe}}, c.min+" min · "+cardioZone(c.zone).label)));
+  }));
+}
 function DayItemList(props){
   var items = props.items || [], exMap = props.exMap || {};
   return h("div", null, items.map(function(it,i){
@@ -5697,6 +6247,22 @@ function DayItemList(props){
 /* Encadré d'un jour du split, repliable — même composant dans Séance et dans
    Programme pour que les deux se comportent pareil. `onStart` est optionnel :
    l'onglet Programme montre le contenu sans proposer de démarrer. */
+/* Résumé d'un jour en une ligne — même formule partout (encadré "Prochaine
+   séance", cartes du sélecteur, Machines > "Composer les séances"), pour que
+   trois écrans ne puissent pas raconter trois choses différentes. Un jour de
+   cardio pur n'a ni exercice ni série : son résumé, c'est sa durée. */
+function daySummaryLine(day, exMap, courts) {
+  var nExos = (day.items || []).length;
+  var nSeries = (day.items || []).reduce(function(a,b){ return a + b.sets; }, 0);
+  var minutes = estimateDayMinutes(day, exMap);
+  var cardio = cardioMinutesOfDay(day);
+  var motExo = courts ? " exos" : " exercices";
+  var bouts = [];
+  if (nExos) bouts.push(nExos + motExo, nSeries + " série" + (nSeries>1?"s":""));
+  if (cardio) bouts.push(cardio + " min de cardio");
+  bouts.push("~" + minutes + " min");
+  return bouts.join(" · ");
+}
 function DayCard(props){
   var d = props.day, isOpen = props.open, exMap = props.exMap || {};
   var items = props.items || d.items;
@@ -5705,11 +6271,12 @@ function DayCard(props){
       style:{width:"100%",display:"flex",alignItems:"center",gap:8,padding:"10px 11px",background:"transparent",border:"none",textAlign:"left"}},
       h("span",{style:{fontFamily:sansCond,fontSize:15,fontWeight:700,color:d.accent,flexShrink:0}}, d.label),
       h("span",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe,flex:1,minWidth:0,textAlign:"right"}},
-        d.items.length+" exos · "+d.items.reduce(function(a,b){return a+b.sets;},0)+" séries · ~"+estimateDayMinutes(d,exMap)+" min"),
+        daySummaryLine(d, exMap, true)),
       h("span",{style:{flexShrink:0,color:C.taupe,lineHeight:0,transform:isOpen?"rotate(180deg)":"none",transition:"transform .2s"}},
         h(Icon,{name:"chevronDown",size:15}))),
     isOpen ? h("div",{style:{borderTop:"1px solid "+C.taupeDim,padding:"8px 11px 11px"}},
       h(DayItemList,{items:items, exMap:exMap}),
+      h(CardioLine,{day:d, exMap:exMap}),
       props.onStart ? h("button",{onClick:props.onStart,
         style:{width:"100%",marginTop:10,padding:"10px 0",borderRadius:6,background:C.pin,color:C.ink,fontFamily:sansCond,fontSize:14.5,fontWeight:700,border:"none"}},
         "Commencer "+d.label) : null) : null);
@@ -6167,7 +6734,7 @@ function DeloadBanner(props){
 }
 
 var FREEFORM_LABEL = "Séance libre";
-var MSG_RIEN_A_ENREGISTRER = "Aucune série remplie : il n'y a rien à enregistrer. Note au moins un poids ou des répétitions, ou utilise \"Abandonner\" si tu ne fais pas cette séance.";
+var MSG_RIEN_A_ENREGISTRER = "Aucune série remplie et aucun cardio : il n'y a rien à enregistrer. Note au moins un poids, des répétitions ou une durée de cardio, ou utilise \"Abandonner\" si tu ne fais pas cette séance.";
 function SeanceTab(props) {
   var program=props.program, exercises=props.exercises||[], exMap=props.exMap, sessions=props.sessions, nextDayKey=props.nextDayKey,
       active=props.active, setActive=props.setActive, finishSession=props.finishSession, startRestTimer=props.startRestTimer,
@@ -6533,7 +7100,17 @@ function SeanceTab(props) {
       var sets = Array.from({length:nSets}, function(){ return {weight:null, reps:null, rir:null, weakSide:null}; });
       return { ex: it.ex, sets: sets };
     });
-    setActive({ id:"s"+Date.now(), date:new Date().toISOString(), dayKey:dayKey, done:false, deload: !!deload, entries: entries });
+    /* Le cardio du jour est recopié dans la séance (voir applyCardioToProgram) :
+       `min`/`zone` deviennent ce qui a été RÉELLEMENT fait, modifiable pendant
+       la séance. Prérempli avec le prescrit, pour n'avoir rien à saisir si on
+       fait exactement ce qui était prévu. */
+    var cardio = dayCardio(d).map(function(c){
+      var dispo = exMap[c.ex] && exerciseAvailableAtGym(exMap[c.ex], currentGymId);
+      return { ex: dispo ? c.ex : (chooseCardioMachine(exercises, goal, currentGymId, profile && profile.cardioEx) || c.ex),
+               min: c.min, zone: c.zone || CARDIO_DEFAULT_ZONE, prescritMin: c.min };
+    });
+    setActive({ id:"s"+Date.now(), date:new Date().toISOString(), dayKey:dayKey, done:false, deload: !!deload,
+      entries: entries, cardio: cardio.length ? cardio : null });
     setPickerOpen(false);
   }
 
@@ -6577,12 +7154,13 @@ function SeanceTab(props) {
               h("div",{style:{flex:1,minWidth:0}},
                 h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,marginBottom:4}}, "Rotation — reprends où tu t'es arrêté"),
                 h("div",{style:{fontFamily:sansCond,fontSize:32,fontWeight:700,color:day.accent,lineHeight:1.1}}, day.label),
-                h("div",{style:{fontSize:14,color:C.taupe,marginTop:8}}, day.items.length+" exercices · "+day.items.reduce(function(a,b){return a+b.sets;},0)+" séries · ~"+estimateDayMinutes(day,exMap)+" min estimées")),
+                h("div",{style:{fontSize:14,color:C.taupe,marginTop:8}}, daySummaryLine(day, exMap)+" estimées")),
               h("div",{style:{display:"flex",flexDirection:"column",alignItems:"center",gap:2,flexShrink:0,color:C.taupe,paddingTop:2}},
                 h("span",{style:{lineHeight:0,transform:peekNext?"rotate(180deg)":"none",transition:"transform .2s"}}, h(Icon,{name:"chevronDown",size:20})),
                 h("span",{style:{fontFamily:sansCond,fontSize:9.5,whiteSpace:"nowrap"}}, peekNext?"fermer":"voir"))),
             peekNext ? h("div",{style:{marginTop:10,paddingTop:10,borderTop:"1px solid "+C.taupeDim}},
-              h(DayItemList,{items: sortByExerciseOrder(adaptDayItems(day.items, exercises, exMap, currentGymId), function(it){return it.ex;}, exMap), exMap:exMap})) : null),
+              h(DayItemList,{items: sortByExerciseOrder(adaptDayItems(day.items, exercises, exMap, currentGymId), function(it){return it.ex;}, exMap), exMap:exMap}),
+              h(CardioLine,{day:day, exMap:exMap})) : null),
           h("button",{onClick:function(){ start(day.key, deloadForNextStart); setDeloadForNextStart(false); },
             style:{width:"100%",marginTop:20,padding:"12px 0",borderRadius:6,background:deloadForNextStart?C.steel:C.pin,color:C.ink,fontFamily:sansCond,fontSize:16,fontWeight:700,border:"none"}},
             (deloadForNextStart?"Commencer "+day.label+" (décharge)":"Commencer "+day.label)),
@@ -6606,6 +7184,32 @@ function SeanceTab(props) {
                 onStart:function(){ start(d.key, deloadForNextStart); setDeloadForNextStart(false); }});
             })) : null
         )),
+      /* Journées de cardio (17 sept. 2026) — elles ne font PAS partie de la
+         rotation (voir musculationDays : elles s'ajoutent à la semaine, elles
+         ne remplacent pas une séance de muscu). Sans cette carte, elles
+         n'existaient que dans "Choisir une autre séance" : rien sur l'écran
+         d'accueil ne rappelait qu'il y en a à faire cette semaine — donc
+         personne ne les ferait. */
+      (function(){
+        var joursCardio = program.filter(isCardioOnlyDay);
+        if (!joursCardio.length) return null;
+        var total = joursCardio.reduce(function(a,d){ return a + cardioMinutesOfDay(d); }, 0);
+        return h(Section, {title:"Cardio de la semaine"},
+          h("div",{style:{borderRadius:10,padding:14,background:C.shroudDeep,border:"1px solid "+C.steel}},
+            h("div",{style:{fontSize:13,color:C.taupe,lineHeight:1.5,marginBottom:10}},
+              joursCardio.length+" séance"+(joursCardio.length>1?"s":"")+" de cardio, "+total+" min au total — en plus de ta rotation, pas à la place. Elles n'avancent pas le A/B/C/D : lance-les quand ça t'arrange."),
+            h("div",{style:{display:"flex",flexDirection:"column",gap:6}},
+              joursCardio.map(function(d){
+                var c = dayCardio(d)[0] || {};
+                var ex = exMap[c.ex];
+                return h("div",{key:d.key, style:{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderRadius:8,background:C.shroud,border:"1px solid "+C.taupeDim}},
+                  h("div",{style:{flex:1,minWidth:0}},
+                    h("div",{style:{fontFamily:sansCond,fontSize:14,fontWeight:700,color:d.accent}}, d.label),
+                    h("div",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe}}, (ex?ex.name+" · ":"")+c.min+" min · "+cardioZone(c.zone).label)),
+                  h("button",{onClick:function(){ start(d.key, false); },
+                    style:{flexShrink:0,padding:"8px 14px",borderRadius:6,background:C.steel,color:C.ink,fontFamily:sansCond,fontSize:13,fontWeight:700,border:"none"}}, "Commencer"));
+              }))));
+      })(),
       h(Section, {title:"Séance libre"},
         h("div",{style:{borderRadius:10,padding:16,background:C.shroudDeep,border:"1px solid "+C.taupeDim,display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}},
           /* Raccourci le 6 sept. 2026 : cinq lignes de texte pour un bouton
@@ -6642,7 +7246,9 @@ function SeanceTab(props) {
               /* La proposition de remplacement s'ouvre ICI, sous la machine sur
                  laquelle on vient d'appuyer (voir swapCard). */
               swapPending && swapPending.exId===it.ex ? h("div",{style:{padding:"0 10px 10px"}}, swapCard(it.ex)) : null);
-          })
+          }),
+          dayCardio(day).length ? h("div",{style:{padding:"4px 12px 10px",background:C.shroudDeep,borderTop: previewItems.length ? "1px solid "+C.shroud : "none"}},
+            h(CardioLine,{day:day, exMap:exMap})) : null
         ),
         /* Ajouté le 6 sept. 2026 — la pastille ronde devant chaque machine
            affiche son PALIER (1 poly / 2 semi / 3 isolation), et son seul
@@ -6729,7 +7335,11 @@ function SeanceTab(props) {
 
   if (active.freeform) {
     var addedIds = active.entries.map(function(e){return e.ex;});
-    var available = exercises.filter(function(e){return addedIds.indexOf(e.id)===-1 && exerciseAvailableAtGym(e, currentGymId);}).slice().sort(function(a,b){return a.name.localeCompare(b.name);});
+    /* !isCardio : les appareils de cardio ne s'ajoutent pas comme une machine
+       (ils ne portent pas de séries et fausseraient le volume par muscle — voir
+       applyCardioToProgram) ; ils ont leur propre bloc, ajoutable juste en
+       dessous par "+ Ajouter du cardio à cette séance". */
+    var available = exercises.filter(function(e){return addedIds.indexOf(e.id)===-1 && !isCardio(e) && exerciseAvailableAtGym(e, currentGymId);}).slice().sort(function(a,b){return a.name.localeCompare(b.name);});
     return h("div", null,
       h("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}},
         h("div",null,
@@ -6820,11 +7430,84 @@ function SeanceTab(props) {
           h("option",{value:""}, "Ajouter une machine…"),
           available.map(function(e){ return h("option",{key:e.id,value:e.id}, e.name+" ("+brandLabel(e)+") — "+allMuscles(e).join(", ")); })),
         h("button",{onClick:addFreeformExercise, style:{width:"100%",padding:"10px 0",borderRadius:6,background:C.pin,color:C.ink,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Ajouter")),
+      /* Une séance libre peut aussi être une séance de cardio, ou en contenir —
+         d'où le même bloc qu'en séance programmée (17 sept. 2026). */
+      cardioBlock(),
       h("button",{onClick:tenterEnregistrer, style:{width:"100%",marginTop:8,padding:"14px 0",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:C.green,color:C.ink,fontFamily:sansCond,fontSize:16,fontWeight:700,border:"none"}},
         h(Icon,{name:"check",size:18}), "Enregistrer la séance"),
       rienAEnregistrer ? h("p",{style:{fontSize:12.5,color:C.rust,marginTop:8,lineHeight:1.5}}, MSG_RIEN_A_ENREGISTRER) : null,
       h("p",{style:{fontSize:12.5,color:C.taupe,marginTop:8,lineHeight:1.5}}, "Les séries vides sont ignorées. Cette séance compte comme une séance normale : historique et progression de charge.")
     );
+  }
+
+  /* --- Cardio de la séance en cours (17 sept. 2026) ---------------------
+     On enregistre ce qui a été FAIT : l'appareil peut changer (machine prise),
+     la durée aussi. L'intensité se choisit au test de la parole, seul repère
+     utilisable sans cardiofréquencemètre (voir CARDIO_ZONES). */
+  function updateCardio(i, patch){
+    setActive(Object.assign({}, active, { cardio: (active.cardio||[]).map(function(c,k){ return k===i ? Object.assign({}, c, patch) : c; }) }));
+  }
+  function removeCardio(i){
+    var reste = (active.cardio||[]).filter(function(c,k){ return k!==i; });
+    setActive(Object.assign({}, active, { cardio: reste.length ? reste : null }));
+  }
+  function addCardio(){
+    var id = chooseCardioMachine(exercises, goal, currentGymId, profile && profile.cardioEx);
+    if (!id) return;
+    var plan = cardioPlanFor(profile);
+    setActive(Object.assign({}, active, { cardio: (active.cardio||[]).concat([{ ex:id, min: plan ? plan.minutes : 20, zone: CARDIO_DEFAULT_ZONE }]) }));
+  }
+  function cardioBlock(){
+    var liste = active.cardio || [];
+    var appareils = exercises.filter(function(e){ return isCardio(e) && exerciseAvailableAtGym(e, currentGymId); });
+    if (!liste.length && !appareils.length) return null;
+    return h("div",{style:{marginBottom:12}},
+      liste.map(function(c, i){
+        var ex = exMap[c.ex];
+        var z = cardioZone(c.zone);
+        var kcal = cardioKcal(ex, c, profile.weightKg);
+        var vitesse = cardioVitesse(c), allure = cardioAllure(c);
+        return h("div",{key:i, style:{marginBottom:10,borderRadius:10,overflow:"hidden",border:"1px solid "+C.steel}},
+          h("div",{style:{padding:"10px 12px",background:C.shroudDeep,display:"flex",alignItems:"center",gap:8}},
+            h("div",{style:{fontFamily:sansCond,fontSize:12,fontWeight:700,color:C.steel,flex:1}}, "CARDIO"),
+            c.prescritMin ? h("div",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe}}, "prévu : "+c.prescritMin+" min") : null,
+            h("button",{onClick:function(){removeCardio(i);}, title:"Retirer le cardio de cette séance", "aria-label":"Retirer le cardio",
+              style:{padding:6,borderRadius:6,color:C.taupe,background:"transparent",border:"1px solid "+C.taupeDim}}, h(Icon,{name:"x",size:13}))),
+          h("div",{style:{padding:"10px 12px",background:C.shroud,display:"flex",flexDirection:"column",gap:8,minWidth:0}},
+            h("select",{value:c.ex, onChange:function(e){updateCardio(i,{ex:e.target.value});}, "aria-label":"Appareil de cardio",
+              style:{width:"100%",minWidth:0,padding:"8px",borderRadius:6,background:C.shroudDeep,color:C.bone,border:"1px solid "+C.taupeDim,fontFamily:sansBody,fontSize:14}},
+              appareils.some(function(e){return e.id===c.ex;}) ? null : h("option",{value:c.ex}, ex?ex.name:"Appareil"),
+              appareils.map(function(e){ return h("option",{key:e.id,value:e.id}, e.name); })),
+            /* Durée d'abord (elle seule est obligatoire), puis distance et
+               dénivelé pour les activités qui s'y prêtent — voir `distance` /
+               `deniv` dans SEED_EXERCISES. Les deux restent facultatifs : sans
+               distance, les calories retombent sur le MET par intensité. */
+            h("div",{style:{display:"flex",alignItems:"center",gap:8}},
+              h(Stepper,{value:c.min, onChange:function(v){updateCardio(i,{min:v});}, step:5, min:0, max:240, suffix:"min", compact:true, flex:true})),
+            (ex && ex.distance) ? h("div",{style:{display:"flex",alignItems:"center",gap:8}},
+              h(Stepper,{value:c.km, onChange:function(v){updateCardio(i,{km:v});}, step:0.5, min:0, max:300, suffix:"km", placeholder:"km", compact:true, flex:true}),
+              (ex && ex.deniv) ? h(Stepper,{value:c.deniv, onChange:function(v){updateCardio(i,{deniv:v});}, step:10, min:0, max:9000, suffix:"m D+", placeholder:"D+", compact:true, flex:true}) : null) : null,
+            allure ? h("div",{style:{fontFamily:sansBody,fontSize:12.5,color:C.bone,fontVariantNumeric:"tabular-nums"}},
+              (ex && ex.energy==="bike") ? (vitesse.toFixed(1).replace(".", ",")+" km/h de moyenne") : (formatAllure(allure)+" ("+vitesse.toFixed(1).replace(".", ",")+" km/h)")) : null,
+            h("div",{style:{display:"flex",gap:6}},
+              CARDIO_ZONES.map(function(zz){ var on = (c.zone||CARDIO_DEFAULT_ZONE)===zz.k;
+                return h("button",{key:zz.k, onClick:function(){updateCardio(i,{zone:zz.k});}, "aria-pressed":on?"true":"false",
+                  style:{flex:1,padding:"8px 4px",borderRadius:6,background:on?C.steel:C.shroudDeep,color:on?C.ink:C.taupe,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:12,fontWeight:700}}, zz.label); })),
+            h("div",{style:{fontSize:12,color:C.taupe,lineHeight:1.5}}, z.talk+" (≈ "+z.rpe+")"),
+            /* Le tapis affiche une PENTE en %, pas un dénivelé : la conversion
+               est donnée ici plutôt que de créer un deuxième champ. */
+            (ex && ex.deniv && !ex.dehors) ? h("div",{style:{fontSize:11.5,color:C.taupe,lineHeight:1.45}},
+              "Pente affichée sur la console : 1 % sur 5 km = 50 m de D+.") : null,
+            (profile.countCardioKcal && kcal>0) ? h("div",{style:{fontSize:12,color:C.taupe,lineHeight:1.5}},
+              "≈ "+kcal+" kcal — "+(
+                (allure && ex && ex.energy==="run")
+                  ? ("calculé d'après ton allure"+(c.deniv>0?" et ton dénivelé":"")+" (équations ACSM, ±7 % environ).")
+                : (allure && ex && ex.energy==="bike")
+                  ? "calculé d'après ta vitesse moyenne et l'intensité déclarée. Le dénivelé est enregistré mais n'entre pas dans ce chiffre : aucune équation validée ne le permet à vélo."
+                : "estimation d'après l'intensité seule — renseigne la distance pour un calcul plus juste.")) : null));
+      }),
+      (appareils.length && !liste.length) ? h("button",{onClick:addCardio,
+        style:{width:"100%",padding:"9px 0",borderRadius:6,color:C.taupe,fontFamily:sansCond,fontSize:13,fontWeight:600,border:"1px dashed "+C.taupeDim,background:"transparent"}}, "+ Ajouter du cardio à cette séance") : null);
   }
 
   var dayActive = program.find(function(d){return d.key===active.dayKey;}) || program[0];
@@ -6870,7 +7553,9 @@ function SeanceTab(props) {
     });
   adhocItems = adhocItems.concat(orphanItems);
   var sessionItems = sortByExerciseOrder(sortByExerciseOrder(adaptedDayItems, function(it){return it.ex;}, exMap).concat(adhocItems), function(it){return it.ex;}, exMap);
-  var availableToAdd = exercises.filter(function(e){ return !active.entries.some(function(en){return en.ex===e.id;}) && exerciseAvailableAtGym(e, currentGymId); }).slice().sort(function(a,b){return a.name.localeCompare(b.name);});
+  /* !isCardio : voir la même note dans la séance libre — le cardio a son
+     propre bloc (cardioBlock), il ne s'ajoute pas comme une machine. */
+  var availableToAdd = exercises.filter(function(e){ return !active.entries.some(function(en){return en.ex===e.id;}) && !isCardio(e) && exerciseAvailableAtGym(e, currentGymId); }).slice().sort(function(a,b){return a.name.localeCompare(b.name);});
 
   return h("div", null,
     swapCardOrphan(sessionItems),
@@ -6962,6 +7647,7 @@ function SeanceTab(props) {
           })
         ));
     }),
+    cardioBlock(),
     h("div",{style:{marginBottom:12,borderRadius:10,overflow:"hidden",border:"1px solid "+C.taupeDim}},
       /* minWidth:0 (7 sept. 2026) — un <select> prend par défaut la largeur de
          sa PLUS LONGUE option ("Développé du Tronc (Life Fitness) — Pectoraux,
@@ -7039,6 +7725,11 @@ function ProgrammeTab(props){
   function applySplit(tplKey){
     var prog = buildProgramFromSplit(tplKey, exercises, goal, profile.currentGymId);
     if (!prog || !prog.length) return;
+    /* Le split est reconstruit de zéro : le cardio, qui ne fait pas partie des
+       modèles de split, serait perdu au passage. On le repose d'après le
+       réglage en cours (voir applyCardioToProgram), sinon changer de split
+       annulerait en silence un choix fait dans Options. */
+    prog = applyCardioToProgram(prog, exercises, profile);
     persistConfig(exercises, prog); // persistConfig réoptimise (séries/reps/repos, ordre de priorité)
     setSplitDone(splitTemplate(tplKey).label);
     setSplitOpen(false);
@@ -7197,10 +7888,34 @@ function OptionsTab(props){
   }
 
   var exMap = {}; exercises.forEach(function(e){exMap[e.id]=e;});
-  var avgSessionMinutes = program.length
-    ? Math.round(program.reduce(function(a,d){return a+estimateDayMinutes(d, exMap);},0) / program.length)
+  var apercuCardio = cardioPlacementPreview(program, exercises, profile);
+  var appareilsCardio = exercises.filter(function(e){ return isCardio(e) && exerciseAvailableAtGym(e, currentGymId); });
+  /* Comparaison au repère ACSM affichée telle quelle, sans arrondir le
+     discours : 150-300 min/semaine d'intensité modérée pour la santé,
+     au-delà de ~225 min/semaine pour une perte de poids cliniquement
+     significative (position stand ACSM sur activité physique et poids). */
+  var repereACSM = (function(){
+    if (!apercuCardio.plan) return "";
+    var t = apercuCardio.total;
+    var perte = (profile.goal||"").indexOf("loss") >= 0;
+    var txt = t + " min/semaine. Repère ACSM : 150 à 300 min d'intensité modérée pour la santé";
+    txt += perte ? ", et au-delà d'environ 225 min/semaine pour une perte de poids cliniquement significative. " : ". ";
+    if (t >= 225) txt += "Tu es au-dessus des deux seuils.";
+    else if (t >= 150) txt += "Tu es dans la fourchette santé" + (perte ? ", sous le seuil \"perte de poids\" — le déficit reste piloté par l'assiette." : ".");
+    else txt += "C'est sous la fourchette santé : c'est un choix assumé pour que ça tienne à côté de tes séances de muscu" + (perte ? ", le déficit étant de toute façon piloté par l'assiette." : ".");
+    return txt;
+  })();
+  /* Durée moyenne d'une séance de MUSCU, cardio exclu (17 sept. 2026) : c'est
+     ce chiffre qui sert à estimer les kcal d'entraînement, avec le coefficient
+     de la muscu et la fréquence des séances de muscu. Le cardio a sa propre
+     ligne (voir weeklyCardioKcalPerDay), sinon il serait compté au mauvais
+     tarif et sur la mauvaise fréquence. */
+  var joursMuscu = musculationDays(program);
+  var avgSessionMinutes = joursMuscu.length
+    ? Math.round(joursMuscu.reduce(function(a,d){return a+estimateDayMinutes(Object.assign({}, d, {cardio:null}), exMap);},0) / joursMuscu.length)
     : 0;
-  var nut = computeNutrition(profile, avgSessionMinutes);
+  var cardioKcalJour = weeklyCardioKcalPerDay(program, exercises, profile);
+  var nut = computeNutrition(profile, avgSessionMinutes, cardioKcalJour);
   /* Déficit réellement appliqué et sa traduction en rythme hebdomadaire —
      ajouté le 14 sept. 2026 avec le passage du déficit en pourcentage du poids
      (voir autoDeficitKcal). Affiché sous le curseur pour qu'on voie ce que le
@@ -7284,7 +7999,7 @@ function OptionsTab(props){
   // never silently touches profile.manualTargetKcal/manualProteinG —
   // adopting it is an explicit action via the button below.
   var stepsNut = (profile.targetMode !== "steps")
-    ? computeNutrition(Object.assign({}, profile, {targetMode:"steps"}), avgSessionMinutes)
+    ? computeNutrition(Object.assign({}, profile, {targetMode:"steps"}), avgSessionMinutes, cardioKcalJour)
     : null;
   /* Choisir un objectif applique tout de suite ses réglages nutrition
      (déficit/protéines/activité) ET repasse en mode "DER + pas + séances"
@@ -7376,6 +8091,26 @@ function OptionsTab(props){
      exactement ça. Il peut donc maintenant aussi retirer d'un jour une machine
      qui fait déborder un muscle, et en ajouter une qui comble un manque. */
   function reapplyGoalToProgram(){ persistConfig(exercises, program, {reflow:true}); setReapplyPrompt(false); }
+  /* Muscu / cardio / les deux — appliqué tout de suite, comme l'objectif et
+     l'équilibrage (voir applyBalanceOrTimeChange) : le programme ET la
+     prochaine séance doivent refléter le choix sans bandeau à confirmer.
+     Rien n'est perdu au passage : voir applyTrainingModeChange. */
+  function applyTrainingMode(mode){
+    if (trainingMode(profile) === mode) return;
+    var res = applyTrainingModeChange(mode, program, exercises, profile);
+    setProfile(res.profile);
+    persistConfig(exercises, res.program, {reoptimize:false});
+  }
+  /* Changer l'activité par défaut repose le cardio tout de suite, comme tout
+     le reste des réglages (voir applyBalanceOrTimeChange) : sinon le programme
+     continuerait d'annoncer l'appareil précédent. */
+  function appliquerCardioEx(id){
+    var nouveau = Object.assign({}, profile, { cardioEx: id || null });
+    setProfile(nouveau);
+    if (trainingMode(profile) !== "muscu") {
+      persistConfig(exercises, applyCardioToProgram(program, exercises, nouveau), {reoptimize:false});
+    }
+  }
   /* Ajouté le 6 sept. 2026 — remplace setReapplyPrompt(true) pour les
      changements d'équilibrage (muscleFocus) et de temps/nombre de séances
      (sessionsMin/Max, sessionMinutesMin/Max) : contrairement à applyGoal, ces
@@ -7454,6 +8189,44 @@ function OptionsTab(props){
           "À quelle distance de l'échec s'arrêter — "+((GOALS.find(function(g){return g.k===(profile.goal||"loss_hyper");})||{}).label||"")),
         h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.55}}, EFFORT_ADVICE[profile.goal||"loss_hyper"] || EFFORT_ADVICE.loss_hyper)
       )
+    ),
+
+    h(Section, {title:"Cardio"},
+      h("p",{style:{fontSize:12,color:C.taupe,lineHeight:1.6,marginBottom:10}},
+        "Muscu seule, cardio seul, ou les deux. La dose (nombre de séances et durée) est calculée d'après ton objectif ci-dessus, et l'appli décide toute seule où la poser : à la fin de tes séances quand il y a la place, sur des journées à part sinon."),
+      h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8, marginBottom:10}},
+        TRAINING_MODES.map(function(m){ var on = trainingMode(profile)===m.k; return h("button",{key:m.k, onClick:function(){applyTrainingMode(m.k);},
+          style:{padding:"9px 6px",borderRadius:6,background:on?C.pin:C.shroud,color:on?C.ink:C.taupe,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:12,fontWeight:600,lineHeight:1.25}}, m.label); })),
+      /* Activité par défaut (18 sept. 2026) — sans ce réglage, l'appli posait
+         toujours le premier appareil disponible, et quelqu'un qui court dehors
+         devait le changer à chaque séance. Le choix reste modifiable séance par
+         séance dans la carte de cardio. */
+      appareilsCardio.length ? h("div",{style:{marginBottom:10}},
+        h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe,display:"block",marginBottom:4}}, "Activité par défaut"),
+        h(Select,{value: profile.cardioEx || "", onChange:function(v){ appliquerCardioEx(v); }},
+          h("option",{value:""}, "L'appli choisit"),
+          appareilsCardio.map(function(e){ return h("option",{key:e.id,value:e.id}, e.name); }))) : null,
+      h("div",{style:{borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.taupeDim,marginBottom:10}},
+        h("div",{style:{fontFamily:sansCond,fontSize:12,fontWeight:700,color:C.pin,marginBottom:6}}, "Ce qui est programmé"),
+        h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.55}}, apercuCardio.texte),
+        apercuCardio.plan ? h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.55,marginTop:6}}, repereACSM) : null,
+        (apercuCardio.plan && apercuCardio.separe && goalHasStrength(profile.goal)) ? h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.55,marginTop:6}},
+          "Journées à part parce que ton objectif contient de la force : la seule qualité que le cardio dégrade vraiment est la force EXPLOSIVE, et seulement quand les deux sont faits dans la même séance (méta-analyse 2022 : -0,28, p=0,007 ; plus d'effet significatif à 3 h d'écart). Sur le muscle et la force maximale, rien de démontré — donc rien à éviter.") : null,
+        (apercuCardio.plan && trainingMode(profile)==="cardio" && (profile.goal||"").indexOf("loss")<0) ? h("div",{style:{fontSize:12.5,color:C.rust,lineHeight:1.55,marginTop:6}},
+          "À dire franchement : ton objectif contient de l'hypertrophie ou de la force, et le cardio seul ne les produit pas. La dose ci-dessus est celle de la recommandation santé, pas de quoi atteindre cet objectif-là.") : null),
+      h("div",{style:{borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.taupeDim}},
+        h("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:6}},
+          h("div",{style:{fontFamily:sansCond,fontSize:12,fontWeight:700,color:C.pin}}, "Compter les calories du cardio dans ma dépense"),
+          h("div",{style:{display:"flex",gap:6}},
+            [{k:false,l:"Non"},{k:true,l:"Oui"}].map(function(o){ var on = !!profile.countCardioKcal === o.k;
+              return h("button",{key:String(o.k), onClick:function(){set({countCardioKcal:o.k});}, "aria-pressed":on?"true":"false",
+                style:{padding:"6px 14px",borderRadius:6,background:on?C.pin:C.shroud,color:on?C.ink:C.taupe,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:12.5,fontWeight:700}}, o.l); }))),
+        h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.55}},
+          "Sur NON par défaut, et c'est le réglage honnête dans la plupart des cas : ta dépense part déjà d'une estimation qui inclut l'entraînement, donc ajouter le cardio par-dessus revient à le compter deux fois et à s'autoriser un déficit qui n'existe pas. Mets OUI seulement si tu as réglé ton activité au plus bas et que tu comptes ton sport à part."),
+        (profile.countCardioKcal && (profile.targetMode||"") !== "steps") ? h("div",{style:{fontSize:12.5,color:C.rust,lineHeight:1.55,marginTop:6}},
+          "Sans effet avec ton mode de cible actuel : seul le mode \"DER + pas + séances\" construit la dépense poste par poste. Le facteur d'activité, lui, compte déjà l'entraînement dans son multiplicateur.") : null,
+        (profile.countCardioKcal && cardioKcalJour > 0) ? h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.55,marginTop:6}},
+          "Actuellement : +"+cardioKcalJour+" kcal/jour (moyenne sur 7 jours, formule ACSM à partir de ton poids et de l'appareil). C'est une estimation d'appareil, pas une mesure.") : null)
     ),
 
     h(Section, {title:"Mes salles"},
@@ -7727,7 +8500,8 @@ function OptionsTab(props){
         h(StatCard,{label:"Lipides", value:nut.fatG+" g"}),
         h(StatCard,{label:"Glucides", value:nut.carbG+" g"}),
         nut.breakdown ? h(StatCard,{label:"Pas (~"+(profile.dailySteps||0)+"/j)", value:nut.breakdown.stepsKcal+" kcal"}) : null,
-        nut.breakdown ? h(StatCard,{label:"Entraînement (~"+nut.breakdown.avgSessionMinutes+" min × "+nut.breakdown.avgSessions.toFixed(1)+"/sem)", value:nut.breakdown.trainingKcal+" kcal"}) : null
+        nut.breakdown ? h(StatCard,{label:"Entraînement (~"+nut.breakdown.avgSessionMinutes+" min × "+nut.breakdown.avgSessions.toFixed(1)+"/sem)", value:nut.breakdown.trainingKcal+" kcal"}) : null,
+        (nut.breakdown && nut.breakdown.cardioKcal) ? h(StatCard,{label:"Cardio ("+weeklyCardioMinutes(program)+" min/sem, lissé sur 7 jours)", value:nut.breakdown.cardioKcal+" kcal"}) : null
       ) : h("div",{style:{fontSize:13,color:C.rust,marginTop:10}},
         !profile.weightKg ? "Renseigne ton poids ci-dessus pour calculer tes cibles."
           : "Renseigne taille + sexe (ou une DER mesurée) pour calculer tes cibles."),
@@ -7805,7 +8579,16 @@ function HistoriqueTab(props){
        Remplacé par l'unité dans laquelle TOUT le reste de l'appli raisonne :
        le nombre de machines et de séries réellement faites. */
     var nbSeries = s.entries.reduce(function(a,e){ return a + e.sets.filter(function(x){ return x.reps!=null; }).length; },0);
-    var resume = s.entries.length + " machine" + (s.entries.length>1?"s":"") + " · " + nbSeries + " série" + (nbSeries>1?"s":"");
+    /* Cardio (17 sept. 2026) : une séance de cardio pur n'a ni machine ni
+       série — son résumé, c'est la durée. */
+    var cardioFait = sessionCardio(s);
+    var minCardio = cardioFait.reduce(function(a,c){ return a + c.min; }, 0);
+    var kmCardio = cardioFait.reduce(function(a,c){ return a + (c.km > 0 ? c.km : 0); }, 0);
+    var resumeMuscu = s.entries.length + " machine" + (s.entries.length>1?"s":"") + " · " + nbSeries + " série" + (nbSeries>1?"s":"");
+    var resumeCardio = minCardio ? (minCardio + " min de cardio" + (kmCardio ? " · " + (Math.round(kmCardio*10)/10).toString().replace(".", ",") + " km" : "")) : "";
+    var resume = s.entries.length
+      ? (resumeMuscu + (resumeCardio ? " · " + resumeCardio : ""))
+      : (resumeCardio || resumeMuscu);
     var rirs = []; s.entries.forEach(function(e){ e.sets.forEach(function(x){ if (x.rir!=null) rirs.push(x.rir); }); });
     var avgRir = rirs.length ? (rirs.reduce(function(a,b){return a+b;},0)/rirs.length) : null;
     var effortWord = effortLabelForRir(avgRir);
@@ -7818,6 +8601,15 @@ function HistoriqueTab(props){
             new Date(s.date).toLocaleDateString("fr-FR",{weekday:"short",day:"numeric",month:"short"}) + " · " + resume + (effortWord?" · ressenti "+effortWord:""))),
         h(Icon,{name:isOpen?"chevronDown":"chevronRight", size:17, color:C.taupe})),
       isOpen ? h("div",{style:{background:C.shroud}},
+        cardioFait.map(function(c,i){ var ex=exMap[c.ex]; return h("div",{key:"c"+i, style:{padding:"8px 12px",borderTop:"1px solid "+C.shroudDeep}},
+          h("div",{style:{fontSize:14,fontWeight:600,color:C.steel}}, ex?ex.name:"Appareil de cardio"),
+          h("div",{style:{fontSize:13.5,color:C.taupe,fontVariantNumeric:"tabular-nums"}},
+            [c.min+" min",
+             c.km > 0 ? (String(Math.round(c.km*10)/10).replace(".", ",")+" km") : null,
+             c.deniv > 0 ? (c.deniv+" m D+") : null,
+             (c.km > 0 && ex && ex.energy === "bike") ? (String(Math.round(cardioVitesse(c)*10)/10).replace(".", ",")+" km/h") : null,
+             (c.km > 0 && ex && ex.energy !== "bike") ? formatAllure(cardioAllure(c)) : null,
+             cardioZone(c.zone).label].filter(Boolean).join(" · "))); }),
         s.entries.map(function(e,i){ var ex=exMap[e.ex]; return h("div",{key:i, style:{padding:"8px 12px",borderTop:"1px solid "+C.shroudDeep}},
           h("div",{style:{fontSize:14,fontWeight:600}}, ex?ex.name:"Machine supprimée"),
           h("div",{style:{fontSize:13.5,color:C.taupe,fontVariantNumeric:"tabular-nums"}},
@@ -8073,7 +8865,10 @@ function AddToDay(props){
     h("select",{value:pick, onChange:function(e){setPick(e.target.value);},
       style:{flex:1,padding:"8px",borderRadius:6,background:C.shroudDeep,color:C.bone,border:"1px solid "+C.taupeDim,fontFamily:sansBody,fontSize:14}},
       h("option",{value:""}, "Ajouter un exercice…"),
-      exercises.map(function(e){ return h("option",{key:e.id,value:e.id}, e.name+" ("+brandLabel(e)+") — "+allMuscles(e).join(", ")); })),
+      /* !isCardio : le cardio ne se met pas dans les machines d'un jour — il a
+         sa propre ligne, réglée depuis Options > Cardio (voir
+         applyCardioToProgram). L'y glisser fausserait le volume par muscle. */
+      exercises.filter(function(e){ return !isCardio(e); }).map(function(e){ return h("option",{key:e.id,value:e.id}, e.name+" ("+brandLabel(e)+") — "+allMuscles(e).join(", ")); })),
     h("button",{onClick:add, style:{padding:"0 16px",borderRadius:6,background:C.pin,color:C.ink,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Ajouter"));
 }
 function MachinesTab(props){
@@ -8501,8 +9296,12 @@ function MachinesTab(props){
         return h("div",{key:d.key, style:{marginBottom:8,borderRadius:10,overflow:"hidden",border:"1px solid "+C.taupeDim}},
           h("button",{onClick:function(){setEditDay(isOpen?null:d.key);}, style:{width:"100%",padding:"12px",display:"flex",alignItems:"center",justifyContent:"space-between",background:C.shroudDeep,border:"none",textAlign:"left"}},
             h("span",{style:{fontFamily:sansCond,fontSize:16,fontWeight:600,color:d.accent}}, d.label),
-            h("span",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe}}, d.items.length+" exercices · "+total+" séries · ~"+mins+" min")),
+            h("span",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe}}, daySummaryLine(d, exMapForDuration))),
           isOpen ? h("div",{style:{background:C.shroud}},
+            dayCardio(d).length ? h("div",{style:{padding:"8px 12px",borderTop:"1px solid "+C.shroudDeep}},
+              h(CardioLine,{day:d, exMap:exMapForDuration}),
+              h("div",{style:{fontSize:12,color:C.taupe,lineHeight:1.5,marginTop:4}},
+                "Réglé depuis Options > Cardio, d'après ton objectif. La durée et l'intensité réellement faites se saisissent pendant la séance.")) : null,
             d.items.map(function(it,i){
               var ex = exercises.find(function(e){return e.id===it.ex;});
               /* reoptimize:false — seule exception à la réoptimisation
@@ -8736,9 +9535,20 @@ function AnalyseTab(props){
           max: Math.max(1, parseInt(reps[1], 10) || parseInt(reps[0], 10) || 12),
           rest: Math.max(15, it.repos || 90) };
       });
-      return { key: j.cle || ("j" + i), label: j.jour || ("Jour " + (i + 1)),
+      /* Cardio (17 sept. 2026) : relu s'il est présent, ignoré sinon — un
+         export antérieur au cardio s'importe donc exactement comme avant. */
+      var cardio = (j.cardio || []).filter(function(c){ return c && connues[c.id] && c.minutes > 0; })
+        .map(function(c){
+          var ligne = { ex: c.id, min: Math.max(1, Math.round(c.minutes)), zone: c.intensite || CARDIO_DEFAULT_ZONE };
+          if (c.km > 0) ligne.km = c.km;
+          if (c.denivele > 0) ligne.deniv = c.denivele;
+          return ligne;
+        });
+      var jour = { key: j.cle || ("j" + i), label: j.jour || ("Jour " + (i + 1)),
         accent: accents[i % accents.length], items: items };
-    }).filter(function(j){ return j.items.length; });
+      if (cardio.length) jour.cardio = cardio;
+      return jour;
+    }).filter(function(j){ return j.items.length || dayCardio(j).length; });
     if (!nextProg.length) { setExportMsg("Aucune séance exploitable dans ce fichier."); return; }
     persistConfig(nextEx, nextProg);
     setExportMsg("Programme importé : " + nextProg.length + " séances, " + nextEx.length + " machines. Ton historique n'a pas bougé.");
@@ -8759,10 +9569,18 @@ function AnalyseTab(props){
           muscles: allMuscles(e), intensites: e.muscleIntensity||{}, pas: e.inc,
           salles: e.gymIds||[], suivi: e.trackBy||"reps" };
       }),
+      modeEntrainement: trainingMode(profile),
       programme: program.map(function(d){
-        return { jour:d.label, cle:d.key, machines: d.items.map(function(it){
+        return { jour:d.label, cle:d.key, machines: (d.items||[]).map(function(it){
           var ex = exMap[it.ex];
           return { id: it.ex, nom: ex?ex.name:"(supprimée)", series: it.sets, reps: it.min+"-"+it.max, repos: it.rest };
+        }),
+        /* Cardio exporté à part des machines, comme il est stocké à part dans
+           le programme (voir applyCardioToProgram) — sinon un aller-retour
+           export/import le perdrait en silence. */
+        cardio: dayCardio(d).map(function(c){
+          var ex = exMap[c.ex];
+          return { id: c.ex, nom: ex?ex.name:"(supprimé)", minutes: c.min, intensite: c.zone, km: c.km || null, denivele: c.deniv || null };
         }) };
       }),
       volumeCalcule: plannedVolume(program, exercises, avgSessions, profile && profile.currentGymId),
@@ -9045,11 +9863,16 @@ function App(props){
   var nextDayKey = useMemo(function(){
     /* Skip freeform/kiné sessions (dayKey doesn't match a program day) so an
        occasional custom session doesn't derail the A/B rotation. */
-    var keys = state.program.map(function(p){return p.key;});
+    /* La rotation ne contient que les jours de MUSCU : les journées de cardio
+       s'ajoutent à la semaine et se lancent à la main depuis la liste, elles
+       ne font pas avancer le A/B/C/D (voir musculationDays). */
+    var rota = musculationDays(state.program);
+    if (!rota.length) return state.program[0].key;
+    var keys = rota.map(function(p){return p.key;});
     var d = state.sessions.filter(function(s){return s.done && keys.indexOf(s.dayKey)!==-1;});
-    if (d.length===0) return state.program[0].key;
-    var i = state.program.findIndex(function(p){return p.key===d[d.length-1].dayKey;});
-    return state.program[(i+1)%state.program.length].key;
+    if (d.length===0) return rota[0].key;
+    var i = rota.findIndex(function(p){return p.key===d[d.length-1].dayKey;});
+    return rota[(i+1)%rota.length].key;
   }, [state.sessions, state.program]);
 
   /* RECOMPOSITION AUTOMATIQUE À L'OUVERTURE (13 sept. 2026).
@@ -9222,7 +10045,9 @@ function App(props){
        perdre), mais c'était impossible à distinguer d'un bug — ou pire, d'un
        enregistrement raté. Maintenant la séance RESTE ouverte et la fonction
        renvoie false : l'écran affiche pourquoi. */
-    if (cleaned.entries.length===0) return false;
+    /* 17 sept. 2026 : une séance de CARDIO PUR n'a aucune série et serait
+       refusée ici comme "rien à enregistrer". Elle compte pourtant bien. */
+    if (cleaned.entries.length===0 && sessionCardio(cleaned).length===0) return false;
     setRestTimer(null);
     releaseWakeLock();
     silentTrackOff();
