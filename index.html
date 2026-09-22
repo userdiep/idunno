@@ -923,7 +923,7 @@ function prescribeBase(sessions, item, ex) {
   if (avgRir != null && avgRir >= 3) {
     var jump = itemInc(item, ex) * 2;
     return { weight: round(w+jump), targetReps: item.min, state: "up",
-      note: "Tu as fini à " + avgRir.toFixed(1) + " reps en réserve — trop léger. On monte de " + jump + " kg d'un coup." };
+      note: "Tu as fini à " + avgRir.toFixed(1).replace(".", ",") + " reps en réserve — trop léger. On monte de " + fmtNombre(jump) + " kg d'un coup." };
   }
   if (atW.length >= item.sets && atW.every(function(s){return s.reps>=item.max;})) {
     return { weight: round(w+itemInc(item, ex)), targetReps: item.min, note: "Toutes les séries au plafond — on monte la charge.", state: "up" };
@@ -935,9 +935,25 @@ function prescribeBase(sessions, item, ex) {
       return { weight: round(Math.max(itemInc(item, ex), w-itemInc(item, ex))), targetReps: item.min, note: "Deux séances sous la fourchette — on redescend d'un cran.", state: "down" };
     }
   }
-  var next = Math.min(item.max, Math.min.apply(null, atW.map(function(s){return s.reps;})) + 1);
-  return { weight: w, targetReps: next, state: "hold",
-    note: isTime ? "Même charge — vise " + next + " s tenues sur chaque série." : "Même charge — vise " + next + " reps sur chaque série." };
+  /* CORRIGÉ le 21 sept. 2026 (capture : "vise 7 reps sur chaque série" juste
+     sous un objectif "4×10-15" — "c'est mal fait"). La cible était "ta pire
+     série de la dernière fois + 1", sans jamais la ramener dans la fourchette :
+     après une séance à 6 reps, l'appli demandait 7, c'est-à-dire de rester
+     SOUS l'objectif affiché trois centimètres plus haut. La double progression
+     (monter les reps jusqu'au haut de la fourchette, puis la charge) suppose
+     d'être DANS la fourchette : la cible ne descend donc jamais sous le bas de
+     celle-ci. Si tu n'y arrives pas deux séances de suite, la règle juste
+     au-dessus redescend la charge d'un cran — elle existait déjà. */
+  var pire = Math.min.apply(null, atW.map(function(s){return s.reps;}));
+  var next = Math.max(item.min, Math.min(item.max, pire + 1));
+  var unite = isTime ? " s" : " reps";
+  var note;
+  if (pire < item.min) {
+    note = "Dernière fois " + pire + unite + " au plus bas, sous la fourchette " + item.min + "-" + item.max + ". Même charge — vise au moins " + item.min + unite + " sur chaque série ; si ça ne passe pas deux fois de suite, l'appli redescend d'un cran.";
+  } else {
+    note = isTime ? "Même charge — vise " + next + " s tenues sur chaque série." : "Même charge — vise " + next + " reps sur chaque série.";
+  }
+  return { weight: w, targetReps: next, state: "hold", note: note };
 }
 
 function prescribe(sessions, item, deload, ex) {
@@ -4561,7 +4577,7 @@ var PROGRAM_VERSION = 6;   /* 6 (18 sept. 2026) : course et vélo dehors ; 5 (17
    recommitée à la main — contrairement au lien Artifact qui se met à jour
    tout seul". Change cette date à chaque publication notable pour que la
    comparaison soit possible côté utilisateur. */
-var APP_BUILD = "2026-09-18a";
+var APP_BUILD = "2026-09-21a";
 
 function seedState() {
   return {
@@ -5561,11 +5577,33 @@ async function doPublish(state, onStatus) {
    frappe — appliquer aussi le min empêcherait de taper "12" dans un champ dont
    le plancher est 10), et un plafond dur dans pickOptimalAvgSessions, pour
    qu'un état déjà enregistré ou importé ne puisse pas figer l'appli. */
+/* Nombres affichés à la française (virgule décimale) — ajouté le 21 sept.
+   2026 : la même séance affichait "27.5" sur une ligne et "27,5" sur la
+   suivante (capture "c'est mal fait"). Un <input type="number"> laisse le
+   navigateur décider du séparateur, et Chrome Android ne décide pas pareil
+   selon que la valeur a été tapée ou posée par un bouton. On affiche donc
+   nous-mêmes, partout, avec une virgule. */
+function fmtNombre(v) {
+  if (v == null || v === "" || !isFinite(v)) return "";
+  return String(Math.round(v * 100) / 100).replace(".", ",");
+}
+function lireNombre(txt) {
+  var t = String(txt == null ? "" : txt).replace(/\s/g, "").replace(",", ".");
+  if (t === "" || t === "." || t === "-") return null;
+  var n = parseFloat(t);
+  return isFinite(n) ? n : null;
+}
 function Stepper(props) {
   var value=props.value, onChange=props.onChange, step=props.step||1, min=props.min!=null?props.min:0,
       max=props.max!=null?props.max:null,
       suffix=props.suffix||"", wide=props.wide, compact=props.compact;
   function borne(v){ return (v!=null && max!=null && v>max) ? max : v; }
+  /* Texte EN COURS DE FRAPPE, distinct de la valeur : sans lui, taper "27,"
+     serait relu comme 27 et la virgule disparaîtrait sous le doigt avant qu'on
+     ait tapé le 5. Remis à null dès qu'on quitte le champ ou qu'on appuie sur
+     − / +, pour que l'affichage redevienne celui de la valeur. */
+  var _dr = useState(null), brouillon = _dr[0], setBrouillon = _dr[1];
+  var affiche = (brouillon != null) ? brouillon : fmtNombre(value);
   var ph = props.placeholder||"";
   if (ph && suffix && ph === suffix) ph = "";
   var padX = props.flex ? 6 : (compact ? 8 : 10);
@@ -5582,11 +5620,20 @@ function Stepper(props) {
   var box = {display:"flex",alignItems:"stretch",borderRadius:6,overflow:"hidden",border:"1px solid "+C.taupeDim,minHeight:44};
   if (flexible) { box.flex = "1 1 0"; box.minWidth = 0; } else { box.flexShrink = 0; }
   return h("div", {className:"flex items-stretch", style:box},
-    h("button", {onClick:function(){onChange(borne(Math.max(min, round((value||0)-step))));}, "aria-label":"Diminuer",
+    h("button", {onClick:function(){setBrouillon(null); onChange(borne(Math.max(min, round((value||0)-step))));}, "aria-label":"Diminuer",
       style:{padding:"0 "+padX+"px",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",background:C.shroudDeep,color:C.taupe,border:"none"}},
       h(Icon,{name:"minus",size:14})),
-    h("input", {type:"number", className:"stepper-input", inputMode:"decimal", value: value==null?"":value, placeholder:ph,
-      onChange:function(e){ onChange(e.target.value===""?null:borne(parseFloat(e.target.value))); },
+    h("input", {type:"text", className:"stepper-input", inputMode:"decimal", value: affiche, placeholder:ph,
+      onChange:function(e){
+        /* Un point tapé (clavier anglais) devient tout de suite une virgule :
+           le champ n'affiche jamais les deux formats, même pendant la frappe. */
+        var txt = String(e.target.value).replace(/[^0-9.,-]/g, "").replace(/\./g, ",");
+        setBrouillon(txt);
+        var n = lireNombre(txt);
+        if (txt === "") onChange(null);
+        else if (n != null) onChange(borne(n));
+      },
+      onBlur:function(){ setBrouillon(null); },
       style:Object.assign({background:C.shroud, color:C.bone, fontFamily:sansBody, fontSize: flexible?16.5:18, fontWeight:600,
         fontVariantNumeric:"tabular-nums", border:"none", textAlign:"center", outline:"none", minWidth:0},
         /* minWidth sur la SAISIE : en mode flexible, c'est le chiffre qui doit
@@ -5603,7 +5650,7 @@ function Stepper(props) {
        doit toujours rester touchable. */
     suffix ? h("span",{style:Object.assign({display:"flex",alignItems:"center",paddingRight:6,background:C.shroud,color:C.taupe,fontSize:11},
       flexible ? {minWidth:0, overflow:"hidden"} : {})},suffix) : null,
-    h("button", {onClick:function(){onChange(borne(round((value||0)+step)));}, "aria-label":"Augmenter",
+    h("button", {onClick:function(){setBrouillon(null); onChange(borne(round((value||0)+step)));}, "aria-label":"Augmenter",
       style:{padding:"0 "+padX+"px",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",background:C.shroudDeep,color:C.taupe,border:"none"}},
       h(Icon,{name:"plus",size:14}))
   );
@@ -5681,7 +5728,7 @@ function StackPlate(props) {
     h("div",{style:{padding:"6px 10px",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
         background: known?tone:"transparent", minWidth:62}},
       h("span",{style:{fontFamily:sansBody,fontSize:23,fontWeight:700,lineHeight:1.05,
-        color: known?C.ink:C.taupe, fontVariantNumeric:"tabular-nums"}}, known?String(weight):"—"),
+        color: known?C.ink:C.taupe, fontVariantNumeric:"tabular-nums"}}, known?fmtNombre(weight):"—"),
       h("span",{style:{fontFamily:sansCond,fontSize:10,fontWeight:600,color:known?C.ink:C.taupe,opacity:known?0.75:1}},"kg")),
     h("div",{style:{padding:"6px 10px",display:"flex",flexDirection:"column",justifyContent:"center",background:C.shroudDeep,minWidth:58}},
       h("span",{style:{fontFamily:sansBody,fontSize:17,fontWeight:600,lineHeight:1.1,color:C.bone,fontVariantNumeric:"tabular-nums"}}, sets+"×"+repTxt),
@@ -6126,7 +6173,7 @@ function IncStepper(props){
   return h("div",{style:{display:"inline-flex",alignItems:"center",gap:3,marginTop:2}},
     h("button",{onClick:function(e){e.stopPropagation(); onChange(Math.max(min, round((value||0)-step)));}, "aria-label":"Diminuer le palier de poids",
       style:{width:16,height:16,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:3,background:C.shroud,color:C.taupe,border:"1px solid "+C.taupeDim,padding:0,fontSize:10,lineHeight:1,flexShrink:0}}, "−"),
-    h("span",{style:{fontFamily:sansCond,fontSize:11,color:C.taupe,whiteSpace:"nowrap"}}, "pas "+value+" kg"),
+    h("span",{style:{fontFamily:sansCond,fontSize:11,color:C.taupe,whiteSpace:"nowrap"}}, "pas "+fmtNombre(value)+" kg"),
     h("button",{onClick:function(e){e.stopPropagation(); onChange(round((value||0)+step));}, "aria-label":"Augmenter le palier de poids",
       style:{width:16,height:16,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:3,background:C.shroud,color:C.taupe,border:"1px solid "+C.taupeDim,padding:0,fontSize:10,lineHeight:1,flexShrink:0}}, "+"));
 }
@@ -7074,7 +7121,7 @@ function SeanceTab(props) {
     var reps = atW.map(function(s){return s.reps;}).filter(function(r){return r!=null;});
     var unit = unitLabel(exMap[exId])==="s" ? "s" : "";
     var repsTxt = reps.length ? " × "+Math.min.apply(null,reps)+(reps.length>1 && Math.max.apply(null,reps)!==Math.min.apply(null,reps) ? "-"+Math.max.apply(null,reps) : "")+unit : "";
-    return "Dernière fois (" + new Date(last.date).toLocaleDateString("fr-FR") + ") : " + w + " kg" + repsTxt;
+    return "Dernière fois (" + new Date(last.date).toLocaleDateString("fr-FR") + ") : " + fmtNombre(w) + " kg" + repsTxt;
   }
 
   function start(dayKey, deload) {
@@ -8613,7 +8660,7 @@ function HistoriqueTab(props){
         s.entries.map(function(e,i){ var ex=exMap[e.ex]; return h("div",{key:i, style:{padding:"8px 12px",borderTop:"1px solid "+C.shroudDeep}},
           h("div",{style:{fontSize:14,fontWeight:600}}, ex?ex.name:"Machine supprimée"),
           h("div",{style:{fontSize:13.5,color:C.taupe,fontVariantNumeric:"tabular-nums"}},
-            e.sets.map(function(x){ return x.weight+"×"+x.reps+(ex&&ex.trackBy==="time"?"s":"")+(x.rir!=null?" ("+effortLabelForRir(x.rir)+")":"")+(x.weakSide?" ["+(x.weakSide==="L"?"G+dur":"D+dur")+"]":""); }).join("   "))); }),
+            e.sets.map(function(x){ return fmtNombre(x.weight)+"×"+x.reps+(ex&&ex.trackBy==="time"?"s":"")+(x.rir!=null?" ("+effortLabelForRir(x.rir)+")":"")+(x.weakSide?" ["+(x.weakSide==="L"?"G+dur":"D+dur")+"]":""); }).join("   "))); }),
         h("div",{style:{padding:"8px 12px",borderTop:"1px solid "+C.shroudDeep}},
           h("button",{onClick:function(){deleteSession(s.id);}, style:{display:"flex",alignItems:"center",gap:5,color:C.rust,fontFamily:sansCond,fontSize:13,background:"transparent",border:"none"}},
             h(Icon,{name:"trash",size:13}), "Supprimer cette séance"))
@@ -9667,7 +9714,7 @@ function AnalyseTab(props){
         return h("div",{key:x.ex.id, style:{display:"flex",alignItems:"flex-start",gap:10,padding:"12px",marginBottom:8,borderRadius:10,background:C.shroudDeep,border:"1px solid "+C.rust}},
         h(Icon,{name:"alert",size:17,color:C.rust}),
         h("div",{style:{flex:1,minWidth:0}}, h("div",{style:{fontSize:14.5,fontWeight:600}}, x.ex.name),
-          h("div",{style:{fontSize:13,color:C.taupe,lineHeight:1.5}}, "Bloqué à "+x.stall.weight+" kg sur "+x.stall.sessions+" séances."+(!isolated?" Plusieurs exercices bloquent ensemble — regarde d'abord le sommeil, les calories, et envisage la décharge proposée sur l'onglet Séance.":" Un seul exercice bloque — regarde la technique ou le réglage du siège d'abord.")),
+          h("div",{style:{fontSize:13,color:C.taupe,lineHeight:1.5}}, "Bloqué à "+fmtNombre(x.stall.weight)+" kg sur "+x.stall.sessions+" séances."+(!isolated?" Plusieurs exercices bloquent ensemble — regarde d'abord le sommeil, les calories, et envisage la décharge proposée sur l'onglet Séance.":" Un seul exercice bloque — regarde la technique ou le réglage du siège d'abord.")),
           swapped ? h("div",{style:{fontSize:12.5,color:C.green,marginTop:6}}, "Remplacé par "+swapped+" — remis à zéro, retrouve ta charge sur les prochaines séances.")
             : swap ? h("div",{style:{marginTop:8,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}},
                 h("span",{style:{fontSize:12.5,color:C.taupe}}, "Sinon, essaie "+swap.name+" ("+brandLabel(swap)+"), déjà dans tes machines mais pas encore utilisée."),
