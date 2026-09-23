@@ -411,6 +411,50 @@ var SEED_EXERCISES = [
      justement établie sur tapis. */
   { id: "c-course",      name: "Course à pied (dehors)", brand: "", muscle: "Autre", kind: "cardio", inc: 1, unilateral:false, order:2, trackBy:"time", dehors:true, distance:true, deniv:true, energy:"run",  met: {facile:6.0, modere:9.8, intense:11.8} },
   { id: "c-velo-route",  name: "Vélo (dehors)",          brand: "", muscle: "Autre", kind: "cardio", inc: 1, unilateral:false, order:2, trackBy:"time", dehors:true, distance:true, deniv:true, energy:"bike", met: {facile:5.8, modere:8.0, intense:12.0} },
+  /* POIDS DU CORPS — MODE VOYAGE (23 sept. 2026 : "fais une option poids du
+     corps que je peux faire pendant mes vacances avec un programme opti").
+
+     Rattachés à une salle virtuelle "voyage" (gymIds) : ils ne sont donc
+     disponibles NULLE PART ailleurs, et aucun calcul du programme de salle
+     (recomposition, suggestions, remplacements, splits) ne peut aller les
+     chercher — exerciseAvailableAtGym les écarte partout où il est déjà
+     appelé. `voyage:true` sert aux quelques calculs qui portent sur le
+     catalogue entier (voir estVoyage).
+
+     Tout est faisable dans une chambre d'hôtel : sol, chaise, lit, table,
+     serviette, et un sac à dos qu'on remplit de bouteilles d'eau pour ajouter
+     de la charge. `inc` = 2 kg : l'ordre de grandeur d'une bouteille d'eau
+     de plus dans le sac. `conseil` : comment l'exécuter sans matériel, et
+     comment le rendre plus facile ou plus dur — c'est la seule façon de
+     progresser au poids du corps une fois la fourchette de reps dépassée. */
+  { id: "v-pompes", name: "Pompes", brand: "", voyage:true, gymIds:["voyage"], muscle: "Pectoraux", muscles: ["Pectoraux","Triceps","Épaules"], muscleIntensity: {"Pectoraux":1,"Triceps":0.7,"Épaules":0.5}, kind: "bodyweight", inc: 2, unilateral:false, order:1, trackBy:"reps",
+    conseil: "Corps gainé, poitrine jusqu'à un poing du sol. Trop dur : mains sur le lit ou sur les genoux. Trop facile : pieds sur une chaise, puis sac à dos sur le dos." },
+  { id: "v-rowing-sac", name: "Rowing sac à dos", brand: "", voyage:true, gymIds:["voyage"], muscle: "Dos", muscles: ["Dos","Trapèzes","Deltoïdes post.","Biceps"], muscleIntensity: {"Dos":1,"Trapèzes":0.5,"Deltoïdes post.":0.5,"Biceps":0.5}, kind: "bodyweight", inc: 2, unilateral:false, order:1, trackBy:"reps",
+    conseil: "Buste penché à 45°, dos plat, tire le sac rempli (bouteilles, affaires) vers le nombril, omoplates serrées en haut. Note le poids du sac dans « kg »." },
+  { id: "v-bulgare", name: "Squat bulgare", brand: "", voyage:true, gymIds:["voyage"], muscle: "Quadriceps", muscles: ["Quadriceps","Fessiers","Ischio-jambiers"], muscleIntensity: {"Quadriceps":1,"Fessiers":0.7,"Ischio-jambiers":0.3}, kind: "bodyweight", inc: 2, unilateral:true, order:1, trackBy:"reps",
+    conseil: "Pied arrière sur une chaise ou le lit, descends jusqu'à frôler le sol du genou arrière. Reps par jambe. Plus dur : descente en 3 secondes, puis sac à dos." },
+  { id: "v-pont", name: "Pont fessier une jambe", brand: "", voyage:true, gymIds:["voyage"], muscle: "Fessiers", muscles: ["Fessiers","Ischio-jambiers"], muscleIntensity: {"Fessiers":1,"Ischio-jambiers":0.5}, kind: "bodyweight", inc: 2, unilateral:true, order:2, trackBy:"reps",
+    conseil: "Sur le dos, une jambe tendue, pousse dans le talon et serre les fessiers 1 s en haut. Plus dur : épaules sur le bord du lit (hip thrust), puis sac posé sur les hanches." },
+  { id: "v-mollets", name: "Mollets une jambe", brand: "", voyage:true, gymIds:["voyage"], muscle: "Mollets", muscles: ["Mollets"], muscleIntensity: {"Mollets":1}, kind: "bodyweight", inc: 2, unilateral:true, order:2, trackBy:"reps",
+    conseil: "Sur une marche, talon qui descend SOUS la marche, puis monte sur la pointe, 1 s en haut. Une main au mur pour l'équilibre. Plus dur : sac à dos." },
+  { id: "v-superman", name: "Superman", brand: "", voyage:true, gymIds:["voyage"], muscle: "Lombaires", muscles: ["Lombaires","Fessiers"], muscleIntensity: {"Lombaires":1,"Fessiers":0.4}, kind: "bodyweight", inc: 2, unilateral:false, order:2, trackBy:"reps",
+    conseil: "À plat ventre, décolle bras et jambes tendus, 2 s en haut, redescends lentement. Sans cambrer la nuque : regard vers le sol." },
+  { id: "v-gainage", name: "Gainage (planche)", brand: "", voyage:true, gymIds:["voyage"], muscle: "Abdominaux", muscles: ["Abdominaux","Obliques"], muscleIntensity: {"Abdominaux":1,"Obliques":0.5}, kind: "bodyweight", inc: 2, unilateral:false, order:3, trackBy:"time",
+    conseil: "Sur les avant-bras, bassin aligné, fessiers et abdos serrés. Plus dur : bras tendus devant, ou un pied levé." },
+  { id: "v-pike", name: "Pompes piquées (pike)", brand: "", voyage:true, gymIds:["voyage"], muscle: "Épaules", muscles: ["Épaules","Triceps","Trapèzes"], muscleIntensity: {"Épaules":1,"Triceps":0.5,"Trapèzes":0.5}, kind: "bodyweight", inc: 2, unilateral:false, order:1, trackBy:"reps",
+    conseil: "Fesses en l'air, corps en V renversé, fais descendre le sommet du crâne vers le sol entre les mains. Plus dur : pieds sur une chaise." },
+  { id: "v-rowing-table", name: "Rowing inversé sous une table", brand: "", voyage:true, gymIds:["voyage"], muscle: "Dos", muscles: ["Dos","Biceps","Trapèzes","Deltoïdes post."], muscleIntensity: {"Dos":1,"Biceps":0.5,"Trapèzes":0.5,"Deltoïdes post.":0.5}, kind: "bodyweight", inc: 2, unilateral:false, order:1, trackBy:"reps",
+    conseil: "Allongé sous une table SOLIDE, mains au bord du plateau, tire la poitrine jusqu'au plateau en gardant le corps droit. Plus facile : genoux pliés. Pas de table fiable ? Fais le rowing sac à dos à la place." },
+  { id: "v-dips", name: "Dips entre deux chaises", brand: "", voyage:true, gymIds:["voyage"], muscle: "Triceps", muscles: ["Triceps","Pectoraux","Épaules"], muscleIntensity: {"Triceps":1,"Pectoraux":0.5,"Épaules":0.5}, kind: "bodyweight", inc: 2, unilateral:false, order:1, trackBy:"reps",
+    conseil: "Mains sur une chaise stable (ou le bord du lit) derrière toi, coudes vers l'arrière, descends jusqu'à 90°. Plus facile : genoux pliés. Plus dur : jambes tendues, pieds sur une autre chaise." },
+  { id: "v-fentes", name: "Fentes arrière", brand: "", voyage:true, gymIds:["voyage"], muscle: "Quadriceps", muscles: ["Quadriceps","Fessiers"], muscleIntensity: {"Quadriceps":1,"Fessiers":0.7}, kind: "bodyweight", inc: 2, unilateral:true, order:1, trackBy:"reps",
+    conseil: "Grand pas en arrière, genou arrière qui frôle le sol, pousse dans le talon avant pour revenir. Reps par jambe. Plus dur : sac à dos, ou pied avant sur une marche." },
+  { id: "v-leg-curl", name: "Leg curl glissé (serviette)", brand: "", voyage:true, gymIds:["voyage"], muscle: "Ischio-jambiers", muscles: ["Ischio-jambiers","Mollets"], muscleIntensity: {"Ischio-jambiers":1,"Mollets":0.5}, kind: "bodyweight", inc: 2, unilateral:false, order:2, trackBy:"reps",
+    conseil: "Sur le dos sur un sol lisse, talons sur une serviette, hanches levées : ramène les talons vers les fesses puis repousse lentement. Plus facile : amplitude réduite. Plus dur : une seule jambe." },
+  { id: "v-curl-sac", name: "Curl biceps sac à dos", brand: "", voyage:true, gymIds:["voyage"], muscle: "Biceps", muscles: ["Biceps","Avant-bras"], muscleIntensity: {"Biceps":1,"Avant-bras":0.5}, kind: "bodyweight", inc: 2, unilateral:false, order:3, trackBy:"reps",
+    conseil: "Sac tenu par une anse ou les deux bretelles, coudes collés au corps, monte et redescends en 2 s. Ajuste la charge avec des bouteilles d'eau." },
+  { id: "v-gainage-lat", name: "Gainage latéral", brand: "", voyage:true, gymIds:["voyage"], muscle: "Obliques", muscles: ["Obliques","Abdominaux"], muscleIntensity: {"Obliques":1,"Abdominaux":0.5}, kind: "bodyweight", inc: 2, unilateral:true, order:3, trackBy:"time",
+    conseil: "Sur un avant-bras, corps aligné de la tête aux pieds, bassin haut. Temps par côté. Plus dur : jambe du dessus levée." },
 ];
 
 /* Programme de départ — issu du sien après réajustement automatique par
@@ -460,6 +504,71 @@ var SEED_PROGRAM = [
     { ex: "tg-leg-ext", sets: 4, min: 12, max: 15, rest: 65 },  /* Leg Extension */
   ]},
 ];
+
+/* PROGRAMME VOYAGE — 23 sept. 2026. Deux séances complètes (tout le corps),
+   à alterner, 2 à 3 fois par semaine, 35 à 45 min chacune.
+
+   Pourquoi ce format, sources vérifiées ce jour :
+   - ENTRETENIR coûte peu : chez des adultes jeunes, une seule séance par
+     semaine, soit environ un tiers du volume habituel, a suffi à maintenir la
+     masse musculaire pendant 32 semaines (Bickel et al., Med Sci Sports
+     Exerc 2011). Deux séances par semaine de ce programme couvrent donc
+     largement l'entretien ; trois laissent de la marge pour progresser.
+   - Une pause de 3 semaines coûte de toute façon très peu : chez des
+     débutants, 6 mois avec une pause de 3 semaines toutes les 6 semaines ont
+     donné une prise de muscle comparable à 6 mois sans pause (Ogasawara et
+     al. 2013).
+   - La CHARGE compte peu pour le muscle tant que la série est menée près de
+     l'échec (Schoenfeld et al., JSCR 2017) — c'est ce qui rend le poids du
+     corps efficace, avec des fourchettes de reps plus hautes qu'en salle.
+   - Pompes contre développé couché à charge comparable, 8 semaines :
+     +18,3 % d'épaisseur du grand pectoral contre +19,4 %, +9,5 % de triceps
+     contre +10,3 % (Kikuchi & Nakazato, J Exerc Sci Fit 2017).
+   Trois séries par exercice (le minimum de l'appli, Krieger 2010), repos de
+   60 à 75 s : au-delà de 60 s, léger gain de muscle, au-delà de 90 s plus de
+   différence détectable (Singer et al. 2024) — et une séance qui tient en
+   35-45 min a plus de chances d'être faite en vacances.
+   Les exercices non retenus (curl au sac, etc.) restent au catalogue pour
+   remplacer un exercice impossible à faire sur place. */
+var VOYAGE_PROGRAM = [
+  { key: "Voyage A", label: "Voyage A", accent: C.steel, items: [
+    { ex: "v-pompes",      sets: 3, min: 8,  max: 25, rest: 75 },
+    { ex: "v-rowing-sac",  sets: 3, min: 10, max: 20, rest: 75 },
+    { ex: "v-bulgare",     sets: 3, min: 8,  max: 20, rest: 75 },
+    { ex: "v-pont",        sets: 3, min: 10, max: 25, rest: 60 },
+    { ex: "v-superman",    sets: 3, min: 10, max: 20, rest: 60 },
+    { ex: "v-gainage",     sets: 3, min: 30, max: 60, rest: 60 },
+  ]},
+  { key: "Voyage B", label: "Voyage B", accent: C.green, items: [
+    { ex: "v-pike",        sets: 3, min: 6,  max: 15, rest: 75 },
+    { ex: "v-rowing-table",sets: 3, min: 6,  max: 15, rest: 75 },
+    { ex: "v-dips",        sets: 3, min: 8,  max: 20, rest: 75 },
+    { ex: "v-fentes",      sets: 3, min: 10, max: 20, rest: 75 },
+    { ex: "v-leg-curl",    sets: 3, min: 6,  max: 15, rest: 60 },
+    { ex: "v-mollets",     sets: 3, min: 12, max: 25, rest: 60 },
+    { ex: "v-gainage-lat", sets: 3, min: 20, max: 45, rest: 60 },
+  ]},
+];
+function estVoyage(e){ return !!e && e.voyage === true; }
+function modeVoyage(profile){ return !!(profile && profile.voyage); }
+/* Entrer en mode voyage : le programme de salle est MIS DE CÔTÉ dans le
+   profil (même mécanisme que "cardio seul", voir applyTrainingModeChange) et
+   rendu tel quel au retour — rien n'est recalculé, rien n'est perdu. */
+function entrerModeVoyage(profile, program) {
+  var nouveau = Object.assign({}, profile, {
+    voyage: { programAvant: program, salleAvant: profile.currentGymId || null, debut: new Date().toISOString() },
+    currentGymId: "voyage",
+  });
+  return { profile: nouveau, program: VOYAGE_PROGRAM.map(function(d){ return Object.assign({}, d, { items: d.items.map(function(it){ return Object.assign({}, it); }) }); }) };
+}
+function sortirModeVoyage(profile, program) {
+  if (!modeVoyage(profile)) return { profile: profile, program: program };
+  var v = profile.voyage;
+  var nouveau = Object.assign({}, profile, { currentGymId: v.salleAvant || ((profile.gyms && profile.gyms[0]) ? profile.gyms[0].id : null) });
+  delete nouveau.voyage;
+  var retour = (v.programAvant && v.programAvant.length) ? v.programAvant : program;
+  return { profile: nouveau, program: retour };
+}
 
 /* "bodyweight" ajouté le 4 sept. 2026 pour la callisthénie/street workout
    (tractions, pompes, dips, muscle-up...) — jusque-là seul "free" ("Poids
@@ -904,10 +1013,37 @@ function itemInc(item, ex){
   return INC_CACHE[item.ex] != null ? INC_CACHE[item.ex] : 2.5;
 }
 function round(n){ return Math.round(n*2)/2; }
+/* Arrondi ALIGNÉ SUR LE PAS du compteur — ajouté le 22 sept. 2026 (demande :
+   "faudrait pouvoir régler par des pas de 0,1 les équilibres entre les
+   muscles"). `round` arrondit au demi-kilo, ce qui est juste pour une charge
+   (aucune salle n'a de plaque de 0,1 kg) mais rendait tout pas plus fin
+   inopérant : appuyer sur + avec un pas de 0,1 renvoyait la même valeur, le
+   bouton semblait cassé. En dessous de 0,5 on arrondit donc sur la grille du
+   pas lui-même ; à 0,5 et au-delà, comportement d'origine, inchangé pour les
+   charges. */
+function arrondiPas(v, step){
+  if (!(step > 0) || step >= 0.5) return round(v);
+  var f = Math.round(1/step);
+  return Math.round(v*f)/f;
+}
 
 function prescribeBase(sessions, item, ex) {
   var isTime = ex && ex.trackBy === "time";
+  /* POIDS DU CORPS (23 sept. 2026, mode voyage) : "monter la charge" n'a pas
+     de sens quand il n'y a pas de charge. Une fois la fourchette dépassée, on
+     progresse en passant à une variante plus dure (voir ex.conseil) ou en
+     mettant du poids dans le sac — l'appli le DIT au lieu d'afficher un
+     "+2 kg" qu'on ne saurait pas où mettre. La charge prescrite reste celle
+     de la dernière fois : si tu changes de variante, tu repars du bas de la
+     fourchette ; si tu remplis le sac, tu saisis son poids. */
+  var corps = ex && ex.kind === "bodyweight";
   var hist = historyFor(sessions, item.ex);
+  if (hist.length === 0 && corps) {
+    return { weight: null, targetReps: item.min, state: "new",
+      note: isTime
+        ? "Premier passage — choisis la variante que tu tiens " + item.min + " s en gardant de la marge. Laisse 0 kg."
+        : "Premier passage — choisis la variante qui te permet environ " + item.min + " reps en gardant 2 en réserve. Laisse 0 kg, ou le poids du sac si tu en mets un." };
+  }
   if (hist.length === 0) {
     return { weight: null, targetReps: item.min, state: "new",
       note: isTime
@@ -920,6 +1056,14 @@ function prescribeBase(sessions, item, ex) {
   var rirs = atW.map(function(s){return s.rir;}).filter(function(r){return r!=null;});
   var avgRir = rirs.length ? rirs.reduce(function(a,b){return a+b;},0)/rirs.length : null;
 
+  if (corps && avgRir != null && avgRir >= 3) {
+    return { weight: w, targetReps: item.min, state: "up",
+      note: "Tu as fini à " + avgRir.toFixed(1).replace(".", ",") + " reps en réserve — trop facile. Passe à la variante plus difficile, ou ajoute ~" + fmtNombre(itemInc(item, ex)*2) + " kg dans le sac." };
+  }
+  if (corps && atW.length >= item.sets && atW.every(function(s){return s.reps>=item.max;})) {
+    return { weight: w, targetReps: item.min, state: "up",
+      note: "Toutes les séries au plafond — passe à la variante plus difficile, ou ajoute ~" + fmtNombre(itemInc(item, ex)) + " kg dans le sac, et repars de " + item.min + (isTime ? " s." : " reps.") };
+  }
   if (avgRir != null && avgRir >= 3) {
     var jump = itemInc(item, ex) * 2;
     return { weight: round(w+jump), targetReps: item.min, state: "up",
@@ -931,6 +1075,10 @@ function prescribeBase(sessions, item, ex) {
   if (atW.some(function(s){return s.reps<item.min;}) && hist.length >= 2) {
     var prev = hist[hist.length-2].entry.sets.filter(function(s){return s.weight!=null;});
     var pw = Math.max.apply(null, prev.map(function(s){return s.weight;}));
+    if (pw === w && prev.some(function(s){return s.reps<item.min;}) && corps) {
+      return { weight: w, targetReps: item.min, state: "down",
+        note: "Deux séances sous la fourchette — passe à la variante plus facile (voir le conseil), ou enlève du poids du sac." };
+    }
     if (pw === w && prev.some(function(s){return s.reps<item.min;})) {
       return { weight: round(Math.max(itemInc(item, ex), w-itemInc(item, ex))), targetReps: item.min, note: "Deux séances sous la fourchette — on redescend d'un cran.", state: "down" };
     }
@@ -1042,8 +1190,11 @@ function estimateDayMinutes(day, exMap) {
   (day.items || []).forEach(function(it) {
     total += it.sets * (40 + it.rest);
   });
-  total += Math.max(0, (day.items || []).length - 1) * 70;
-  total += 300;
+  /* Au poids du corps (mode voyage), pas de machine à rejoindre ni à régler :
+     ~30 s de transition au lieu de 70, et 3 min d'échauffement au lieu de 5. */
+  var toutCorps = !!exMap && (day.items || []).length > 0 && (day.items || []).every(function(it){ var e = exMap[it.ex]; return e && e.kind === "bodyweight"; });
+  total += Math.max(0, (day.items || []).length - 1) * (toutCorps ? 30 : 70);
+  total += toutCorps ? 180 : 300;
   var min = Math.round(total / 60);
   /* Cardio du jour (voir applyCardioToProgram) : durée prescrite + 3 min
      d'installation par appareil. Un jour de cardio pur n'a pas d'items, donc
@@ -2325,6 +2476,50 @@ function setsBoundsForGoal(goal){
   var g = goalPreset(goal);
   return { min: g.setsMin || MIN_SETS_PER_EXERCISE, max: g.setsMax || MAX_SETS_PER_EXERCISE };
 }
+/* 4 SÉRIES PAR MACHINE, 5 SEULEMENT QUAND IL N'Y A PAS D'AUTRE MACHINE POUR CE
+   MUSCLE — 23 sept. 2026, question : "c'est pas too much 5 séries ? base-toi
+   sur les études pour améliorer tous les programmes".
+
+   Ce que disent les études, vérifié ce jour :
+   - AUCUNE étude ne fixe un maximum de séries pour UN exercice. Le seul seuil
+     chiffré est par MUSCLE et par SÉANCE : ~11 séries fractionnelles pour
+     l'hypertrophie, ~2 séries directes pour la force, au-delà desquelles le
+     gain supplémentaire devient indétectable (Remmert, Pelland et al.,
+     SportRxiv 2025). Les auteurs précisent qu'ils ne savent pas si plus
+     devient NUISIBLE — seulement que ça rapporte de moins en moins. Ce seuil
+     est déjà appliqué à part (SESSION_VOLUME_CAP).
+   - Varier les exercices d'un même muscle répartit mieux la croissance entre
+     ses différentes régions (revue systématique Kassiano et al., JSCR 2022 :
+     choisir des exercices qui couvrent toutes les régions d'un muscle). À
+     volume égal, 2 machines × 3 séries valent donc au moins autant que
+     1 machine × 5-6 séries.
+   - Enchaînées près de l'échec avec des repos courts, les séries perdent vite
+     des répétitions : autour de 50 % des reps de la 1re série dès la 4e-5e
+     (synthèse de 29 études, Stronger by Science). Chez l'utilisateur, mesuré
+     dans son export : Deltoïde Arrière 12 → 10 → 9 → 6.
+   Aucun de ces trois points ne dit que "5 c'est trop" en soi ; ensemble, ils
+   disent qu'une 5e série sur la même machine est le moyen le MOINS efficace
+   d'ajouter du volume quand une autre machine peut le prendre. D'où la
+   règle : 4 par défaut, 5 seulement pour un muscle qui n'a qu'une machine
+   dans le matériel (abduction, adduction, mollets...), sinon ce muscle ne
+   pourrait jamais atteindre sa cible. Le maximum de l'objectif (setsMax)
+   reste le plafond absolu. */
+var MAX_SETS_PREFERE = 4;
+function comptePrincipaux(exercises){
+  var n = {};
+  (exercises||[]).forEach(function(e){
+    if (!e || isCardio(e) || estVoyage(e)) return;   /* voyage : jamais dans le programme de salle */
+    var mu = allMuscles(e)[0];
+    if (mu) n[mu] = (n[mu]||0) + 1;
+  });
+  return n;
+}
+function maxSetsFor(ex, goal, compte){
+  var dur = setsBoundsForGoal(goal).max;
+  if (!ex || !compte) return dur;
+  var mu = allMuscles(ex)[0];
+  return (compte[mu]||0) <= 1 ? dur : Math.min(dur, MAX_SETS_PREFERE);
+}
 /* Ordre de priorité par défaut, réglable par l'utilisateur (voir
    profile.priorityOrder et Options > "Ordre de priorité"). Trois leviers qui
    se contredisent dès que le catalogue ou l'emploi du temps ne suffisent pas :
@@ -2398,6 +2593,10 @@ function musclesSansMachineDediee(exercises) {
        existe un moyen de combler ce muscle, alors qu'il n'en existe aucun —
        exactement le veto éternel que cette fonction sert à supprimer. */
     if (isCardio(e)) return;
+    /* Idem pour les exercices du mode voyage (23 sept. 2026) : le pont fessier
+       ferait croire au moteur que les fessiers ont une machine dédiée en
+       salle, ce qui changerait l'équilibrage du programme de salle. */
+    if (estVoyage(e)) return;
     var ms = allMuscles(e); if (!ms.length) return;
     principal[ms[0]] = true;
     ms.forEach(function(mu){ tous[mu] = true; });
@@ -2411,11 +2610,13 @@ function _applyGoalToProgramRaw(program, exercises, goal, avgSessions, muscleFoc
   var factor = (avgSessions||SESSIONS_PER_WEEK) / rotationLength(program);
   var baseTarget = goalPreset(goal).targetSets || VOL_MIN;
 
-  var refs = []; // { it, muscles:[{mu,w}], base, extra }
+  var refs = []; // { it, muscles:[{mu,w}], base, extra, max }
+  var comptePrincipauxRaw = comptePrincipaux(exercises);
   program.forEach(function(d){ d.items.forEach(function(it){
     var ex = exMap[it.ex]; if (!ex) return;
     var tierDef = tierDefaultsForGoal(goal, exerciseOrderTier(ex));
-    refs.push({ it: it, base: tierDef.sets, extra: 0,
+    var plafondEx = maxSetsFor(ex, goal, comptePrincipauxRaw);
+    refs.push({ it: it, base: Math.min(tierDef.sets, plafondEx), extra: 0, max: plafondEx,
       muscles: allMuscles(ex).map(function(mu){ return { mu: mu, w: muscleWeight(ex, mu) }; }) });
   }); });
 
@@ -2471,7 +2672,7 @@ function _applyGoalToProgramRaw(program, exercises, goal, avgSessions, muscleFoc
       var m = null;
       for (var k=0; k<ref.muscles.length; k++) { if (ref.muscles[k].mu===worstMu) { m = ref.muscles[k]; break; } }
       if (!m || m.w <= 1e-9) return;                            // garde-fou poids nul (bug 3)
-      if (ref.base + ref.extra >= bounds.max) return; // plafond par exercice, propre à l'objectif (bug 2)
+      if (ref.base + ref.extra >= ref.max) return; // plafond par exercice (bug 2 ; voir maxSetsFor)
       var sets = ref.base + ref.extra;
       var otherNeed = 0;
       ref.muscles.forEach(function(mm){
@@ -2605,7 +2806,7 @@ function _applyGoalToProgramRaw(program, exercises, goal, avgSessions, muscleFoc
         var gm = moveGain(ref, -1);
         if (gm > bestGain) { bestGain = gm; bestRef = ref; bestDelta = -1; }
       }
-      if (sets < bounds.max) {
+      if (sets < ref.max) {
         var gp = moveGain(ref, +1);
         if (gp > bestGain) { bestGain = gp; bestRef = ref; bestDelta = +1; }
       }
@@ -2659,7 +2860,8 @@ function _applyGoalToProgramRaw(program, exercises, goal, avgSessions, muscleFoc
 function liftMusclesBelowTarget(program, exercises, goal, avgSessions, muscleFocus) {
   var exMap = {}; exercises.forEach(function(e){ exMap[e.id] = e; });
   var base = goalPreset(goal).targetSets || VOL_MIN;
-  var maxSets = setsBoundsForGoal(goal).max;
+  var compteLift = comptePrincipaux(exercises);
+  var absMax = setsBoundsForGoal(goal).max;
   var out = program.map(function(d){ return Object.assign({}, d, { items: d.items.map(function(it){ return Object.assign({}, it); }) }); });
   function cible(mu){ return base * focusMultiplier(muscleFocus || {}, mu); }
   /* Un muscle sans machine dédiée n'est plus remonté ICI (voir
@@ -2688,9 +2890,16 @@ function liftMusclesBelowTarget(program, exercises, goal, avgSessions, muscleFoc
       out.forEach(function(d, di){ d.items.forEach(function(it, ii){
         var ex = exMap[it.ex]; if (!ex) return;
         var w = allMuscles(ex).indexOf(mu) >= 0 ? muscleWeight(ex, mu) : 0;
-        if (w > 0 && it.sets < maxSets) cands.push({ di: di, ii: ii, w: w, sets: it.sets });
+        /* `audela` : cette série dépasserait la préférence de 4 par machine
+           (voir maxSetsFor). Autorisée, mais seulement en DERNIER RECOURS —
+           triée après toutes les options qui la respectent. La règle "jamais
+           sous 12" posée par l'utilisateur passe devant la préférence : une
+           5e série rapporte moins qu'une série sur une autre machine, mais
+           plus que pas de série du tout. */
+        var audela = it.sets >= maxSetsFor(ex, goal, compteLift);
+        if (w > 0 && it.sets < absMax) cands.push({ di: di, ii: ii, w: w, sets: it.sets, audela: audela ? 1 : 0 });
       }); });
-      cands.sort(function(a,b){ return (b.w - a.w) || (a.sets - b.sets); });
+      cands.sort(function(a,b){ return (a.audela - b.audela) || (b.w - a.w) || (a.sets - b.sets); });
       for (var c = 0; c < cands.length && !pose; c++) {
         var cd = cands[c], item = out[cd.di].items[cd.ii], ex2 = exMap[item.ex];
         /* Refus si une série de plus pousse un autre muscle au-dessus du haut
@@ -2717,7 +2926,7 @@ function applyGoalToProgram(program, exercises, goal, avgSessions, muscleFocus, 
     exercises, goal);
   if (profile && priorityRank(order,"time") < priorityRank(order,"goal")) {
     out = trimToTimeBudget(out, exercises, profile.sessionMinutesMax, goal);
-    return clampSetsToBounds(out, goal);   /* temps prioritaire : on ne remonte rien */
+    return clampSetsToBounds(out, goal, exercises);   /* temps prioritaire : on ne remonte rien */
   }
   /* La remontée ne s'applique QUE si l'objectif est la priorité n°1. Si tu as
      mis "équilibrage" devant, tu demandes justement que tous les muscles
@@ -2726,7 +2935,7 @@ function applyGoalToProgram(program, exercises, goal, avgSessions, muscleFocus, 
   if (priorityRank(order,"goal") === 0) {
     out = liftMusclesBelowTarget(out, exercises, goal, avgSessions, muscleFocus);
   }
-  return clampSetsToBounds(out, goal);
+  return clampSetsToBounds(out, goal, exercises);
 }
 /* Garde-fou final, ajouté le 6 sept. 2026 après le bug du plafond par séance
    qui ramenait des machines à 1 série : quatre fonctions différentes écrivent
@@ -2738,7 +2947,12 @@ function applyGoalToProgram(program, exercises, goal, avgSessions, muscleFocus, 
    programmes calculés par l'appli : une valeur réglée à la main dans
    "Composer les séances" ne passe pas par ici (voir persistConfig,
    reoptimize:false) et reste donc libre. */
-function clampSetsToBounds(program, goal) {
+/* Le plafond appliqué ici reste le plafond ABSOLU de l'objectif (5) : la
+   limite à 4 séries par machine (voir maxSetsFor) est une PRÉFÉRENCE de
+   répartition, que la dernière passe peut dépasser pour ne pas laisser un
+   muscle sous sa cible (voir liftMusclesBelowTarget). `exercises` est accepté
+   pour la symétrie des appels mais ne change pas le plafond. */
+function clampSetsToBounds(program, goal, exercises) {
   var b = setsBoundsForGoal(goal);
   var touched = false;
   var out = program.map(function(d){
@@ -2809,7 +3023,7 @@ function cappedMuscles(appliedProgram, exercises, goal, avgSessions, muscleFocus
   var itemsByMuscle = {};
   appliedProgram.forEach(function(d){ d.items.forEach(function(it){
     var ex = exMap[it.ex]; if (!ex) return;
-    allMuscles(ex).forEach(function(mu){ (itemsByMuscle[mu] = itemsByMuscle[mu]||[]).push(it); });
+    allMuscles(ex).forEach(function(mu){ (itemsByMuscle[mu] = itemsByMuscle[mu]||[]).push({ it: it, ex: ex }); });
   }); });
   var out = [];
   vol.forEach(function(v){
@@ -2817,7 +3031,7 @@ function cappedMuscles(appliedProgram, exercises, goal, avgSessions, muscleFocus
     if (v.sets >= target - 0.05) return;               // cible atteinte, rien à expliquer
     var items = itemsByMuscle[v.muscle] || [];
     if (!items.length) return;                          // aucune machine : autre diagnostic
-    var atCap = items.filter(function(it){ return it.sets >= setsBoundsForGoal(goal).max; }).length;
+    var atCap = items.filter(function(x){ return x.it.sets >= setsBoundsForGoal(goal).max; }).length;
     if (atCap < items.length) return;                   // il reste de la marge : le manque vient d'ailleurs
     out.push({ muscle: v.muscle, sets: v.sets, target: Math.round(target*10)/10, machines: items.length });
   });
@@ -3676,6 +3890,7 @@ function programBalancePenalty(program, exercises, goal, avgSessions, muscleFocu
    qu'un excès (voir UNDER_W/OVER_W dans _applyGoalToProgramRaw). */
 function rebalanceSessionSets(entries, exercises, targetsByMuscle) {
   var exMap = {}; (exercises||[]).forEach(function(e){ exMap[e.id]=e; });
+  var compteReb = comptePrincipaux(exercises);
   var refs = (entries||[]).map(function(e){
     var ex = exMap[e.ex];
     var all = e.sets || [];
@@ -3698,7 +3913,11 @@ function rebalanceSessionSets(entries, exercises, targetsByMuscle) {
          machines deviendraient 6. À 2, la répartition tombe juste (2+2) au lieu
          du 1+3 bancal qu'un plancher à 1 laissait passer. */
       lo: touched ? n : Math.min(2, MAX_SETS_PER_EXERCISE),
-      hi: touched ? n : MAX_SETS_PER_EXERCISE };
+      /* Même plafond par machine que le programme (voir maxSetsFor) : 4, ou
+         5 si c'est la seule machine de son muscle. `null` comme objectif =
+         plafond absolu par défaut, le rééquilibrage de séance n'a pas l'objectif
+         sous la main. */
+      hi: touched ? n : (ex ? maxSetsFor(ex, null, compteReb) : MAX_SETS_PREFERE) };
   });
   var keys = Object.keys(targetsByMuscle || {});
   function penalty(){
@@ -4374,7 +4593,11 @@ function actualMuscleVolumeMap(doneSessions, exMap, windowDays) {
    moyen de le remettre était de retoucher un réglage dans Options. */
 function recalibrateProgramFromHistory(program, exercises, goal, avgSessions, muscleFocus, sessions, profile) {
   var exMap = {}; exercises.forEach(function(e){ exMap[e.id]=e; });
-  var doneSessions = (sessions||[]).filter(function(s){ return s.done; });
+  /* Séances du mode voyage exclues (23 sept. 2026) : leur volume est
+     volontairement réduit, et le compter ferait croire au retour qu'il manque
+     du volume partout — l'appli rajouterait des séries sur tout le programme
+     de salle pour "compenser" des vacances. */
+  var doneSessions = (sessions||[]).filter(function(s){ return s.done && !s.voyage; });
   var hasEnoughHistory = doneSessions.length >= program.length; // ~un tour complet de la rotation
   var actualWeekly = hasEnoughHistory ? actualMuscleVolumeMap(doneSessions, exMap, 28) : null;
 
@@ -4393,7 +4616,7 @@ function recalibrateProgramFromHistory(program, exercises, goal, avgSessions, mu
   } else if (priorityRank(order, "goal") === 0) {
     recalibrated = liftMusclesBelowTarget(recalibrated, exercises, goal, avgSessions, muscleFocus);
   }
-  var newProgram = clampSetsToBounds(recalibrated, goal);
+  var newProgram = clampSetsToBounds(recalibrated, goal, exercises);
   var changed = false;
   program.forEach(function(d,i){ d.items.forEach(function(it,j){
     var newIt = newProgram[i].items[j];
@@ -4568,7 +4791,7 @@ var STATE_VERSION = 1;
    ne supprime jamais rien, et ne remplace son programme que s'il est devenu
    inexploitable — tout ce qu'il a loggé (séances, poids, profil, séance en
    cours) est préservé dans tous les cas. */
-var PROGRAM_VERSION = 6;   /* 6 (18 sept. 2026) : course et vélo dehors ; 5 (17 sept.) : les 5 appareils de cardio */
+var PROGRAM_VERSION = 7;   /* 7 (23 sept. 2026) : exercices poids du corps du mode voyage ; 6 (18 sept.) : course et vélo dehors ; 5 (17 sept.) : les 5 appareils de cardio */
 /* Repère de build visible dans Options > tout en bas — demande implicite
    suite à plusieurs allers-retours où un changement publié semblait "ne pas
    arriver" (voir historique de la conversation, 5 sept. 2026) : sans repère
@@ -4577,7 +4800,7 @@ var PROGRAM_VERSION = 6;   /* 6 (18 sept. 2026) : course et vélo dehors ; 5 (17
    recommitée à la main — contrairement au lien Artifact qui se met à jour
    tout seul". Change cette date à chaque publication notable pour que la
    comparaison soit possible côté utilisateur. */
-var APP_BUILD = "2026-09-21a";
+var APP_BUILD = "2026-09-23b";
 
 function seedState() {
   return {
@@ -4893,7 +5116,7 @@ var MUSCLE_FIXES = [
 function withSetsBoundsMigration(state) {
   if (!state || !state.program) return state;
   var goal = (state.profile && state.profile.goal) || "loss_hyper";
-  var next = clampSetsToBounds(state.program, goal);
+  var next = clampSetsToBounds(state.program, goal, state.exercises);
   return next === state.program ? state : Object.assign({}, state, { program: next });
 }
 function withMuscleCorrections(state) {
@@ -5129,6 +5352,7 @@ var PRIMARY_SUGGESTION = {
   "Épaules": "Développé des épaules",
 };
 function musclesWithoutPrimary(exercises, program, goal, avgSessions, muscleFocus) {
+  exercises = (exercises||[]).filter(function(e){ return !estVoyage(e); });
   var primary = {};
   (exercises||[]).forEach(function(e){ var ms = allMuscles(e); if (ms.length) primary[ms[0]] = true; });
   var baseTarget = goalPreset(goal).targetSets || VOL_MIN;
@@ -5270,6 +5494,7 @@ function describeProgramDiff(before, after, exercises) {
 }
 function unmappedExercises(exercises) {
   return (exercises||[]).filter(function(e){
+    if (estVoyage(e)) return false;
     if (allMuscles(e).length > 1) return false;
     var n = stripAccents(e.name||"");
     if (SECONDARY_MUSCLE_UPDATES.some(function(r){ return r.test.test(n); })) return false;
@@ -5427,7 +5652,44 @@ function withAllMigrations(state) {
   s = withTrackingDefaults(s);
   s = withCardioDefaults(s);
   s = withCardioFieldUpdates(s);
+  s = withRestTimerRestore(s);
   return s;
+}
+/* CHRONO DE REPOS RETROUVÉ APRÈS UNE FERMETURE (22 sept. 2026).
+
+   Signalement : "de temps en temps mon app crashe — l'appli se ferme et le
+   chrono s'efface quand je relance", pendant une séance, sur la PWA installée.
+
+   Deux choses distinctes, et seule la seconde est réparable ici :
+   1. LA FERMETURE elle-même. Une page web installée sur un téléphone est
+      déchargée par le système quand il a besoin de mémoire — on passe sur
+      l'appareil photo, sur un message, la musique démarre, et au retour la
+      page repart de zéro. Aucune page web ne peut l'empêcher ; seule une vraie
+      application de store le pourrait. Ce qui est déjà en place pour limiter
+      les dégâts : la séance en cours est écrite en local à chaque geste et la
+      sauvegarde en attente est vidée dès que la page passe en arrière-plan
+      (voir scheduleSave/flushPendingSave), donc les séries saisies survivent.
+   2. LE CHRONO, lui, ne survivait PAS : il vivait uniquement dans la mémoire
+      de la page (useState), jamais enregistré. Toute fermeture le perdait —
+      et comme il n'est pas rare de fermer l'appli PENDANT un repos (c'est même
+      le moment où on regarde son téléphone), c'est le symptôme visible.
+      Il est désormais enregistré avec le reste de l'état.
+
+   Restauration volontairement prudente : seulement si une séance est en cours
+   (un chrono sans séance n'a plus d'objet) et si l'heure de fin n'est pas
+   dépassée de plus de 10 minutes — au-delà, le repos appartient au passé et
+   réafficher une barre à "+3:47:12" en rouge serait du bruit, pas une info. */
+var REST_RESTORE_MAX_LATE_MS = 10 * 60 * 1000;
+function withRestTimerRestore(state) {
+  if (!state || !state.restTimer) return state;
+  var t = state.restTimer;
+  var utilisable = !!state.active && typeof t.endTime === "number" && isFinite(t.endTime)
+    && (Date.now() - t.endTime) < REST_RESTORE_MAX_LATE_MS;
+  if (!utilisable) {
+    var sans = Object.assign({}, state); delete sans.restTimer; return sans;
+  }
+  if (t.endTime > Date.now()) return state;          // repos encore en cours : il reprend normalement
+  return Object.assign({}, state, { restTimer: Object.assign({}, t, { silencedAtStart: true }) });
 }
 /* Nettoyage des séries au moment d'enregistrer une séance — sorti de
    finishSession le 12 sept. 2026 pour être testable, et CORRIGÉ au passage.
@@ -5620,7 +5882,7 @@ function Stepper(props) {
   var box = {display:"flex",alignItems:"stretch",borderRadius:6,overflow:"hidden",border:"1px solid "+C.taupeDim,minHeight:44};
   if (flexible) { box.flex = "1 1 0"; box.minWidth = 0; } else { box.flexShrink = 0; }
   return h("div", {className:"flex items-stretch", style:box},
-    h("button", {onClick:function(){setBrouillon(null); onChange(borne(Math.max(min, round((value||0)-step))));}, "aria-label":"Diminuer",
+    h("button", {onClick:function(){setBrouillon(null); onChange(borne(Math.max(min, arrondiPas((value||0)-step, step))));}, "aria-label":"Diminuer",
       style:{padding:"0 "+padX+"px",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",background:C.shroudDeep,color:C.taupe,border:"none"}},
       h(Icon,{name:"minus",size:14})),
     h("input", {type:"text", className:"stepper-input", inputMode:"decimal", value: affiche, placeholder:ph,
@@ -5650,7 +5912,7 @@ function Stepper(props) {
        doit toujours rester touchable. */
     suffix ? h("span",{style:Object.assign({display:"flex",alignItems:"center",paddingRight:6,background:C.shroud,color:C.taupe,fontSize:11},
       flexible ? {minWidth:0, overflow:"hidden"} : {})},suffix) : null,
-    h("button", {onClick:function(){setBrouillon(null); onChange(borne(round((value||0)+step)));}, "aria-label":"Augmenter",
+    h("button", {onClick:function(){setBrouillon(null); onChange(borne(arrondiPas((value||0)+step, step)));}, "aria-label":"Augmenter",
       style:{padding:"0 "+padX+"px",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",background:C.shroudDeep,color:C.taupe,border:"none"}},
       h(Icon,{name:"plus",size:14}))
   );
@@ -6524,13 +6786,42 @@ function SyncDot(props){
    pas le son qu'il contient, qui fait basculer la session audio. */
 var SILENT_WAV = "data:audio/wav;base64,UklGRl4RAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YToRAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 var silentEl = null, audioUnlocked = false;
-function declarePlaybackSession() {
+/* CORRIGÉ le 22 sept. 2026 — signalement : "la musique Spotify est plus basse
+   quand l'appli sport est lancée".
+
+   C'était exact, et c'était le prix caché de la sonnerie en mode silencieux.
+   L'appli déclarait sa session audio en "playback" dès le PREMIER appui, puis
+   la laissait comme ça toute la session. Or "playback" est un type EXCLUSIF :
+   la spécification Audio Session dit qu'il met en pause l'audio des autres
+   applications ("an exclusive type that will pause other playback audio on
+   the device"). Spotify se faisait donc écraser en permanence, alors que
+   l'appli ne joue RIEN pendant 99% du temps.
+
+   Trois types nous intéressent (spec W3C Audio Session / MDN) :
+     - "ambient"  : se MÉLANGE aux autres audios, ne les interrompt pas ;
+     - "playback" : exclusif, met les autres en pause ;
+     - "auto"     : le navigateur décide.
+   L'appli reste donc en "ambient" tout le temps, et ne passe en "playback"
+   qu'à l'instant où la sonnerie de fin de repos part — là, couvrir la musique
+   est précisément ce qu'on veut. Dès que la sonnerie est coupée ou que le
+   chrono s'arrête, on repasse en "ambient" et Spotify reprend son volume.
+
+   Ce que ça change pour le mode silencieux, honnêtement : pendant le repos,
+   la piste silencieuse tourne maintenant en "ambient", donc l'interrupteur
+   latéral d'un iPhone peut la museler ; c'est au moment du bip, en
+   "playback", que la bascule se joue. Je n'ai pas d'iPhone pour le vérifier —
+   à tester en salle avec le téléphone en silencieux. Si la sonnerie ne passe
+   plus en silencieux, dis-le moi : on remet "playback" pendant tout le repos
+   et on accepte que la musique baisse pendant ce temps. */
+function setSessionAudio(type) {
   try {
-    if (navigator.audioSession && navigator.audioSession.type !== "playback") {
-      navigator.audioSession.type = "playback";
+    if (navigator.audioSession && navigator.audioSession.type !== type) {
+      navigator.audioSession.type = type;
     }
   } catch (e) {}
 }
+function declarePlaybackSession() { setSessionAudio("playback"); }
+function declareAmbientSession() { setSessionAudio("ambient"); }
 function ensureSilentTrack() {
   if (silentEl) return silentEl;
   try {
@@ -6554,7 +6845,7 @@ function ensureSilentTrack() {
 function unlockAudio() {
   if (audioUnlocked) return;
   audioUnlocked = true;
-  declarePlaybackSession();
+  declareAmbientSession();
   try {
     var Ctx = window.AudioContext || window.webkitAudioContext;
     if (Ctx && !alertCtx) alertCtx = new Ctx();
@@ -6567,11 +6858,14 @@ function unlockAudio() {
   if (el) { try { var p = el.play(); if (p && p.then) p.then(function(){ el.pause(); }).catch(function(){}); } catch (e) {} }
 }
 function silentTrackOn() {
-  declarePlaybackSession();
+  /* "ambient" : la piste silencieuse garde la page vivante en arrière-plan
+     sans couper la musique de l'utilisateur (voir setSessionAudio). */
+  declareAmbientSession();
   var el = ensureSilentTrack();
   if (el) { try { var p = el.play(); if (p && p.catch) p.catch(function(){}); } catch (e) {} }
 }
 function silentTrackOff() {
+  declareAmbientSession();          /* fin du repos : on rend la main à la musique */
   if (silentEl) { try { silentEl.pause(); } catch (e) {} }
 }
 try {
@@ -6689,8 +6983,13 @@ function RestTimerBar(props) {
 
      Ce qui est coupé, c'est le SON, pas le chrono : le décompte continue en
      rouge et la barre indique "Son coupé". */
-  var _s = useState(false), silenced = _s[0], setSilenced = _s[1];
-  useEffect(function(){ setSilenced(false); }, [timer.id]);
+  /* `silencedAtStart` (22 sept. 2026) : chrono RESTAURÉ après une fermeture de
+     l'appli alors qu'il avait déjà expiré. On réaffiche le décompte (savoir
+     depuis combien de temps le repos est fini est utile), mais on ne réveille
+     pas la sonnerie — l'instant où elle servait est passé, et se faire
+     alarmer par une appli qu'on vient tout juste de rouvrir n'a aucun sens. */
+  var _s = useState(!!timer.silencedAtStart), silenced = _s[0], setSilenced = _s[1];
+  useEffect(function(){ setSilenced(!!timer.silencedAtStart); }, [timer.id]);
   useEffect(function(){
     if (!over || silenced) return;
     restAlert(volumeRef.current);
@@ -6702,6 +7001,9 @@ function RestTimerBar(props) {
     var id = setInterval(function(){ restAlert(volumeRef.current); }, 5000);
     function couper(){
       setSilenced(true);
+      /* Sonnerie coupée : on rend tout de suite sa place à la musique de
+         l'utilisateur (voir setSessionAudio). */
+      declareAmbientSession();
       if (navigator.vibrate) { try { navigator.vibrate(0); } catch (e) {} }
     }
     function auRetour(){ if (!document.hidden) couper(); }
@@ -6716,6 +7018,7 @@ function RestTimerBar(props) {
     } catch (e) {}
     return function(){
       clearInterval(id);
+      declareAmbientSession();      /* plus de sonnerie en cours : la musique reprend */
       try { document.removeEventListener("visibilitychange", auRetour); } catch (e) {}
       try {
         if (navigator.mediaSession && navigator.mediaSession.setActionHandler) {
@@ -7170,7 +7473,14 @@ function SeanceTab(props) {
     return h("div", null,
       swapCardOrphan(previewItems),
       autoFixCard(),
-      (profile && profile.gyms && profile.gyms.length>1) ? h("div",{style:{marginBottom:16}},
+      modeVoyage(profile) ? h("div",{style:{marginBottom:16,borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.steel}},
+        h("div",{style:{fontFamily:sansCond,fontSize:15,fontWeight:700,color:C.steel,marginBottom:4}}, "Mode voyage — poids du corps"),
+        h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.5,marginBottom:10}},
+          "Deux séances complètes à alterner, 2 à 3 fois par semaine, 35 à 45 min. Ton programme de salle est mis de côté tel quel et revient au retour. Ces séances n'avancent pas ta rotation de salle et ne comptent pas dans son recalibrage."),
+        props.basculerVoyage ? h("button",{onClick:function(){ props.basculerVoyage(false); },
+          style:{width:"100%",padding:"8px 0",borderRadius:6,color:C.bone,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:13.5,fontWeight:600}},
+          "Je suis rentré : revenir à mon programme de salle") : null) : null,
+      (!modeVoyage(profile) && profile && profile.gyms && profile.gyms.length>1) ? h("div",{style:{marginBottom:16}},
         h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,marginBottom:6}}, "Salle actuelle"),
         h("div",{style:{display:"flex",flexWrap:"wrap",gap:6}},
           profile.gyms.map(function(g){
@@ -7281,7 +7591,8 @@ function SeanceTab(props) {
                   h(OrderBadge,{order: ex?exerciseOrderTier(ex):null, onChange: (ex && updateExerciseOrder) ? function(v){updateExerciseOrder(ex.id, v);} : undefined}),
                   h("div",{style:{flex:1,minWidth:0}},
                     h("div",{style:{fontSize:15.5,fontWeight:600,lineHeight:1.25}}, ex?ex.name:"Machine supprimée"),
-                    h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,marginTop:1}}, brandLabel(ex))),
+                    h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,marginTop:1}}, brandLabel(ex)),
+                    (ex && ex.conseil) ? h("div",{style:{fontSize:12,color:C.taupe,lineHeight:1.45,marginTop:4}}, ex.conseil) : null),
                   ex ? h("button",{onClick:function(){requestSwap(ex);}, title:"Changer de machine", "aria-label":"Changer de machine — "+ex.name,
                     style:{padding:7,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",flexShrink:0}}, h(Icon,{name:"repeat",size:14})) : null),
                 h("div",{style:{display:"flex",alignItems:"center",gap:10,marginTop:8,paddingLeft:27,flexWrap:"wrap",rowGap:8}},
@@ -7637,7 +7948,11 @@ function SeanceTab(props) {
             h(OrderBadge,{order: ex?exerciseOrderTier(ex):null, onChange: (ex && updateExerciseOrder) ? function(v){updateExerciseOrder(ex.id, v);} : undefined}),
             h("div",{style:{flex:1,minWidth:0}},
               h("div",{style:{fontSize:16.5,fontWeight:600,lineHeight:1.25}}, ex?ex.name:"Machine supprimée"),
-              h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,marginTop:1}}, brandLabel(ex)+" · repos "+it.rest+"s"+(isAdhoc?" · ajoutée pour cette séance":"")+(it.gymSwappedFrom?" · remplace "+it.gymSwappedFrom+" (indispo dans cette salle)":"")+(it.gymMergedFrom?" · "+mergedNoteShort(it.gymMergedFrom):"")+(it.gymMissing?" · indisponible dans cette salle":""))),
+              h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,marginTop:1}}, brandLabel(ex)+" · repos "+it.rest+"s"+(isAdhoc?" · ajoutée pour cette séance":"")+(it.gymSwappedFrom?" · remplace "+it.gymSwappedFrom+" (indispo dans cette salle)":"")+(it.gymMergedFrom?" · "+mergedNoteShort(it.gymMergedFrom):"")+(it.gymMissing?" · indisponible dans cette salle":"")),
+              /* Mode d'emploi sans matériel (exercices poids du corps, voir
+                 SEED_EXERCISES > conseil) : comment le faire, et comment le
+                 rendre plus facile ou plus dur. */
+              (ex && ex.conseil) ? h("div",{style:{fontSize:12,color:C.taupe,lineHeight:1.45,marginTop:4}}, ex.conseil) : null),
             h("div",{style:{display:"flex",alignItems:"center",gap:6,flexShrink:0}},
               ex ? h("button",{onClick:function(){requestSwap(ex);}, title:"Changer de machine", "aria-label":"Changer de machine — "+ex.name,
                 style:{padding:7,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent"}}, h(Icon,{name:"repeat",size:14})) : null,
@@ -7770,6 +8085,7 @@ function ProgrammeTab(props){
   });
   var best = ranked[0] || null;
   function applySplit(tplKey){
+    if (modeVoyage(profile)) return;   /* le programme de salle est mis de côté : on n'y touche pas */
     var prog = buildProgramFromSplit(tplKey, exercises, goal, profile.currentGymId);
     if (!prog || !prog.length) return;
     /* Le split est reconstruit de zéro : le cardio, qui ne fait pas partie des
@@ -7806,7 +8122,9 @@ function ProgrammeTab(props){
   var totalItems = program.reduce(function(a,d){ return a + d.items.length; }, 0);
 
   return h("div", null,
-    h(Section, {title:"Type de split",
+    modeVoyage(profile) ? h("div",{style:{marginBottom:14,padding:"10px 12px",borderRadius:8,background:C.shroudDeep,borderLeft:"3px solid "+C.steel,fontSize:12.5,color:C.taupe,lineHeight:1.55}},
+      "Mode voyage actif : les jours ci-dessous sont le programme poids du corps. Ton programme de salle est mis de côté, intact ; le choix du type de split est désactivé jusqu'au retour (Options > Mode voyage).") : null,
+    modeVoyage(profile) ? null : h(Section, {title:"Type de split",
       right: h("button",{onClick:function(){setSplitOpen(!splitOpen);},
         style:{padding:"5px 10px",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:12}},
         splitOpen ? "Fermer" : "Changer")},
@@ -7893,8 +8211,45 @@ function ProgrammeTab(props){
    avant éparpillé dans l'onglet Programme (nutrition) + code en dur
    (le son n'était pas réglable).
    ============================================================ */
+/* FRÉQUENCE RÉELLE, mesurée dans l'historique — 23 sept. 2026.
+
+   Trouvé en analysant son export : 13 séances en 19 jours, soit ~4,4 jours
+   d'entraînement par semaine, pour un réglage à 3-4. Or TOUT le calcul des
+   séries passe par ce réglage : l'appli répartit la cible hebdomadaire
+   (12 séries/muscle) sur le nombre de séances DÉCLARÉ. Réglée trop bas, elle
+   entasse des séries dans chaque séance — c'est exactement ce qui produisait
+   les séances de 35 séries, les 5 séries par machine et la fatigue au bout
+   d'une heure. Réglée trop haut, l'inverse : du volume manquant.
+
+   On compte les JOURS avec au moins une séance terminée (deux séances le même
+   jour = un jour), sur les 28 derniers jours, ou depuis la première séance si
+   l'historique est plus court — mais jamais sur moins de 14 jours : avant,
+   une semaine chargée ou creuse ne dit rien du rythme habituel. */
+function frequenceReelle(sessions, maintenant) {
+  var now = maintenant || Date.now();
+  var faites = (sessions || []).filter(function(s){ return s && s.done && !s.voyage && s.date && isFinite(new Date(s.date).getTime()); });
+  if (faites.length < 4) return null;
+  var premier = Math.min.apply(null, faites.map(function(s){ return new Date(s.date).getTime(); }));
+  var anciennete = (now - premier) / 864e5;
+  if (anciennete < 14) return null;
+  var fenetre = Math.min(28, anciennete);
+  var jours = {};
+  faites.forEach(function(s){
+    var t = new Date(s.date).getTime();
+    if (now - t <= fenetre * 864e5) jours[new Date(s.date).toISOString().slice(0,10)] = true;
+  });
+  var n = Object.keys(jours).length;
+  var parSemaine = n / (fenetre / 7);
+  /* Fourchette proposée : celle dont le MILIEU (c'est ce milieu que l'appli
+     utilise, voir avgSessionsPerWeek) tombe au plus près du rythme mesuré, au
+     demi près — 4,2 -> "4", 4,3 -> "4 à 5". */
+  var milieu = Math.max(1, Math.round(parSemaine * 2) / 2);
+  var lo = Math.floor(milieu), hi = Math.ceil(milieu);
+  return { parSemaine: parSemaine, jours: n, fenetreJours: Math.round(fenetre), min: lo, max: hi, milieu: milieu };
+}
 function OptionsTab(props){
   var profile=props.profile, setProfile=props.setProfile, program=props.program, exercises=props.exercises, bodyLog=props.bodyLog||[], persistConfig=props.persistConfig;
+  var freqMesuree = frequenceReelle(props.sessions);
   function set(patch){ setProfile(Object.assign({}, profile, patch)); }
   var _rp = useState(false), reapplyPrompt=_rp[0], setReapplyPrompt=_rp[1];
   /* "Mes salles" (voir exerciseAvailableAtGym, adaptDayItems, la section
@@ -8144,6 +8499,9 @@ function OptionsTab(props){
      Rien n'est perdu au passage : voir applyTrainingModeChange. */
   function applyTrainingMode(mode){
     if (trainingMode(profile) === mode) return;
+    /* En voyage, le programme affiché est celui du voyage : on retient le
+       choix, il s'appliquera au programme de salle quand on le retrouvera. */
+    if (modeVoyage(profile)) { setProfile(Object.assign({}, profile, { trainingMode: mode })); return; }
     var res = applyTrainingModeChange(mode, program, exercises, profile);
     setProfile(res.profile);
     persistConfig(exercises, res.program, {reoptimize:false});
@@ -8154,7 +8512,7 @@ function OptionsTab(props){
   function appliquerCardioEx(id){
     var nouveau = Object.assign({}, profile, { cardioEx: id || null });
     setProfile(nouveau);
-    if (trainingMode(profile) !== "muscu") {
+    if (trainingMode(profile) !== "muscu" && !modeVoyage(profile)) {
       persistConfig(exercises, applyCardioToProgram(program, exercises, nouveau), {reoptimize:false});
     }
   }
@@ -8173,6 +8531,10 @@ function OptionsTab(props){
      retard sur ce que l'utilisateur vient de régler. */
   function applyBalanceOrTimeChange(patch) {
     var newProfile = Object.assign({}, profile, patch);
+    /* Mode voyage : le réglage est retenu, mais le programme poids du corps
+       n'est pas recalculé — il sera appliqué au programme de salle au retour
+       (la réoptimisation automatique reprend alors toute seule). */
+    if (modeVoyage(profile)) { setProfile(newProfile); return; }
     var mf = ("muscleFocus" in patch) ? patch.muscleFocus : muscleFocus;
     /* Le NOUVEL objectif, pas l'ancien — sans ça, changer d'objectif
        d'entraînement recalculait le programme avec les repères du précédent
@@ -8203,7 +8565,7 @@ function OptionsTab(props){
   var muscleFocusCustomized = Object.keys(muscleFocus).length > 0;
   function setMuscleFocusFor(mu, v) {
     var mf = Object.assign({}, muscleFocus);
-    if (v == null || Math.abs(v-1) < 0.001) { delete mf[mu]; } else { mf[mu] = Math.max(0.25, Math.min(3, v)); }
+    if (v == null || Math.abs(v-1) < 0.001) { delete mf[mu]; } else { mf[mu] = arrondiPas(Math.max(0.2, Math.min(3, v)), 0.1); }
     applyBalanceOrTimeChange({ muscleFocus: mf });
   }
   function resetMuscleFocus() { applyBalanceOrTimeChange({ muscleFocus: {} }); }
@@ -8236,6 +8598,23 @@ function OptionsTab(props){
           "À quelle distance de l'échec s'arrêter — "+((GOALS.find(function(g){return g.k===(profile.goal||"loss_hyper");})||{}).label||"")),
         h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.55}}, EFFORT_ADVICE[profile.goal||"loss_hyper"] || EFFORT_ADVICE.loss_hyper)
       )
+    ),
+
+    /* MODE VOYAGE (23 sept. 2026) — voir VOYAGE_PROGRAM pour les sources. */
+    h(Section, {title:"Mode voyage (poids du corps)"},
+      h("p",{style:{fontSize:12,color:C.taupe,lineHeight:1.6,marginBottom:10}},
+        modeVoyage(profile)
+          ? ("Actif depuis le "+new Date(profile.voyage.debut).toLocaleDateString("fr-FR")+". Ton programme de salle est mis de côté, intact, et revient tel quel au retour.")
+          : "Pour les vacances ou un déplacement sans salle : deux séances complètes au poids du corps (pompes, rowing avec un sac à dos, squat bulgare, dips entre deux chaises, gainage…), faisables dans une chambre d'hôtel, à alterner 2 à 3 fois par semaine, 35 à 45 min. Ton programme de salle est mis de côté et revient intact au retour."),
+      modeVoyage(profile) ? null : h(InfoTip,{label:"Est-ce que ça suffit pour ne pas perdre ?"},
+        "Oui, largement. Chez des adultes jeunes, une seule séance par semaine — environ un tiers du volume habituel — a suffi à garder la masse musculaire pendant 32 semaines (Bickel et al. 2011). Et une pause de 3 semaines coûte peu de toute façon : chez des débutants, 6 mois avec une pause de 3 semaines toutes les 6 semaines ont donné une prise de muscle comparable à 6 mois sans pause (Ogasawara et al. 2013). La charge compte peu pour le muscle tant que la série est poussée près de l'échec (Schoenfeld et al. 2017) : des pompes à l'échec ont donné autant de pectoraux que du développé couché à charge comparable en 8 semaines (Kikuchi & Nakazato 2017). Sans charge, on progresse en passant à une variante plus dure, ou en remplissant un sac à dos de bouteilles d'eau — chaque exercice indique comment."),
+      h("button",{onClick:function(){ if (props.basculerVoyage) props.basculerVoyage(!modeVoyage(profile)); }, disabled: !!props.seanceEnCours,
+        style:{width:"100%",padding:"10px 0",borderRadius:6,background:modeVoyage(profile)?"transparent":C.steel,color:modeVoyage(profile)?C.bone:C.ink,
+          border:"1px solid "+(modeVoyage(profile)?C.taupeDim:"transparent"),fontFamily:sansCond,fontSize:14,fontWeight:700,opacity:props.seanceEnCours?0.5:1}},
+        modeVoyage(profile) ? "Je suis rentré : revenir à mon programme de salle" : "Passer en mode voyage"),
+      props.seanceEnCours ? h("p",{style:{fontSize:11.5,color:C.taupe,marginTop:6}}, "Termine ou abandonne la séance en cours d'abord.") : null,
+      modeVoyage(profile) ? h("p",{style:{fontSize:11.5,color:C.taupe,lineHeight:1.5,marginTop:8}},
+        "Au retour, fais ta première semaine à environ 80 % de tes charges habituelles en gardant 2 reps en réserve : les courbatures après une pause sont plus fortes que d'habitude, et tu retrouveras tes charges en 2 à 3 séances.") : null
     ),
 
     h(Section, {title:"Cardio"},
@@ -8330,6 +8709,20 @@ function OptionsTab(props){
           h(Stepper,{value:profile.sessionsMin, step:1, min:0, max:14, onChange:function(v){applyBalanceOrTimeChange({sessionsMin:v});}}),
           h("span",{style:{color:C.taupe,fontSize:13}},"à"),
           h(Stepper,{value:profile.sessionsMax, step:1, min:profile.sessionsMin||0, max:14, onChange:function(v){applyBalanceOrTimeChange({sessionsMax:v});}})),
+        /* Écart entre le réglage et ce que l'historique montre (voir
+           frequenceReelle) : affiché seulement quand il dépasse une demi-séance
+           de part et d'autre de la fourchette, pour ne pas harceler. */
+        (freqMesuree && Math.abs(freqMesuree.milieu - avgSessionsPerWeek(profile)) >= 0.5)
+          ? h("div",{style:{marginTop:8,marginBottom:6,padding:"10px 12px",borderRadius:8,background:C.shroudDeep,borderLeft:"3px solid "+C.pin}},
+              h("div",{style:{fontSize:12.5,color:C.bone,lineHeight:1.55}},
+                "D'après ton historique, tu t'entraînes en réalité environ "+fmtNombre(Math.round(freqMesuree.parSemaine*10)/10)+" jours par semaine ("+freqMesuree.jours+" jours sur les "+freqMesuree.fenetreJours+" derniers), pour un réglage à "+profile.sessionsMin+"–"+profile.sessionsMax+". "
+                + (freqMesuree.milieu > avgSessionsPerWeek(profile)
+                  ? "L'appli répartit ta cible de séries sur le nombre de séances RÉGLÉ : avec un réglage trop bas, elle met trop de séries dans chaque séance — séances plus longues, plus de machines à 5 séries, plus de fatigue en fin de séance."
+                  : "L'appli répartit ta cible de séries sur le nombre de séances RÉGLÉ : avec un réglage trop haut, chaque séance est trop légère et le volume de la semaine n'est pas atteint.")),
+              h("button",{onClick:function(){ applyBalanceOrTimeChange({sessionsMin:freqMesuree.min, sessionsMax:freqMesuree.max}); },
+                style:{marginTop:8,padding:"8px 12px",borderRadius:6,background:C.pin,color:C.ink,border:"none",fontFamily:sansCond,fontSize:13,fontWeight:700}},
+                "Régler sur "+freqMesuree.min+(freqMesuree.max!==freqMesuree.min?"–"+freqMesuree.max:"")+" séances par semaine"))
+          : null,
         h(InfoTip,{label:"Pourquoi "+recSessions.min+"–"+recSessions.max+" pour cet objectif ?"},
           "Le nombre de séances/semaine ne change pas le volume total visé (~"+goalPreset(goalNow).targetSets+" séries/semaine/muscle pour cet objectif, voir \"Volume prévu par semaine\" dans Machines) — il détermine juste comment ce volume est réparti dans la semaine. Pour la PRISE DE MUSCLE, à volume égal, la fréquence elle-même n'apporte rien de plus (Pelland et al. 2025, Sports Medicine : effet compatible avec zéro) ; l'intérêt de répartir est pratique — éviter d'entasser trop de séries d'affilée, dont la qualité baisse en fin de longue séance (Nunes et al. 2020/2021, effet d'ordre/fatigue). "
           /* Corrigé le 12 sept. 2026 en revérifiant les sources une par une : ce
@@ -8433,7 +8826,7 @@ function OptionsTab(props){
       h("p",{style:{fontSize:12,color:C.taupe,lineHeight:1.6,marginBottom:10}},
         muscleFocusCustomized
           ? ("Réglages en cours : "+usedMuscles.filter(function(mu){return focusMultiplier(muscleFocus,mu)!==1;})
-              .map(function(mu){return mu+" "+focusMultiplier(muscleFocus,mu)+"×";}).join(", ")+". Tous les autres muscles visent le volume standard de ton objectif.")
+              .map(function(mu){return mu+" "+fmtNombre(focusMultiplier(muscleFocus,mu))+"×";}).join(", ")+". Tous les autres muscles visent le volume standard de ton objectif.")
           : "Tous les muscles visent le même volume hebdomadaire (1×, équilibré). Ouvre pour donner plus — ou moins — de volume à un muscle en particulier ; les séries déjà prévues par le palier poly/semi/isolation de chaque machine restent un plancher dans tous les cas, une priorité basse ne retire que le supplément ajouté au-delà."),
       !(focusOpen||muscleFocusCustomized) ? null :
       h("div",{style:{display:"flex",flexDirection:"column",gap:8,marginBottom:muscleFocusCustomized?10:0}},
@@ -8441,7 +8834,11 @@ function OptionsTab(props){
           var w = focusMultiplier(muscleFocus, mu);
           return h("div",{key:mu, style:{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}},
             h("span",{style:{fontSize:13.5,color: w!==1?C.pin:C.bone,fontWeight: w!==1?700:500}}, mu),
-            h(Stepper,{value:w, step:0.5, min:0.25, max:3, suffix:"×", onChange:function(v){ setMuscleFocusFor(mu, v); }}));
+            /* Pas de 0,1 depuis le 22 sept. 2026 : à 0,5, les seuls réglages
+               possibles étaient 0,5× / 1× / 1,5×, soit des écarts de 6 séries
+               par semaine sur une cible de 12 — trop grossier pour "donner un
+               peu plus d'épaules". Voir arrondiPas pour l'arrondi. */
+            h(Stepper,{value:w, step:0.1, min:0.2, max:3, suffix:"×", onChange:function(v){ setMuscleFocusFor(mu, v); }}));
         })),
       muscleFocusCustomized ? h("button",{onClick:function(){ setFocusOpen(false); resetMuscleFocus(); },
         style:{width:"100%",padding:"8px 0",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:13,fontWeight:600}}, "Tout équilibrer (remettre 1× partout)") : null
@@ -8905,7 +9302,9 @@ function AddToDay(props){
     if (!pick) return;
     var ex = exercises.find(function(e){return e.id===pick;});
     var tierDef = tierDefaultsForGoal(goal, ex ? exerciseOrderTier(ex) : 2);
-    persistConfig(exercises, program.map(function(pd){ return pd.key!==day.key ? pd : Object.assign({},pd,{items: pd.items.concat([{ex:pick, sets:tierDef.sets, min:tierDef.min, max:tierDef.max, rest:tierDef.rest}])}); }));
+    /* La liste affichée peut être filtrée (voir l'appel) : on réenregistre
+       TOUT le matériel, pas seulement ce qui était proposé. */
+    persistConfig(props.allExercises || exercises, program.map(function(pd){ return pd.key!==day.key ? pd : Object.assign({},pd,{items: pd.items.concat([{ex:pick, sets:tierDef.sets, min:tierDef.min, max:tierDef.max, rest:tierDef.rest}])}); }));
     setPick("");
   }
   return h("div",{style:{padding:"12px",display:"flex",gap:8,borderTop:"1px solid "+C.shroudDeep}},
@@ -9140,7 +9539,8 @@ function MachinesTab(props){
   /* Une machine multi-muscle (voir allMuscles) apparaît dans CHAQUE section
      muscle qu'elle sollicite ci-dessous — cohérent avec le fait qu'elle
      compte pour le volume de chacun (voir plannedVolume). */
-  var byMuscle = {}; exercises.forEach(function(e){ allMuscles(e).forEach(function(mu){ (byMuscle[mu]=byMuscle[mu]||[]).push(e); }); });
+  /* Les exercices du mode voyage n'encombrent la liste que pendant le voyage. */
+  var byMuscle = {}; exercises.forEach(function(e){ if (estVoyage(e) && !modeVoyage(profile)) return; allMuscles(e).forEach(function(mu){ (byMuscle[mu]=byMuscle[mu]||[]).push(e); }); });
   /* Muscle sous lequel le compte rendu de suppression doit s'afficher : le
      principal s'il est encore dans la liste, sinon le premier secondaire qui
      y est encore, sinon rien (et il s'affiche alors tout en haut). */
@@ -9180,6 +9580,8 @@ function MachinesTab(props){
   }
   return h("div", null,
     (notice && !noticeAt) ? noticeCard() : null,
+    modeVoyage(profile) ? h("div",{style:{marginBottom:14,padding:"10px 12px",borderRadius:8,background:C.shroudDeep,borderLeft:"3px solid "+C.steel,fontSize:12.5,color:C.taupe,lineHeight:1.55}},
+      "Mode voyage actif : le programme poids du corps est volontairement léger (entretien). Les cibles de volume et les diagnostics ci-dessous sont pensés pour ton programme de salle — ils s'afficheront en rouge pendant le voyage, c'est normal, et l'appli ne tente pas de les « corriger ».") : null,
 
     proposal ? h("div",{style:{marginBottom:16,borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.green}},
       h("div",{style:{fontFamily:sansCond,fontSize:15,fontWeight:600,marginBottom:6,color:C.green}},
@@ -9220,7 +9622,7 @@ function MachinesTab(props){
           h("div",{style:{fontFamily:sansCond,fontSize:13,fontWeight:600,color:C.bone,marginBottom:4}}, "Pourquoi ces muscles plafonnent"),
           h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.55}},
             capped.slice(0,4).map(function(c){
-              return c.muscle+" : "+c.machines+" machine"+(c.machines>1?"s":"")+" dans ton programme, déjà à "+MAX_SETS_PER_EXERCISE+" séries chacune ("+c.sets.toFixed(1)+"/"+c.target+" visées).";
+              return c.muscle+" : "+c.machines+" créneau"+(c.machines>1?"x":"")+" dans ton programme, déjà au maximum de séries par machine ("+c.sets.toFixed(1)+"/"+c.target+" visées).";
             }).join(" ")),
           completionDone ? h("div",{style:{fontSize:12.5,color:C.green,lineHeight:1.55,marginTop:6}},
             "Ajouté aux séances : "+completionDone.join(", ")+". Les séries ont été redistribuées.")
@@ -9235,8 +9637,9 @@ function MachinesTab(props){
                 "Chaque machine est placée sur les jours où son muscle est déjà travaillé, puis toutes les séries sont redistribuées. Réversible : tu peux retirer une machine d'un jour depuis Programme."))
           : h("div",{style:{fontSize:12.5,color:C.bone,lineHeight:1.55,marginTop:5}},
               "Le blocage vient du nombre de machines placées dans les séances, pas d'un réglage : ajoute une machine de plus pour ce"+(capped.length>1?"s":"")+" muscle"+(capped.length>1?"s":"")+" (ci-dessus, « Ajouter du matériel »), ou place une machine déjà présente sur un jour supplémentaire depuis l'onglet Programme."),
-          h(InfoTip,{label:"Pourquoi un maximum de "+MAX_SETS_PER_EXERCISE+" séries par machine ?"},
-            "Au-delà d'environ "+MAX_SETS_PER_EXERCISE+" séries d'affilée sur la MÊME machine, les dernières séries se font sur un muscle déjà très fatigué par les précédentes : la charge et le nombre de répétitions s'effondrent, et la série coûte du temps sans apporter grand-chose. Mieux vaut répartir le volume sur une autre machine du même muscle, ou sur un autre jour. À être transparent : contrairement aux autres repères de cette appli, ce chiffre n'est PAS tiré d'une étude — il n'existe pas, à ma connaissance après recherche, de travail publié fixant un maximum de séries pour un exercice donné. Ce qui est chiffré dans la littérature, c'est le plafond par MUSCLE et par séance : ~11 séries fractionnelles (Remmert, Pelland, Robinson, Hinson & Zourdos, « Is There Too Much of a Good Thing? Meta-Regressions of the Effect of Per-Session Volume on Hypertrophy and Strength », SportRxiv 2025), déjà appliqué séparément. Les "+MAX_SETS_PER_EXERCISE+" séries par machine sont donc une convention pratique assumée. Elle est volontairement stricte : quand elle empêche d'atteindre la cible, l'appli te le DIT au lieu de te prescrire 11 séries de la même machine — ce qu'elle faisait avant le 6 sept. 2026, et que personne ne ferait vraiment en salle.")
+          h(InfoTip,{label:"Pourquoi un maximum de "+MAX_SETS_PREFERE+" séries par machine ?"},
+            "Aucune étude ne fixe un nombre maximum de séries pour UN exercice. Ce qui est chiffré, c'est le plafond par MUSCLE et par SÉANCE : environ 11 séries pour la prise de muscle, au-delà desquelles le gain supplémentaire devient indétectable (Remmert, Pelland et al., SportRxiv 2025) — déjà appliqué à part. Deux autres résultats font pencher vers "+MAX_SETS_PREFERE+" séries par machine plutôt que 5 : varier les exercices d'un même muscle répartit mieux la croissance entre ses régions (revue systématique Kassiano et al., 2022), et enchaînées près de l'échec, les séries perdent vite des répétitions — autour de la moitié dès la 4e ou 5e série. L'appli préfère donc ajouter une machine ou un créneau plutôt qu'une 5e série. Exception : un muscle qui n'a qu'UNE machine dans ton matériel (abduction, adduction, mollets…) peut monter à 5, sinon il ne pourrait jamais atteindre sa cible. Quand ce plafond empêche d'atteindre la cible, l'appli te le dit plutôt que de te prescrire des séries qui ne rapportent presque plus rien.")
+
         ) : null,
         overshoot.length ? h(Callout,{title:"Programme trop volumineux pour cet objectif", accent:C.rust, defaultOpen:true,
             summary: overshoot.slice(0,3).map(function(o){return o.muscle+" "+o.floor+"/"+o.target;}).join(", ")+" — même au minimum de séries, impossible de descendre plus bas."},
@@ -9375,7 +9778,7 @@ function MachinesTab(props){
                   h("span",{style:{color:C.taupe}}, "–"),
                   h(Stepper,{value:it.max, min:1, step:(ex && ex.trackBy==="time")?5:1, onChange:function(v){upd({max:Math.max(it.min,v)});}})));
             }),
-            h(AddToDay,{day:d, exercises:exercises, program:program, persistConfig:persistConfig, goal:goal})
+            h(AddToDay,{day:d, exercises:exercises.filter(function(e){ return modeVoyage(profile) ? true : !estVoyage(e); }), allExercises:exercises, program:program, persistConfig:persistConfig, goal:goal})
           ) : null);
       })),
 
@@ -9952,6 +10355,9 @@ function App(props){
   }
   useEffect(function(){
     if (state.active) return;
+    /* Mode voyage : le programme poids du corps est volontairement léger ;
+       le "réparer" vers 12 séries par muscle serait un contresens. */
+    if (modeVoyage(state.profile)) return;
     var sig = programSignature(state.program, state.exercises);
     if (autoFixSig.current === sig) return;
     autoFixSig.current = sig;
@@ -9970,13 +10376,23 @@ function App(props){
 
   var deloadReactive = reactiveDeloadDue(state.sessions, state.exercises);
   var deloadProactive = proactiveDeloadDue(state.sessions, state.program);
-  var deloadSuggested = (deloadReactive || deloadProactive) && state.sessions.filter(function(s){return s.done;}).length >= (state.meta.deloadSnoozeUntil||0);
+  var deloadSuggested = !modeVoyage(state.profile) && (deloadReactive || deloadProactive) && state.sessions.filter(function(s){return s.done;}).length >= (state.meta.deloadSnoozeUntil||0);
   var deloadReason = deloadReactive
     ? "Plusieurs exercices sont bloqués sur la même charge depuis 4 séances — signe classique qu'une semaine plus légère aiderait à repartir."
     : "Ça fait environ 6 tours complets du programme (~5-8 semaines selon ton rythme) — une décharge périodique aide à consolider les gains et prévenir la fatigue accumulée.";
 
-  var _rt = useState(null), restTimer=_rt[0], setRestTimer=_rt[1];
-  var restIdRef = useRef(0);
+  /* Le chrono vit maintenant DANS l'état enregistré (voir withRestTimerRestore) :
+     il survit donc à une fermeture de l'appli en pleine séance. Même interface
+     qu'avant pour tout le reste du code (restTimer / setRestTimer, valeur ou
+     fonction), seul le lieu de stockage change. */
+  var restTimer = state.restTimer || null;
+  var setRestTimer = useCallback(function(v){
+    setState(function(prev){
+      var suivant = (typeof v === "function") ? v(prev.restTimer || null) : v;
+      return Object.assign({}, prev, { restTimer: suivant });
+    });
+  }, [setState]);
+  var restIdRef = useRef((initial && initial.restTimer && initial.restTimer.id) || 0);
   var wakeLockRef = useRef(null);
   // Screen Wake Lock: while a rest timer runs, ask the browser to keep the
   // screen on. This ONLY prevents the screen from auto-dimming/locking on
@@ -10065,7 +10481,8 @@ function App(props){
      d'objectif ou de fourchette de séances ne doit pas se mettre à ajouter des
      machines dans les séances au passage. */
   function persistConfig(exercises, program, opts){
-    if (opts && opts.reoptimize === false) { setState({exercises:exercises, program:program}); return; }
+    /* Mode voyage : aucune réoptimisation ni recomposition — voir modeVoyage. */
+    if ((opts && opts.reoptimize === false) || modeVoyage(state.profile)) { setState({exercises:exercises, program:program}); return; }
     var prof = state.profile || {};
     var mf = prof.muscleFocus || {};
     var prog = program;
@@ -10085,6 +10502,9 @@ function App(props){
   function finishSession(){
     var active = state.active;
     var cleaned = Object.assign({}, active, { done:true, entries: cleanSessionEntries(active) });
+    /* Marquée "voyage" pour que ni le recalibrage ni la fréquence réelle ne
+       la comptent au retour (voir recalibrateProgramFromHistory). */
+    if (modeVoyage(state.profile)) cleaned.voyage = true;
     /* RIEN À ENREGISTRER — corrigé le 14 sept. 2026 (audit général). Avant :
        la séance était fermée en silence (setActive(null)) et disparaissait de
        l'écran sans un mot, alors que l'utilisateur venait d'appuyer sur
@@ -10099,6 +10519,7 @@ function App(props){
     releaseWakeLock();
     silentTrackOff();
     var newSessions = state.sessions.concat([cleaned]);
+    if (modeVoyage(state.profile)) { setState({ sessions: newSessions, active: null }); return; }
     /* Recalibrage automatique et silencieux des séries prescrites (pas de la
        liste des machines — voir recalibrateProgramFromHistory) après CHAQUE
        séance terminée, libre ou programmée : les deux alimentent l'historique
@@ -10178,6 +10599,16 @@ function App(props){
     var counts = rebalanceSessionSets(entries, list, before);
     setState({ active: Object.assign({}, act, { entries: entries.map(function(e,i){ return resizeEntrySets(e, counts[i]); }) }) });
   }
+  /* Mode voyage — entrée et sortie en un geste (voir entrerModeVoyage). Jamais
+     pendant une séance en cours : on ne change pas le programme sous les
+     pieds de quelqu'un qui est en train de le suivre. */
+  function basculerVoyage(on){
+    setState(function(prev){
+      if (prev.active) return prev;
+      var r = on ? entrerModeVoyage(prev.profile, prev.program) : sortirModeVoyage(prev.profile, prev.program);
+      return Object.assign({}, prev, { profile: r.profile, program: r.program, autoFix: null });
+    });
+  }
   function addBodyEntry(entry){
     setState({ bodyLog: (state.bodyLog||[]).concat([Object.assign({id:"b"+Date.now(), date: todayISO(), source:"manuel"}, entry)]) });
   }
@@ -10210,13 +10641,13 @@ function App(props){
         snoozeDeload:snoozeDeload, deloadSuggested: !state.active && deloadSuggested, deloadReason:deloadReason,
         autoFix: state.autoFix, clearAutoFix: function(){ setState({autoFix:null}); },
         updateExerciseOrder:updateExerciseOrder, updateExerciseInc:updateExerciseInc, persistConfig:persistConfig, goal:state.profile.goal,
-        profile:state.profile, setProfile:setProfile }) : null,
+        profile:state.profile, setProfile:setProfile, basculerVoyage:basculerVoyage }) : null,
       tab==="programme" ? h(ProgrammeTab,{ program:state.program, exercises:state.exercises, profile:state.profile, setProfile:setProfile, persistConfig:persistConfig, goal:state.profile.goal }) : null,
       tab==="historique" ? h(HistoriqueTab,{ sessions:state.sessions, exMap:exMap, program:state.program, deleteSession:deleteSession }) : null,
       tab==="machines" ? h(MachinesTab,{ exercises:state.exercises, program:state.program, persistConfig:persistConfig, sessions:state.sessions, updateExerciseInc:updateExerciseInc, goal:state.profile.goal, profile:state.profile,
         active:state.active, addToActiveSession:addExerciseToActiveSession }) : null,
       tab==="analyse" ? h(AnalyseTab,{ sessions:state.sessions, exercises:state.exercises, exMap:exMap, program:state.program, persistConfig:persistConfig, bodyLog:state.bodyLog, addBodyEntry:addBodyEntry, goal:state.profile.goal, profile:state.profile }) : null,
-      tab==="options" ? h(OptionsTab,{ profile:state.profile, setProfile:setProfile, program:state.program, exercises:state.exercises, bodyLog:state.bodyLog, persistConfig:persistConfig }) : null),
+      tab==="options" ? h(OptionsTab,{ profile:state.profile, setProfile:setProfile, program:state.program, exercises:state.exercises, bodyLog:state.bodyLog, persistConfig:persistConfig, sessions:state.sessions, basculerVoyage:basculerVoyage, seanceEnCours:!!state.active }) : null),
     h("div",{style:{position:"fixed",bottom:0,left:0,right:0,zIndex:20}},
       restTimer ? h(RestTimerBar,{timer:restTimer, onAdjust:adjustRestTimer, onDismiss:stopRestTimer, volume: state.profile.alertVolume}) : null,
       /* paddingBottom = retrait de zone sûre : la barre reste collée en bas
