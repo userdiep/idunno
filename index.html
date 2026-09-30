@@ -5498,6 +5498,72 @@ function mifflinBMR(weightKg, heightCm, age, sex) {
   var s = sex === "F" ? -161 : 5;
   return 10*weightKg + 6.25*heightCm - 5*age + s;
 }
+/* ALTERNATIVES À LA MESURE (30 sept. 2026, demande : "quand on ne peut pas
+   calculer la DER avec la balance, il faut une alternative").
+   Sources vérifiées ce jour :
+   - Mifflin–St Jeor (1990) : l'équation la plus fiable en population
+     générale (Frankenfield et al. 2005, J Am Diet Assoc, revue systématique)
+     — mais elle SOUS-ESTIME significativement la DER des sportifs (O'Neill et
+     al. 2023, Sports Med, méta-analyse sur athlètes).
+   - ten Haaf & Weijs 2014 (PLOS ONE), établie sur des sportifs amateurs de
+     18–35 ans : la plus juste ET la plus précise dans la méta-analyse
+     d'O'Neill 2023 (80 % des personnes à ±10 % de la mesure, contre 41–64 %
+     pour les autres). DER = 11,936 × poids + 587,728 × taille (m) − 8,129 ×
+     âge + 191,027 × (homme = 1) + 29,279.
+   - Cunningham 1980 : DER = 500 + 22 × masse maigre (kg) — sans biais
+     significatif chez les sportifs (O'Neill 2023) ; demande un % de masse
+     grasse (pince, DEXA, balance…).
+   `derAjustement` : correction en kcal/j tirée des pesées (voir
+   ajustementDerDepuisPesees), ajoutée quelle que soit la méthode. */
+function tenHaafDER(weightKg, heightCm, age, sex) {
+  return 11.936*weightKg + 587.728*(heightCm/100) - 8.129*age + 191.027*(sex === "M" ? 1 : 0) + 29.279;
+}
+function cunninghamDER(masseMaigreKg) { return 500 + 22*masseMaigreKg; }
+function masseGrassePct(profile, bodyLog) {
+  if (profile && typeof profile.bodyFatPctManual === "number" && profile.bodyFatPctManual >= 3 && profile.bodyFatPctManual <= 70) return profile.bodyFatPctManual;
+  var scan = (bodyLog || []).filter(function(b){ return b && b.fatKg != null && b.weightKg > 0; })
+    .sort(function(a, b){ return (a.date || "") < (b.date || "") ? 1 : -1; })[0];
+  return scan ? scan.fatKg / scan.weightKg * 100 : null;
+}
+var DER_METHODES = {
+  mesure:   { court: "Mesurée", long: "Valeur mesurée (balance à impédance, test en labo)" },
+  sportif:  { court: "Formule sportifs (ten Haaf)", long: "Formule sportifs — ten Haaf 2014" },
+  standard: { court: "Formule standard (Mifflin–St Jeor)", long: "Formule standard — Mifflin–St Jeor" },
+  maigre:   { court: "Masse maigre (Cunningham)", long: "D'après la masse maigre — Cunningham" }
+};
+function methodeDER(profile) {
+  if (profile && DER_METHODES[profile.derMethode]) return profile.derMethode;
+  return (profile && !profile.useBmrFormula && profile.bmrMeasured >= 800) ? "mesure" : "standard";
+}
+/* Valeur d'UNE méthode, sans ajustement : { valeur, manque:[...] }. */
+function derParMethode(methode, profile, bodyLog) {
+  profile = profile || {};
+  var w = (typeof profile.weightKg === "number" && profile.weightKg > 0) ? profile.weightKg : null;
+  var tailleOk = profile.heightCm >= 100 && profile.heightCm <= 250;
+  var ageOk = profile.age >= 10 && profile.age <= 120;
+  var manque = [];
+  if (methode === "mesure") {
+    if (profile.bmrMeasured >= 800) return { valeur: profile.bmrMeasured, manque: [] };
+    return { valeur: null, manque: ["la valeur mesurée"] };
+  }
+  if (methode === "maigre") {
+    var bf = masseGrassePct(profile, bodyLog);
+    if (!w) manque.push("le poids"); if (bf == null) manque.push("le % de masse grasse");
+    return manque.length ? { valeur: null, manque: manque } : { valeur: cunninghamDER(w * (1 - bf/100)), manque: [] };
+  }
+  if (!w) manque.push("le poids"); if (!tailleOk) manque.push("la taille"); if (!ageOk) manque.push("l'âge"); if (!profile.sex) manque.push("le sexe");
+  if (manque.length) return { valeur: null, manque: manque };
+  return { valeur: methode === "sportif" ? tenHaafDER(w, profile.heightCm, profile.age, profile.sex) : mifflinBMR(w, profile.heightCm, profile.age, profile.sex), manque: [] };
+}
+/* DER utilisée par l'appli : méthode choisie, repli sur la formule standard
+   si une donnée manque, puis ajustement tiré des pesées. */
+function derDuProfil(profile, bodyLog) {
+  var m = methodeDER(profile);
+  var r = derParMethode(m, profile, bodyLog), utilisee = m;
+  if (r.valeur == null && m !== "standard") { var r2 = derParMethode("standard", profile, bodyLog); if (r2.valeur != null) { r = { valeur: r2.valeur, manque: r.manque }; utilisee = "standard"; } }
+  var aj = (profile && typeof profile.derAjustement === "number" && isFinite(profile.derAjustement)) ? profile.derAjustement : 0;
+  return { valeur: r.valeur != null ? r.valeur + aj : null, base: r.valeur, ajustement: aj, methode: m, utilisee: utilisee, manque: r.manque };
+}
 /* Kcal burned per step, scaled by body weight — derived from the commonly-
    cited reference point "~0.04 kcal/step for a ~70 kg adult at a normal
    walking pace" (Omnicalculator's steps-to-calories tool, itself citing
@@ -5576,7 +5642,7 @@ function deficitForProfile(profile, tdee) {
   }
   return autoDeficitKcal(profile.goal, profile.weightKg, tdee);
 }
-function computeNutrition(profile, avgSessionMinutes, cardioKcalDay, cardioMinDay) {
+function computeNutrition(profile, avgSessionMinutes, cardioKcalDay, cardioMinDay, bodyLog) {
   /* BUG CORRIGÉ le 6 sept. 2026 (audit des cas limites) : le champ Poids est
      effaçable (le Stepper renvoie null sur un champ vidé), et tous les calculs
      qui en dépendent — kcal des pas, kcal d'entraînement, protéines par kg —
@@ -5592,9 +5658,9 @@ function computeNutrition(profile, avgSessionMinutes, cardioKcalDay, cardioMinDa
      un vrai chiffre. Hors bornes, on considère la valeur comme manquante. */
   var tailleOk = profile.heightCm >= 100 && profile.heightCm <= 250;
   var ageOk = profile.age >= 10 && profile.age <= 120;
-  var bmr = (!profile.useBmrFormula && profile.bmrMeasured >= 800)
-    ? profile.bmrMeasured
-    : ((weight && tailleOk && ageOk && profile.sex) ? mifflinBMR(weight, profile.heightCm, profile.age, profile.sex) : null);
+  /* Méthode de DER au choix (voir derDuProfil) — 30 sept. 2026. */
+  var derInfo = derDuProfil(profile, bodyLog);
+  var bmr = derInfo.valeur != null && derInfo.valeur >= 500 ? derInfo.valeur : null;
   var mode = profile.targetMode || (profile.manualTarget ? "manual" : "deficit");
   var target, proteinG, tdee, breakdown = null;
 
@@ -5662,8 +5728,53 @@ function computeNutrition(profile, avgSessionMinutes, cardioKcalDay, cardioMinDa
      par exemple), on renvoie null plutôt qu'un objet truffé de NaN — l'appel
      affiche alors son message "il manque une information" au lieu de "NaN". */
   if (!isFinite(target) || !isFinite(proteinG)) return null;
-  return { bmr: bmr?Math.round(bmr):null, tdee: tdee?Math.round(tdee):null, target: Math.round(target), proteinG: proteinG, fatG: fatG, carbG: carbG, breakdown: breakdown, deficit: deficitApplique,
+  return { derInfo: derInfo, bmr: bmr?Math.round(bmr):null, tdee: tdee?Math.round(tdee):null, target: Math.round(target), proteinG: proteinG, fatG: fatG, carbG: carbG, breakdown: breakdown, deficit: deficitApplique,
     sousDER: !!(bmr && target < bmr), proteinesTropHautes: proteinKcal > target };
+}
+
+/* AJUSTEMENT DE LA DER D'APRÈS LES PESÉES (30 sept. 2026) — l'alternative la
+   plus fiable quand on n'a pas de mesure : la balance de la salle ne dit pas
+   la DER, mais le poids qui bouge, si. Si l'on a mangé à peu près sa cible,
+   la dépense réelle vaut : cible − (variation de poids × 7700 kcal/kg).
+   L'écart avec la dépense calculée est reporté sur la DER (via la pente
+   dépense/DER du modèle, obtenue en recalculant avec +100 kcal de DER).
+   Conditions : ≥ 4 pesées sur ≥ 14 jours (fenêtre 28 jours), écart ≥ 50
+   kcal, ajustement total plafonné à ±500 kcal/j. C'est une estimation
+   d'équilibre énergétique (7700 kcal/kg = approximation usuelle), valable
+   seulement si la cible a vraiment été suivie. `calc(profil)` = la fonction
+   computeNutrition déjà paramétrée par l'appelant. */
+function ajustementDerDepuisPesees(profile, bodyLog, calc, now) {
+  now = now || Date.now();
+  if (!profile || profile.targetMode === "manual") return { ok: false, raison: "cible-fixe" };
+  var pts = (bodyLog || []).filter(function(b){ return b && b.weightKg > 0 && b.date; })
+    .map(function(b){ return { t: dateMs(b.date), y: b.weightKg }; })
+    .filter(function(p){ return isFinite(p.t) && now - p.t <= 28 * 864e5 && now - p.t >= -864e5 / 2; })
+    /* Seulement les pesées APRÈS le dernier ajustement : celles d'avant ont été
+       faites avec l'ancienne cible — les réutiliser avec la nouvelle ferait
+       ré-ajuster en boucle. */
+    .filter(function(p){ return !(profile.derAjusteLe > 0) || p.t >= profile.derAjusteLe - 864e5 / 2; })
+    .map(function(p){ return { t: p.t / 864e5, y: p.y }; });
+  if (pts.length < 4) return { ok: false, raison: "pesees", n: pts.length };
+  var etendue = Math.max.apply(null, pts.map(function(p){ return p.t; })) - Math.min.apply(null, pts.map(function(p){ return p.t; }));
+  if (etendue < 14) return { ok: false, raison: "duree", jours: Math.round(etendue) };
+  var n0 = calc(profile);
+  if (!n0 || !n0.tdee) return { ok: false, raison: "calcul" };
+  var ajActuel = typeof profile.derAjustement === "number" ? profile.derAjustement : 0;
+  var n1 = calc(Object.assign({}, profile, { derAjustement: ajActuel + 100 }));
+  var pente = regressionPente(pts);                     /* kg/jour */
+  var depenseReelle = n0.target - pente * KCAL_PER_KG_FAT;
+  var ecartDepense = depenseReelle - n0.tdee;
+  var dTdeeParDer = (n1 && n1.tdee) ? (n1.tdee - n0.tdee) / 100 : 1;
+  if (!(dTdeeParDer > 0.3)) dTdeeParDer = 1;
+  /* Pas plus de 250 kcal par ajustement : un poids qui stagne 2-3 semaines
+     peut aussi venir de l'eau (début de régime, cycle, sel) — on corrige par
+     étapes, en revérifiant 2 semaines plus tard. */
+  var brut = ecartDepense / dTdeeParDer;
+  var pas = Math.max(-250, Math.min(250, brut));
+  var nouveau = Math.max(-500, Math.min(500, Math.round((ajActuel + pas) / 10) * 10));
+  var delta = nouveau - ajActuel;
+  return { ok: true, depenseReelle: Math.round(depenseReelle), depenseCalculee: n0.tdee, penteKgSem: Math.round(pente * 7 * 100) / 100,
+    nouveau: nouveau, delta: delta, utile: Math.abs(delta) >= 50, plafonne: Math.abs(nouveau) === 500, parEtapes: Math.abs(brut) > 250, jours: Math.round(etendue), n: pts.length };
 }
 
 /* ============================================================
@@ -5694,7 +5805,7 @@ var PROGRAM_VERSION = 7;   /* 7 (23 sept. 2026) : exercices poids du corps du mo
    recommitée à la main — contrairement au lien Artifact qui se met à jour
    tout seul". Change cette date à chaque publication notable pour que la
    comparaison soit possible côté utilisateur. */
-var APP_BUILD = "2026-09-30a";
+var APP_BUILD = "2026-09-30b";
 
 function seedState() {
   return {
@@ -9882,7 +9993,7 @@ function OptionsTab(props){
     : 0;
   var cardioKcalJour = weeklyCardioKcalPerDay(program, exercises, profile);
   var cardioMinJour = weeklyCardioMinutes(program, profile) / 7;
-  var nut = computeNutrition(profile, avgSessionMinutes, cardioKcalJour, cardioMinJour);
+  var nut = computeNutrition(profile, avgSessionMinutes, cardioKcalJour, cardioMinJour, bodyLog);
   /* Déficit réellement appliqué et sa traduction en rythme hebdomadaire —
      ajouté le 14 sept. 2026 avec le passage du déficit en pourcentage du poids
      (voir autoDeficitKcal). Affiché sous le curseur pour qu'on voie ce que le
@@ -9979,7 +10090,7 @@ function OptionsTab(props){
   // never silently touches profile.manualTargetKcal/manualProteinG —
   // adopting it is an explicit action via the button below.
   var stepsNut = (profile.targetMode !== "steps")
-    ? computeNutrition(Object.assign({}, profile, {targetMode:"steps"}), avgSessionMinutes, cardioKcalJour, cardioMinJour)
+    ? computeNutrition(Object.assign({}, profile, {targetMode:"steps"}), avgSessionMinutes, cardioKcalJour, cardioMinJour, bodyLog)
     : null;
   /* Choisir un objectif applique tout de suite ses réglages nutrition
      (déficit/protéines/activité) ET repasse en mode "DER + pas + séances"
@@ -10314,10 +10425,10 @@ function OptionsTab(props){
           h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe}}, "Taille (cm)"),
           h(Stepper,{value:profile.heightCm, step:1, min:100, max:250, suffix:"cm", viderSiTropBas:true, onChange:function(v){set({heightCm:v});}}))),
       h("div",{style:{marginBottom:10}},
-        h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe,display:"block",marginBottom:4}}, "% masse grasse (optionnel — écrase le dernier scan Boditrax loggé si renseigné)"),
+        h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe,display:"block",marginBottom:4}}, "% masse grasse (optionnel — prioritaire sur le dernier scan loggé)"),
         h(Stepper,{value:profile.bodyFatPctManual, step:0.5, min:3, max:70, suffix:"%", onChange:function(v){set({bodyFatPctManual:v});}, placeholder:"auto"}),
         h("p",{style:{fontSize:11,color:C.taupe,lineHeight:1.5,marginTop:4,marginBottom:0}},
-          "Sert uniquement à comparer ta cible protéique à un repère basé sur la masse maigre (voir plus bas) — laisse vide pour utiliser automatiquement ton dernier bodyLog avec un % masse grasse (ex. scan Boditrax).")),
+          "Sert au repère protéines par kg de masse maigre et à la DER « masse maigre » (Cunningham). Laisse vide pour utiliser ton dernier scan (ex. Boditrax) s'il y en a un.")),
       h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}},
         h("div",null,
           h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe}}, "Âge"),
@@ -10481,17 +10592,75 @@ function OptionsTab(props){
       h(InfoTip,{label:"Quand est-ce utile ?"},
         "Remet tout à plat : la COMPOSITION des séances (quelle machine dans quel jour) puis les séries de chacune, pour ton objectif « "+((GOALS.find(function(g){return g.k===profile.goal;})||{}).label||"")+" » à "+fmt1(avgSessionsPerWeek(profile))+" séances/semaine (le milieu de ta fourchette). Deux cas où ça sert vraiment : tu as ajusté des séries à la main dans « Composer les séances » et tu veux revenir aux repères calculés ; ou un muscle est passé nettement au-dessus de sa cible parce que trop de machines le sollicitent — chacune impose son plancher de "+setsBoundsForGoal(profile.goal).min+" séries, donc le seul remède est d'en retirer une d'un jour, ce que ce bouton sait faire. Il n'enlève jamais la dernière machine qui travaille un muscle en principal, et ne vide jamais un jour. Tes retouches manuelles sont écrasées. Le reste du temps il est inutile : chaque réglage (objectif, priorité par muscle, séances, temps, ordre de priorité, type de split, ajout ou retrait d'une machine) recalcule déjà tout seul.")),
 
-    h(Section, {title:"Dépense énergétique de repos (DER)", expert:true, repliable:true, resume: profile.useBmrFormula ? "Calculée (Mifflin–St Jeor)" : (profile.bmrMeasured >= 800 ? ("Mesurée : "+profile.bmrMeasured+" kcal") : "Mesure manquante — formule utilisée")},
-      h("div",{style:{padding:"10px 12px",borderRadius:8,background:C.shroudDeep,border:"1px solid "+C.taupeDim,marginBottom:10}},
-        h("label",{style:{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.bone,marginBottom: profile.useBmrFormula?0:10}},
-          h("input",{type:"checkbox", checked:!profile.useBmrFormula, onChange:function(e){set({useBmrFormula:!e.target.checked});}}),
-          "Valeur mesurée (ex. balance Boditrax) plutôt que calculée"),
-        !profile.useBmrFormula ? h("div",{style:{display:"flex",gap:8,alignItems:"center"}},
-          h("span",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,width:110}}, "DER (kcal/jour)"),
-          h(Stepper,{value:profile.bmrMeasured, step:10, min:800, max:6000, suffix:"kcal", onChange:function(v){set({bmrMeasured:v});}}))
-        : h("div",{style:{fontSize:12,color:C.taupe,lineHeight:1.5}}, "Sans mesure, on utilise la formule de Mifflin–St Jeor à partir du poids, de la taille, de l'âge et du sexe renseignés ci-dessus.")
-      )
-    ),
+    /* DER : quatre méthodes au choix + ajustement d'après les pesées
+       (30 sept. 2026 — voir derDuProfil, ajustementDerDepuisPesees). Plus en
+       mode "expert" : sans balance, c'est justement ici qu'on choisit
+       l'alternative. */
+    (function(){
+      var info = derDuProfil(profile, bodyLog);
+      var m = info.methode;
+      var calc = function(pr){ return computeNutrition(pr, avgSessionMinutes, cardioKcalJour, cardioMinJour, bodyLog); };
+      var aj = ajustementDerDepuisPesees(profile, bodyLog, calc);
+      var resume = info.valeur != null
+        ? fmtNombre(Math.round(info.valeur)) + " kcal · " + DER_METHODES[info.utilisee].court + (info.ajustement ? " (ajustée)" : "")
+        : "Il manque " + info.manque.join(", ");
+      var notes = {
+        mesure: "Si ta balance ou un test l'a mesurée.",
+        sportif: "La plus juste chez les sportifs amateurs (18–35 ans). Poids, taille, âge, sexe.",
+        standard: "La référence en population générale, mais elle sous-estime souvent chez les sportifs.",
+        maigre: "Si tu connais ton % de graisse (pince, DEXA, balance…)."
+      };
+      return h(Section, {title:"Dépense énergétique de repos (DER)", repliable:true, resume: resume},
+        h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.5,marginBottom:8}},
+          "Sans balance qui la mesure, choisis une formule. Le plus fiable ensuite : laisser tes pesées la corriger (plus bas)."),
+        h("div",{role:"radiogroup","aria-label":"Méthode de calcul de la DER", style:{display:"flex",flexDirection:"column",gap:6,marginBottom:10}},
+          ["sportif","standard","maigre","mesure"].map(function(k){
+            var on = m === k, r = derParMethode(k, profile, bodyLog);
+            return h("button",{key:k, role:"radio", "aria-checked": on ? "true" : "false",
+                onClick:function(){ set({derMethode:k, useBmrFormula: k !== "mesure"}); },
+                style:{display:"flex",alignItems:"center",gap:10,width:"100%",minHeight:52,padding:"8px 12px",borderRadius:8,textAlign:"left",
+                  background: on ? C.shroudDeep : "transparent", border: "1px solid " + (on ? C.pin : C.line), color:C.bone}},
+              h("span",{"aria-hidden":"true", style:{width:18,height:18,borderRadius:9,flexShrink:0,border:"2px solid "+(on?C.pin:C.taupe),display:"flex",alignItems:"center",justifyContent:"center"}},
+                on ? h("span",{style:{width:8,height:8,borderRadius:4,background:C.pin}}) : null),
+              h("span",{style:{flex:1,minWidth:0}},
+                h("span",{style:{display:"block",fontFamily:sansCond,fontSize:14.5,fontWeight:700}}, DER_METHODES[k].court),
+                h("span",{style:{display:"block",fontSize:12,color:C.taupe,lineHeight:1.4}}, notes[k])),
+              h("span",{style:{flexShrink:0,fontFamily:sansCond,fontSize:14,fontWeight:700,fontVariantNumeric:"tabular-nums",color: r.valeur != null ? C.bone : C.taupe}},
+                r.valeur != null ? fmtNombre(Math.round(r.valeur)) : (k === "mesure" ? "—" : "?")));
+          })),
+        m === "mesure" ? h("div",{style:{display:"flex",gap:8,alignItems:"center",marginBottom:10}},
+          h("span",{style:{fontFamily:sansCond,fontSize:12.5,color:C.taupe,width:110}}, "DER mesurée"),
+          h(Stepper,{value:profile.bmrMeasured, step:10, min:800, max:6000, suffix:"kcal", label:"DER mesurée", onChange:function(v){set({bmrMeasured:v});}})) : null,
+        m === "maigre" ? h("div",{style:{display:"flex",gap:8,alignItems:"center",marginBottom:10}},
+          h("span",{style:{fontFamily:sansCond,fontSize:12.5,color:C.taupe,width:110}}, "% masse grasse"),
+          h(Stepper,{value:profile.bodyFatPctManual, step:0.5, min:3, max:70, suffix:"%", label:"% masse grasse", placeholder: masseGrassePct(Object.assign({}, profile, {bodyFatPctManual:null}), bodyLog) != null ? fmt1(masseGrassePct(Object.assign({}, profile, {bodyFatPctManual:null}), bodyLog)) : "", onChange:function(v){set({bodyFatPctManual:v});}})) : null,
+        info.utilisee !== m && info.valeur != null ? h("p",{role:"status",style:{fontSize:12.5,color:C.rustText,lineHeight:1.45,margin:"0 0 10px"}},
+          "Il manque " + info.manque.join(", ") + " : la formule standard est utilisée en attendant.") : null,
+        /* Ajustement d'après les pesées */
+        h("div",{style:{padding:"10px 12px",borderRadius:8,background:C.shroudDeep,border:"1px solid "+C.line}},
+          h("div",{style:{fontFamily:sansCond,fontSize:14.5,fontWeight:700,marginBottom:3}}, "Ajuster avec mes pesées"),
+          info.ajustement ? h("div",{style:{fontSize:12.5,color:C.bone,lineHeight:1.45,marginBottom:4}},
+            "Ajustement en cours : " + (info.ajustement > 0 ? "+" : "−") + fmtNombre(Math.abs(info.ajustement)) + " kcal/j (DER " + fmtNombre(Math.round(info.base)) + " → " + fmtNombre(Math.round(info.valeur)) + ").") : null,
+          !aj.ok ? h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.5}},
+              aj.raison === "cible-fixe" ? "Indisponible avec une cible fixe."
+              : aj.raison === "pesees" ? (profile.derAjusteLe ? "Ajustement fait le " + new Date(profile.derAjusteLe).toLocaleDateString("fr-FR") + ". Continue à te peser : l'appli revérifiera dès 4 nouvelles pesées sur 2 semaines. (" + aj.n + "/4)" : "Pèse-toi 2 à 3 fois par semaine (le matin, à jeun) en suivant ta cible calorique : dès 4 pesées sur 2 semaines, l'appli compare la perte ou prise réelle à celle prévue et corrige ta DER. (" + aj.n + "/4 pesées sur les 28 derniers jours.)")
+              : aj.raison === "duree" ? "Encore un peu de patience : il faut des pesées étalées sur au moins 14 jours" + (profile.derAjusteLe ? " depuis le dernier ajustement" : "") + " (" + aj.jours + " pour l'instant)."
+              : "Calcul impossible : renseigne d'abord ton poids et une méthode de DER.")
+            : h("div",null,
+                h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.5}},
+                  "Sur " + aj.jours + " jours (" + aj.n + " pesées), ton poids " + (Math.abs(aj.penteKgSem) < 0.05 ? "est resté stable" : "a bougé de " + (aj.penteKgSem > 0 ? "+" : "−") + fmtNombre(Math.abs(aj.penteKgSem)) + " kg/semaine") + ". Si tu as bien suivi ta cible, ta dépense réelle est d'environ " + fmtNombre(aj.depenseReelle) + " kcal/j, contre " + fmtNombre(aj.depenseCalculee) + " calculées."),
+                aj.utile ? h("div",{style:{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}},
+                  h("button",{onClick:function(){ set({derAjustement: aj.nouveau, derAjusteLe: Date.now()}); },
+                    style:{minHeight:44,padding:"0 14px",borderRadius:6,background:C.pin,color:C.ink,border:"none",fontFamily:sansCond,fontSize:14,fontWeight:700}},
+                    (aj.delta > 0 ? "Monter" : "Baisser") + " ma DER de " + fmtNombre(Math.abs(aj.delta)) + " kcal")) 
+                : h("div",{style:{fontSize:12.5,color:C.greenText,marginTop:6}}, "Ta DER colle à tes pesées : rien à corriger."),
+                aj.plafonne ? h("div",{style:{fontSize:12,color:C.taupe,marginTop:6,lineHeight:1.45}}, "Écart limité à ±500 kcal : au-delà, vérifie d'abord tes pesées et ce que tu manges réellement.")
+                  : aj.parEtapes ? h("div",{style:{fontSize:12,color:C.taupe,marginTop:6,lineHeight:1.45}}, "L'écart est grand : l'appli corrige d'abord de 250 kcal et revérifiera ensuite (le poids peut stagner quelques semaines à cause de l'eau).") : null),
+          info.ajustement ? h("button",{onClick:function(){ set({derAjustement: 0, derAjusteLe: null}); },
+            style:{marginTop:8,minHeight:40,padding:"0 12px",borderRadius:6,background:"transparent",color:C.taupe,border:"1px solid "+C.line,fontFamily:sansCond,fontSize:13}}, "Retirer l'ajustement") : null,
+          h("p",{style:{fontSize:11.5,color:C.taupe,lineHeight:1.45,margin:"8px 0 0"}},
+            "Hypothèse : tu as mangé à peu près ta cible. Correction par étapes de 250 kcal au plus, revérifiée après 2 semaines de nouvelles pesées.")));
+    })(),
 
     h(Section, {title:"Activité quotidienne", expert:true, repliable:true, resume: (profile.dailySteps||0).toLocaleString("fr-FR")+" pas/jour"},
       h("div",{style:{marginBottom:4}},
@@ -10578,7 +10747,7 @@ function OptionsTab(props){
       ) : h("div",{style:{fontSize:13,color:C.rustText||C.rustText,marginTop:10}},
         profile.targetMode==="manual" ? "Renseigne ta cible en kcal et tes protéines ci-dessus."
           : !profile.weightKg ? "Renseigne ton poids ci-dessus pour calculer tes cibles."
-          : "Renseigne une taille (100-250 cm), un âge (10-120 ans) et le sexe — ou une DER mesurée — pour calculer tes cibles."),
+          : "Renseigne une taille (100-250 cm), un âge (10-120 ans) et le sexe — ou choisis une autre méthode dans « Dépense énergétique de repos (DER) » : mesurée, ou d'après ton % de masse grasse."),
       (nut && nut.sousDER) ? h("div",{style:{fontSize:12.5,color:C.rustText||C.rustText,marginTop:8,lineHeight:1.5}},
         "Ta cible ("+nut.target+" kcal) est sous ta dépense de repos ("+nut.bmr+" kcal). Ce n'est pas dangereux sur quelques jours, mais tenu dans la durée c'est un déficit agressif : fatigue, séances qui baissent et perte de muscle deviennent plus probables. Réduis le rythme si tu peux.") : null,
       (nut && nut.proteinesTropHautes) ? h("div",{style:{fontSize:12.5,color:C.rustText||C.rustText,marginTop:8,lineHeight:1.5}},
@@ -11875,9 +12044,9 @@ function bilanCoach(sessions, exercises, program, profile, bodyLog, now, xpInfo)
     if (estPerte) {
       var visePct = (deficitPctForProfile(profile) || pn.deficitPctPerWeek) * 100; /* perte visée, >0 */
       var perte = -pctSem;
-      if (perte > 1) ajoute({ cle: "poids", ton: "alerte", titre: "Poids : " + libelle, texte: "Plus de 1 %/semaine : trop rapide, le risque de perdre du muscle augmente. Mange un peu plus.", action: "Environ +" + kcal(perte - Math.min(visePct, 0.75)) + " kcal/jour" });
+      if (perte > 1) ajoute({ cle: "poids", ton: "alerte", titre: "Poids : " + libelle, texte: "Plus de 1 %/semaine : trop rapide, le risque de perdre du muscle augmente. Mange un peu plus — ou laisse « Ajuster avec mes pesées » (Options › DER) recalculer ta cible.", action: "Environ +" + kcal(perte - Math.min(visePct, 0.75)) + " kcal/jour" });
       else if (perte < visePct * 0.5) ajoute({ cle: "poids", ton: "attention", titre: "Poids : " + libelle,
-        texte: "Visé : −" + fmtNombre(Math.round(visePct * 100) / 100) + " %/semaine. " + (perte <= 0 ? "Le poids ne descend pas." : "Ça descend, mais lentement.") + " Vérifie d'abord que tu suis bien ta cible calorique.",
+        texte: "Visé : −" + fmtNombre(Math.round(visePct * 100) / 100) + " %/semaine. " + (perte <= 0 ? "Le poids ne descend pas." : "Ça descend, mais lentement.") + " Vérifie d'abord que tu suis bien ta cible calorique ; si oui, « Ajuster avec mes pesées » (Options › DER) corrige ta cible tout seul.",
         action: "Environ −" + Math.abs(kcal(visePct - perte)) + " kcal/jour, puis revoir dans 2 semaines" });
       else ajoute({ cle: "poids", ton: "ok", titre: "Poids : " + libelle, texte: "Dans la bonne zone pour perdre du gras en gardant le muscle (visé : −" + fmtNombre(Math.round(visePct * 100) / 100) + " %/semaine).", action: null });
     } else if (estPrise) {
