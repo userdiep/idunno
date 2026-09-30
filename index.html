@@ -3,13 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#171C21">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#171C21">
+<meta name="apple-mobile-web-app-title" content="Sunglo sport">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
+</head>
+<body>
 <title>Sunglo sport</title>
 <style>
 /* Ajouté le 6 sept. 2026 — BUG RÉEL sur iPhone installé en PWA : le gabarit
@@ -69,6 +72,9 @@ a{color:#F0A62E;}
 @keyframes spin{ to{ transform:rotate(360deg); } }
 @keyframes rise{ from{ opacity:0; transform:translateY(4px);} to{opacity:1; transform:translateY(0);} }
 @keyframes restPulse{ 0%,100%{opacity:1;} 50%{opacity:0.55;} }
+@keyframes niveauPop{ 0%{ transform:scale(0.6); opacity:0; } 60%{ transform:scale(1.12); opacity:1; } 100%{ transform:scale(1); } }
+@keyframes niveauBrille{ 0%,100%{ box-shadow:0 0 0 0 rgba(240,166,46,0); } 50%{ box-shadow:0 0 0 6px rgba(240,166,46,0.35); } }
+@keyframes barreRemplit{ from{ transform:scaleX(0); } to{ transform:scaleX(1); } }
 </style>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Semi+Condensed:wght@500;600;700;800&display=swap">
 
@@ -156,6 +162,13 @@ function resolveAccent(hex) {
 }
 var C = Object.assign({}, C_DARK);
 function applyTheme(theme) { Object.assign(C, theme === "light" ? C_LIGHT : C_DARK); }
+/* MODE SIMPLE (29 sept. 2026, retour d'amis : "trop dur à utiliser, pas user
+   friendly"). Posé à chaque rendu par App d'après profile.modeSimple (comme
+   applyTheme) : les réglages et diagnostics avancés (sections marquées
+   `expert`) sont masqués, la séance n'affiche que l'essentiel. Rien n'est
+   perdu : tout revient en passant en mode complet (Options). */
+var MODE_SIMPLE = false;
+function modeSimple(profile){ return !!(profile && profile.modeSimple); }
 var sansBody = "'Barlow', ui-sans-serif, system-ui, sans-serif";
 var sansCond = "'Barlow Semi Condensed', 'Barlow', ui-sans-serif, sans-serif";
 
@@ -1555,6 +1568,257 @@ function proactiveDeloadDue(sessions, program){
      sur la toute première séance de retour non plus. */
   if (muscu.length && Date.now() - new Date(muscu[muscu.length-1].date).getTime() > 14*864e5) return false;
   return muscu.length - (k + 1) >= 6*rot;
+}
+
+/* ============================================================
+   PREMIER DÉMARRAGE (29 sept. 2026, retour d'amis : "trop dur à utiliser,
+   pas user friendly" — démarrer, trop de texte, noter en séance ; ils vont
+   dans d'AUTRES salles).
+   Le catalogue de départ (SEED_EXERCISES) est celui des machines d'une salle
+   précise, marques comprises : inutilisable tel quel pour quelqu'un d'autre.
+   Un nouvel utilisateur choisit donc ses machines dans une liste GÉNÉRIQUE
+   (sans marque), puis l'appli choisit le découpage et construit le
+   programme. Muscles et palier viennent des mêmes règles que pour une
+   machine ajoutée à la main (guessMuscles / inferOrderTier).
+   ============================================================ */
+var CATALOGUE_GENERIQUE_NOMS = [
+  { g: "Pectoraux", n: ["Chest press", "Développé incliné (machine)", "Pec deck / butterfly", "Développé couché haltères"] },
+  { g: "Dos", n: ["Tirage vertical", "Rowing assis (machine)", "Tirage horizontal à la poulie", "Traction assistée"] },
+  { g: "Épaules", n: ["Développé épaules (machine)", "Élévations latérales", "Reverse fly (oiseau)"] },
+  { g: "Bras", n: ["Curl biceps", "Extension triceps à la poulie", "Dips assistés"] },
+  { g: "Jambes", n: ["Leg press", "Squat guidé (Smith)", "Leg extension", "Leg curl assis", "Leg curl allongé", "Mollets (machine)", "Hip thrust (machine)", "Abduction", "Adduction"] },
+  { g: "Tronc", n: ["Crunch (machine)", "Extension lombaires", "Rotation du buste"] }
+];
+var CATALOGUE_GENERIQUE_FORCE = {
+  "Élévations latérales": { muscles: [{muscle:"Épaules",intensity:1},{muscle:"Trapèzes",intensity:0.5}], order: 3 },
+  "Rotation du buste": { muscles: [{muscle:"Obliques",intensity:1},{muscle:"Abdominaux",intensity:0.5}], order: 3 }
+};
+var SELECTION_DE_DEPART = ["Chest press", "Tirage vertical", "Rowing assis (machine)", "Développé épaules (machine)", "Élévations latérales",
+  "Curl biceps", "Extension triceps à la poulie", "Leg press", "Leg extension", "Leg curl assis", "Mollets (machine)", "Crunch (machine)"];
+function idGenerique(nom){ return "gen-" + stripAccents(nom).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
+function catalogueGenerique() {
+  var out = [];
+  CATALOGUE_GENERIQUE_NOMS.forEach(function(grp){
+    grp.n.forEach(function(nom){
+      var force = CATALOGUE_GENERIQUE_FORCE[nom] || {};
+      var mus = force.muscles || guessMuscles(nom);
+      if (!mus.length) return;
+      var intens = {}; mus.forEach(function(m){ intens[m.muscle] = m.intensity; });
+      var libre = /halteres|haltères/.test(nom.toLowerCase());
+      out.push({ id: idGenerique(nom), name: nom, brand: "", groupe: grp.g,
+        muscle: mus[0].muscle, muscles: mus.map(function(m){ return m.muscle; }), muscleIntensity: intens,
+        kind: libre ? "free" : (/poulie/.test(nom) ? "cable" : "machine"), inc: libre ? 2 : (/leg press/i.test(nom) ? 10 : 5),
+        unilateral: false, order: force.order || inferOrderTier(nom, mus[0].muscle), trackBy: "reps" });
+    });
+  });
+  return out;
+}
+/* Découpage conseillé pour ce matériel et ce rythme — même classement que
+   l'écran "Type de split" (fréquence visée, puis score, puis durée). */
+function meilleurSplitPour(exercises, goal, avgSessions, profile) {
+  var ev = evaluateSplits(exercises, goal, avgSessions, {}, profile && profile.currentGymId, profile, false).filter(function(e){ return e.ok; });
+  var minF = goalPreset(goal).minFreq || 0;
+  ev.sort(function(a, b){
+    var am = a.avgFreq >= minF - 0.05 ? 1 : 0, bm = b.avgFreq >= minF - 0.05 ? 1 : 0;
+    if (am !== bm) return bm - am;
+    if (a.score !== b.score) return b.score - a.score;
+    return a.avgMin - b.avgMin;
+  });
+  return ev[0] || null;
+}
+/* Construit l'état complet d'un nouvel utilisateur à partir des réponses du
+   premier démarrage. L'historique éventuel (sessions) est CONSERVÉ : la même
+   fonction sert à reconfigurer l'appli pour une autre salle. */
+function etatDepuisAccueil(rep, ancien) {
+  var graine = seedState();
+  var goal = rep.goal || "loss_hyper";
+  var n = rep.seances || 3;
+  var duree = rep.duree || 60;
+  var nutPreset = Object.assign({}, goalPreset(goal).nutrition); delete nutPreset.activityMultiplier;
+  var profil = Object.assign({}, graine.profile, {
+    weightKg: rep.poids || null, heightCm: rep.taille || null, age: rep.age || null, sex: rep.sexe || null,
+    bmrMeasured: null, useBmrFormula: true, manualTarget: false, targetMode: "steps", manualTargetKcal: null, manualProteinG: null,
+    goal: goal, sessionsMin: n, sessionsMax: n, sessionMinutesMin: Math.max(0, duree - 15), sessionMinutesMax: duree,
+    trainingMode: "muscu", countCardioKcal: false, modeSimple: true, deficitMode: "auto", deficitPctPerWeek: null,
+    muscleFocus: {}, theme: (ancien && ancien.profile && ancien.profile.theme) || "dark", hideEffortHint: false
+  }, nutPreset);
+  delete profil.wheyLabel; delete profil.wheyKcal; delete profil.wheyProtein; delete profil.bodyFatPctManual;
+  profil.gyms = [{ id: "g1", name: rep.salle || "Ma salle" }]; profil.currentGymId = "g1";
+  var gen = catalogueGenerique();
+  var choisis = gen.filter(function(e){ return (rep.machines || SELECTION_DE_DEPART.map(idGenerique)).indexOf(e.id) >= 0; });
+  if (choisis.length < 3) choisis = gen.filter(function(e){ return SELECTION_DE_DEPART.map(idGenerique).indexOf(e.id) >= 0; });
+  choisis = choisis.map(function(e){ var o = Object.assign({}, e); delete o.groupe; return o; });
+  var extras = SEED_EXERCISES.filter(function(e){ return isCardio(e) || estVoyage(e); });
+  var exercises = choisis.concat(extras);
+  var best = meilleurSplitPour(exercises, goal, n, profil);
+  var prog = best ? buildProgramFromSplit(best.tpl.k, exercises, goal, "g1") : null;
+  if (!prog || !prog.length) prog = [{ key: "A", label: "Séance A", accent: C.pin, items: choisis.map(function(e){ var td = tierDefaultsForGoal(goal, exerciseOrderTier(e)); return { ex: e.id, sets: td.sets, min: td.min, max: td.max, rest: td.rest }; }) }];
+  try { if (programHorsFourchette(prog, exercises, goal, n, {})) prog = reflowStable(prog, exercises, goal, n, {}, "g1", profil); } catch (e) {}
+  prog = applyGoalToProgram(prog, exercises, goal, n, {}, profil);
+  /* Reconfiguration : les machines de l'ancienne salle déjà utilisées restent
+     au catalogue, EN RÉSERVE (hors programme), pour que l'historique et les
+     courbes gardent leurs noms. */
+  var anciennes = (ancien && Array.isArray(ancien.sessions) && Array.isArray(ancien.exercises)) ? ancien.exercises : [];
+  if (anciennes.length) {
+    var vus = {}; exercises.forEach(function(e){ vus[e.id] = 1; });
+    var utilises = {};
+    ancien.sessions.forEach(function(s){ (s.entries || []).forEach(function(en){ if (en && en.ex) utilises[en.ex] = 1; }); });
+    anciennes.forEach(function(e){
+      if (e && utilises[e.id] && !vus[e.id]) { var o = Object.assign({}, e, { horsProgramme: true }); delete o.gyms; delete o.gymIds; exercises.push(o); vus[e.id] = 1; }
+    });
+  }
+  var etat = {
+    v: STATE_VERSION, programVersion: PROGRAM_VERSION, exercises: exercises, program: prog,
+    sessions: (ancien && Array.isArray(ancien.sessions)) ? ancien.sessions : [], active: null, deloadForNextStart: false,
+    meta: Object.assign({}, (ancien && ancien.meta) || {}, { deloadSnoozeUntil: 0, accueil: "fait", cardio275: true }),
+    bodyLog: rep.poids ? [{ id: "b" + Date.now(), date: todayISO(), weightKg: rep.poids, source: "manuel" }] : [],
+    profile: profil, catalogueVu: SEED_EXERCISES.map(function(e){ return e.id; })
+  };
+  var m = withAllMigrations(etat);
+  delete m._justMigrated;
+  return { etat: m, split: best ? best.tpl : null };
+}
+
+/* ============================================================
+   NIVEAUX 1 À 100 (29 sept. 2026, demande : "faudrait mettre comme des
+   niveaux 1 à 100 pour donner de la dopamine").
+
+   Principe : chaque séance enregistrée rapporte de l'expérience (XP), et
+   l'XP totale donne un niveau. Tout est RECALCULÉ à partir de l'historique
+   (rien n'est stocké) : pas de migration, le même niveau sur tous les
+   appareils, et l'historique existant compte déjà.
+
+   Ce qui rapporte — volontairement la RÉGULARITÉ et le travail fait, pas la
+   charge soulevée : récompenser les kilos pousserait à forcer au détriment
+   de la technique, et désavantagerait les jambes face aux bras.
+     - séance enregistrée : 100 XP (décharge et voyage comprises : récupérer
+       fait partie du programme) ;
+     - chaque série faite : 10 XP ; chaque minute de cardio : 2 XP ;
+     - record personnel sur une machine (5 au plus par séance) — 1RM estimé
+       en hausse d'au moins 1 % (Epley), reps en hausse au poids du corps,
+       aide en baisse sur une machine à contrepoids. ADAPTÉ À LA PROGRESSION
+       POSSIBLE (29 sept. 2026, demande : "il faudrait que l'XP soit bien
+       adapté à notre progression possible") : les gains de force sont bien
+       plus rapides au début qu'après un an d'entraînement (méta-analyse de
+       Rhea et al. 2003 : le statut d'entraînement est la seule variable qui
+       modifie la courbe dose-réponse — un pratiquant entraîné doit faire
+       nettement plus pour le même gain qu'un débutant). Un record vaut donc
+       d'autant plus qu'il est rare à ton stade SUR CETTE MACHINE : 30 XP
+       les 3 premiers mois, 45 de 3 à 6 mois, 75 de 6 à 12 mois, 120 au-delà.
+       Les 3 premières séances sur une machine ne comptent pas comme records
+       (on y cherche encore sa charge). Les paliers (3/6/12 mois) et les
+       montants sont des choix de conception : seule la tendance — les
+       progrès ralentissent avec l'ancienneté — vient de la littérature ;
+     - semaine tenue (au moins 3 séances, ou ton minimum réglé s'il est plus
+       bas, du lundi au dimanche) : 150 XP, une fois par semaine.
+   Courbe : les premiers niveaux vont vite (niveau 10 en ~1 semaine), puis
+   chaque niveau demande plus ; le niveau 100 correspond à ~2 ans et demi
+   d'entraînement régulier à 4 séances par semaine. C'est un choix de
+   conception pour motiver, pas une mesure de forme physique.
+   ============================================================ */
+var XP_SEANCE = 100, XP_SERIE = 10, XP_MINUTE_CARDIO = 2, XP_RECORDS_MAX = 5, XP_SEMAINE = 150;
+/* Valeur d'un record selon l'ancienneté sur la machine (voir plus haut). */
+var XP_RECORD_PALIERS = [ { mois: 0, xp: 30, etape: "débutant sur cette machine" }, { mois: 3, xp: 45, etape: "3 à 6 mois" },
+  { mois: 6, xp: 75, etape: "6 à 12 mois" }, { mois: 12, xp: 120, etape: "plus d'un an" } ];
+var XP_SEANCES_APPRENTISSAGE = 3;
+function xpRecord(anciennetéMois) {
+  var p = XP_RECORD_PALIERS[0];
+  XP_RECORD_PALIERS.forEach(function(x){ if (anciennetéMois >= x.mois) p = x; });
+  return p;
+}
+var XP_NIVEAU_100 = 300000, NIVEAU_MAX = 100;
+var TITRES_NIVEAU = [
+  { n: 1, t: "Débutant" }, { n: 10, t: "Habitué" }, { n: 20, t: "Régulier" }, { n: 30, t: "Solide" },
+  { n: 40, t: "Athlète" }, { n: 50, t: "Confirmé" }, { n: 60, t: "Expert" }, { n: 70, t: "Élite" },
+  { n: 80, t: "Maître" }, { n: 90, t: "Légende" }, { n: 100, t: "Titan" }
+];
+/* XP totale nécessaire pour ATTEINDRE le niveau n (1 = 0 XP). */
+function xpPourNiveau(n) {
+  if (n <= 1) return 0;
+  var f = (Math.min(n, NIVEAU_MAX) - 1) / (NIVEAU_MAX - 1);
+  return Math.round(XP_NIVEAU_100 * f * f);
+}
+function titreNiveau(n) {
+  var t = TITRES_NIVEAU[0].t;
+  TITRES_NIVEAU.forEach(function(x){ if (n >= x.n) t = x.t; });
+  return t;
+}
+function niveauPourXP(xp) {
+  xp = Math.max(0, xp || 0);
+  var n = 1;
+  while (n < NIVEAU_MAX && xp >= xpPourNiveau(n + 1)) n++;
+  var bas = xpPourNiveau(n), haut = n < NIVEAU_MAX ? xpPourNiveau(n + 1) : bas;
+  return { niveau: n, titre: titreNiveau(n), xp: xp, xpNiveau: bas, xpSuivant: haut,
+    progression: n < NIVEAU_MAX ? (xp - bas) / (haut - bas) : 1, reste: n < NIVEAU_MAX ? haut - xp : 0 };
+}
+/* Lundi (local) de la semaine d'une date, en clé "aaaa-mm-jj". */
+function cleSemaine(date) {
+  var d = new Date(date); if (!isFinite(d.getTime())) return null;
+  d.setHours(12, 0, 0, 0);
+  var decal = (d.getDay() + 6) % 7;
+  d.setDate(d.getDate() - decal);
+  return jourLocal(d);
+}
+/* "Score de performance" d'un exercice dans une séance, pour les records. */
+function scorePerf(entry, ex, poidsCorps) {
+  var sets = seriesFaites(entry.sets);
+  if (!sets.length) return null;
+  var ass = estAssiste(ex), best = null;
+  sets.forEach(function(s){
+    var sc;
+    if (ass) sc = Math.max(0, (poidsCorps || 80) - s.weight) * (1 + s.reps/30);
+    else if (s.weight > 0) sc = s.weight * (1 + s.reps/30);
+    else sc = s.reps;                     /* poids du corps sans lest : les reps */
+    if (best == null || sc > best) best = sc;
+  });
+  return best;
+}
+/* Parcourt l'historique dans l'ordre et attribue l'XP séance par séance.
+   Renvoie le total et le détail de chaque séance (par id). */
+function calculerXP(sessions, exercises, profile) {
+  var exMap = {}; (exercises || []).forEach(function(e){ exMap[e.id] = e; });
+  var poidsCorps = profile && profile.weightKg > 0 ? profile.weightKg : 80;
+  var seuilSemaine = Math.max(1, Math.min(3, (profile && profile.sessionsMin) || 3));
+  var faites = (sessions || []).filter(function(s){ return s && s.done && s.date && isFinite(new Date(s.date).getTime()); })
+    .slice().sort(function(a, b){ return new Date(a.date) - new Date(b.date); });
+  var meilleurs = {}, premiere = {}, nbFois = {}, parSemaine = {}, semaineBonus = {}, total = 0, detail = {};
+  faites.forEach(function(s){
+    var d = { seance: XP_SEANCE, series: 0, cardio: 0, records: [], recordsXP: 0, semaine: 0 };
+    var tS = new Date(s.date).getTime();
+    var nbSeries = 0;
+    (s.entries || []).forEach(function(e){
+      var ex = exMap[e.ex];
+      if (ex && isCardio(ex)) return;
+      nbSeries += seriesFaites(e.sets).length || (e.sets || []).filter(function(z){ return z && z.reps != null; }).length;
+      if (ex && seriesFaites(e.sets).length) {
+        if (premiere[e.ex] == null) premiere[e.ex] = tS;
+        var dejaFaites = nbFois[e.ex] || 0;
+        nbFois[e.ex] = dejaFaites + 1;
+        if (!s.deload) {
+          var sc = scorePerf(e, ex, poidsCorps);
+          if (sc != null) {
+            if (meilleurs[e.ex] != null && sc > meilleurs[e.ex] * 1.01 && dejaFaites >= XP_SEANCES_APPRENTISSAGE && d.records.length < XP_RECORDS_MAX) {
+              var pal = xpRecord((tS - premiere[e.ex]) / (30.44 * 864e5));
+              d.records.push({ nom: ex.name, xp: pal.xp, etape: pal.etape, gain: Math.round((sc / meilleurs[e.ex] - 1) * 1000) / 10 });
+              d.recordsXP += pal.xp;
+            }
+            if (meilleurs[e.ex] == null || sc > meilleurs[e.ex]) meilleurs[e.ex] = sc;
+          }
+        }
+      }
+    });
+    d.series = nbSeries * XP_SERIE;
+    d.cardio = Math.round(sessionCardio(s).reduce(function(a, c){ return a + (c.min > 0 ? c.min : 0); }, 0) * XP_MINUTE_CARDIO);
+    var sem = cleSemaine(s.date);
+    if (sem) {
+      parSemaine[sem] = (parSemaine[sem] || 0) + 1;
+      if (parSemaine[sem] >= seuilSemaine && !semaineBonus[sem]) { semaineBonus[sem] = true; d.semaine = XP_SEMAINE; }
+    }
+    d.total = d.seance + d.series + d.cardio + d.recordsXP + d.semaine;
+    total += d.total;
+    if (s.id != null) detail[String(s.id)] = d;
+  });
+  return { total: total, detail: detail, niveau: niveauPourXP(total) };
 }
 
 /* Estimated real session length: ~40s of work per set + its rest, plus ~70s
@@ -5430,7 +5694,7 @@ var PROGRAM_VERSION = 7;   /* 7 (23 sept. 2026) : exercices poids du corps du mo
    recommitée à la main — contrairement au lien Artifact qui se met à jour
    tout seul". Change cette date à chaque publication notable pour que la
    comparaison soit possible côté utilisateur. */
-var APP_BUILD = "2026-09-28a";
+var APP_BUILD = "2026-09-30a";
 
 function seedState() {
   return {
@@ -6652,7 +6916,11 @@ async function loadInitialState() {
      être idempotentes et ne remplir que ce qui manque (voir chacune d'elles),
      donc les passer sur la graine est sans risque et rend le premier
      lancement identique aux suivants. */
-  return withAllMigrations(seedState());
+  /* Premier lancement : l'écran d'accueil (Accueil) remplace le catalogue et
+     le profil de départ par ceux de l'utilisateur (29 sept. 2026). */
+  var neuf = withAllMigrations(seedState());
+  neuf.meta = Object.assign({}, neuf.meta, { accueil: "a-faire" });
+  return neuf;
 }
 var publishTimer = null;
 var pendingSave = null;
@@ -7325,7 +7593,7 @@ function sortedDayItems(day, exMap) { return sortByExerciseOrder(day.items, func
    onChange (ex. historique), reste un simple indicateur non cliquable. */
 function OrderBadge(props){
   var order = props.order, onChange = props.onChange;
-  if (!order) return null;
+  if (!order || (MODE_SIMPLE && !onChange)) return null;
   var title = (onChange ? "Palier : " : "Ordre conseillé dans la séance : ")+order+"/3 — "+(ORDER_TIER_LABEL[order]||"")+(onChange ? " — touche pour changer" : "");
   var style = {display:"inline-flex",alignItems:"center",justifyContent:"center",width:19,height:19,borderRadius:"50%",
     flexShrink:0,marginTop:1,background:C.shroud,border:"1px solid "+(onChange?C.pin:C.taupeDim),
@@ -7388,6 +7656,7 @@ function SessionSetsStepper(props){
    l'onglet Options faisait plus de 5 000 px de haut. */
 function Section(props){
   var _o = useState(!props.repliable), ouvert = _o[0], setOuvert = _o[1];
+  if (props.expert && MODE_SIMPLE) return null;
   if (props.repliable) {
     return h("div",{style:{marginBottom:ouvert?24:10}},
       h("button",{onClick:function(){ setOuvert(!ouvert); }, "aria-expanded": ouvert?"true":"false",
@@ -8023,6 +8292,79 @@ function SessionClock(props) {
 /* ============================================================
    SÉANCE
    ============================================================ */
+/* ---- NIVEAUX : composants d'affichage (voir calculerXP) ---- */
+function fmtXP(n){ return String(Math.round(n||0)).replace(/\B(?=(\d{3})+(?!\d))/g, "\u202f"); }
+function BarreNiveau(props){
+  var nv = props.niveau, hauteur = props.hauteur || 8;
+  return h("div",{role:"progressbar", "aria-valuemin":0, "aria-valuemax":100, "aria-valuenow":Math.round(nv.progression*100),
+      "aria-label":"Progression vers le niveau "+Math.min(NIVEAU_MAX, nv.niveau+1),
+      style:{height:hauteur,borderRadius:hauteur,background:C.shroudDeep,overflow:"hidden",border:"1px solid "+C.line}},
+    h("div",{style:{height:"100%",width:Math.max(2, nv.progression*100)+"%",background:"linear-gradient(90deg, "+C.pin+", "+C.green+")",
+      transformOrigin:"left",animation: props.anime ? "barreRemplit .9s ease-out" : "none"}}));
+}
+/* Pastille de l'en-tête : niveau + mini-barre. Un appui mène à l'onglet
+   Analyse, où le détail est expliqué. */
+function PastilleNiveau(props){
+  var nv = props.niveau;
+  return h("button",{onClick:props.onClick, "aria-label":"Niveau "+nv.niveau+" ("+nv.titre+") — voir le détail",
+      style:{display:"flex",flexDirection:"column",alignItems:"stretch",gap:3,minWidth:58,minHeight:36,padding:"3px 8px",borderRadius:8,
+        background:C.shroud,border:"1px solid "+C.line,color:C.bone,cursor:"pointer"}},
+    h("span",{style:{fontFamily:sansCond,fontSize:12.5,fontWeight:800,color:C.pinText,lineHeight:1.1,whiteSpace:"nowrap"}}, "Niv. "+nv.niveau),
+    h(BarreNiveau,{niveau:nv, hauteur:4}));
+}
+/* Carte affichée après l'enregistrement d'une séance : ce qu'elle a
+   rapporté, et le passage de niveau le cas échéant. */
+function CarteGainXP(props){
+  var g = props.gain;
+  var monte = !!(g && g.apres && g.avant && g.apres.niveau > g.avant.niveau);
+  var vibre = useRef(false);
+  useEffect(function(){
+    /* Vibration seulement juste après l'enregistrement (pas en rouvrant
+       l'appli avec la carte encore affichée), et après un geste de
+       l'utilisateur — sinon le navigateur la refuse. */
+    var frais = g && g.quand && (Date.now() - g.quand < 15000);
+    var geste = !navigator.userActivation || navigator.userActivation.hasBeenActive;
+    if (monte && frais && geste && !vibre.current && navigator.vibrate) { vibre.current = true; try { navigator.vibrate([60, 40, 60, 40, 120]); } catch (e) {} }
+  }, []);
+  if (!g || !g.apres || !g.avant) return null;
+  var d = g.detail || {};
+  var nouveauTitre = monte && g.apres.titre !== g.avant.titre;
+  var lignes = [["Séance enregistrée", d.seance]];
+  if (d.series) lignes.push([(d.series / XP_SERIE) + " série" + (d.series / XP_SERIE > 1 ? "s" : ""), d.series]);
+  if (d.cardio) lignes.push([(d.cardio / XP_MINUTE_CARDIO) + " min de cardio", d.cardio]);
+  (d.records || []).forEach(function(r){
+    if (typeof r === "string") { lignes.push(["Record : " + r, 0]); return; }
+    lignes.push(["Record " + r.nom + " (+" + fmtNombre(r.gain) + " %, " + r.etape + ")", r.xp]);
+  });
+  if (d.semaine) lignes.push(["Semaine tenue", d.semaine]);
+  return h("div",{role:"status", style:{marginBottom:16,borderRadius:12,padding:14,background:C.shroudDeep,border:"2px solid "+(monte?C.pin:C.line),
+      animation: monte ? "niveauBrille 1.6s ease-in-out 2" : "rise .25s ease"}},
+    monte ? h("div",{style:{textAlign:"center",marginBottom:10}},
+      h("div",{style:{fontFamily:sansCond,fontSize:13,fontWeight:700,color:C.taupe,letterSpacing:1}}, "NIVEAU SUPÉRIEUR"),
+      h("div",{style:{fontFamily:sansCond,fontSize:44,fontWeight:800,color:C.pinText,lineHeight:1.05,animation:"niveauPop .7s ease-out"}}, "Niveau "+g.apres.niveau),
+      nouveauTitre ? h("div",{style:{fontFamily:sansCond,fontSize:17,fontWeight:700,color:C.greenText,marginTop:2}}, "Nouveau titre : "+g.apres.titre) : null) : null,
+    h("div",{style:{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:10,marginBottom:8}},
+      h("span",{style:{fontFamily:sansCond,fontSize:15,fontWeight:700,color:C.bone}}, "Séance terminée"),
+      h("span",{style:{fontFamily:sansBody,fontSize:26,fontWeight:800,color:C.pinText,fontVariantNumeric:"tabular-nums"}}, "+"+fmtXP(d.total)+" XP")),
+    h("div",{style:{display:"flex",flexDirection:"column",gap:3,marginBottom:10}},
+      lignes.map(function(l, i){ return h("div",{key:i, style:{display:"flex",justifyContent:"space-between",gap:10,fontSize:13,color:C.taupe,lineHeight:1.4}},
+        h("span",{style:{minWidth:0}}, l[0]), h("span",{style:{flexShrink:0,fontVariantNumeric:"tabular-nums",color:C.bone}}, "+"+fmtXP(l[1]))); })),
+    h("div",{style:{display:"flex",justifyContent:"space-between",fontFamily:sansCond,fontSize:12.5,color:C.taupe,marginBottom:4}},
+      h("span",null, "Niveau "+g.apres.niveau+" · "+g.apres.titre),
+      h("span",null, g.apres.niveau < NIVEAU_MAX ? ("encore "+fmtXP(g.apres.reste)+" XP") : "niveau maximal")),
+    h(BarreNiveau,{niveau:g.apres, anime:true}),
+    h("button",{onClick:props.onFermer, style:{width:"100%",marginTop:12,minHeight:44,borderRadius:8,background:monte?C.pin:"transparent",color:monte?C.ink:C.bone,
+      border:monte?"none":"1px solid "+C.line,fontFamily:sansCond,fontSize:15,fontWeight:700}}, monte ? "Continuer" : "Super"));
+}
+/* Carte compacte du niveau, sur l'accueil de l'onglet Séance. */
+function CarteNiveau(props){
+  var nv = props.niveau;
+  return h("div",{style:{marginBottom:16,borderRadius:10,padding:"10px 12px",background:C.shroudDeep,border:"1px solid "+C.line}},
+    h("div",{style:{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:8,marginBottom:6}},
+      h("span",{style:{fontFamily:sansCond,fontSize:16,fontWeight:800,color:C.pinText}}, "Niveau "+nv.niveau+" · ", h("span",{style:{color:C.bone}}, nv.titre)),
+      h("span",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,whiteSpace:"nowrap"}}, nv.niveau < NIVEAU_MAX ? ("encore "+fmtXP(nv.reste)+" XP") : "niveau max")),
+    h(BarreNiveau,{niveau:nv}));
+}
 function DeloadBanner(props){
   var reason = props.reason, onActivate = props.onActivate, onSnooze = props.onSnooze;
   return h("div",{style:{marginBottom:16, borderRadius:10, padding:14, background:C.shroudDeep, border:"1px solid "+C.steel, animation:"rise .25s ease"}},
@@ -8158,6 +8500,16 @@ function SeanceTab(props) {
   function dismissEffortHint(){ if (setProfile && profile) setProfile(Object.assign({}, profile, {hideEffortHint:true})); }
   function effortHint(){
     if (effortHintHidden) return null;
+    /* Mode simple : le mode d'emploi en une phrase, à la place de la note sur
+       le ressenti (qui est masqué dans ce mode). */
+    if (MODE_SIMPLE) return h("div",{style:{marginBottom:14,padding:"10px 12px",borderRadius:8,background:C.shroudDeep,border:"1px solid "+C.pin,display:"flex",alignItems:"center",gap:10}},
+      h("span",{"aria-hidden":"true", style:{width:28,height:28,borderRadius:6,background:C.green,color:C.ink,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}, h(Icon,{name:"check",size:16})),
+      h("div",{style:{fontSize:13.5,color:C.bone,lineHeight:1.45,flex:1,minWidth:0}},
+        (props.sessions && props.sessions.length)
+          ? "Fais ta série, puis appuie sur ✓ : charge et reps prévues sont notées et le repos démarre. Tu as fait autre chose ? Change les chiffres."
+          : "Première séance : tape la charge que tu mets (case kg), puis ✓ après chaque série. Les fois suivantes, l'appli propose la charge : un seul appui suffit."),
+      h("button",{onClick:dismissEffortHint, "aria-label":"J'ai compris",
+        style:{padding:8,minWidth:40,minHeight:40,borderRadius:6,color:C.taupe,border:"none",background:"transparent",flexShrink:0}}, h(Icon,{name:"x",size:14})));
     /* Séance de cardio pur : pas de série à noter, l'astuce n'a pas lieu d'être. */
     if (active && (!active.entries || !active.entries.length)) return null;
     return h("div",{style:{marginBottom:14,padding:"8px 10px",borderRadius:8,background:C.shroudDeep,border:"1px solid "+C.taupeDim,display:"flex",alignItems:"center",gap:8}},
@@ -8478,6 +8830,7 @@ function SeanceTab(props) {
     var previewItems = sortByExerciseOrder(adaptDayItems(day.items, exercises, exMap, currentGymId), function(it){return it.ex;}, exMap);
     return h("div", null,
       swapCardOrphan(previewItems),
+      props.gainXP ? h(CarteGainXP,{gain:props.gainXP, onFermer:props.fermerGainXP}) : (props.xpInfo ? h(CarteNiveau,{niveau:props.xpInfo.niveau}) : null),
       autoFixCard(),
       modeVoyage(profile) ? h("div",{style:{marginBottom:16,borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.steel}},
         h("div",{style:{fontFamily:sansCond,fontSize:15,fontWeight:700,color:C.steelText,marginBottom:4}}, "Mode voyage — poids du corps"),
@@ -8661,11 +9014,14 @@ function SeanceTab(props) {
      complete. You've already finished the set the moment you start logging
      it, so the rest clock should start right then, not once you're done
      typing both numbers. */
-  function updateSetAndMaybeRest(idx, si, field, val, restSeconds, label) {
+  function updateSetAndMaybeRest(idx, si, field, val, restSeconds, label, sansRepos) {
+    /* sansRepos (29 sept. 2026) : premier passage sur une machine, on tape la
+       charge AVANT de faire la série — le repos ne doit pas partir ; il part
+       au ✓, qui complète les reps prévues. */
     var prevSet = active.entries[idx].sets[si];
     var wasStarted = prevSet.weight!=null || prevSet.reps!=null;
     updateSet(idx, si, field, val);
-    if (!wasStarted && val!=null && startRestTimer) {
+    if (!wasStarted && val!=null && !sansRepos && startRestTimer) {
       startRestTimer(restSeconds, label);
     }
   }
@@ -8944,13 +9300,14 @@ function SeanceTab(props) {
   /* !isCardio : voir la même note dans la séance libre — le cardio a son
      propre bloc (cardioBlock), il ne s'ajoute pas comme une machine. */
   var availableToAdd = exercises.filter(function(e){ return !active.entries.some(function(en){return en.ex===e.id;}) && !isCardio(e) && exerciseAvailableAtGym(e, currentGymId); }).slice().sort(function(a,b){return a.name.localeCompare(b.name);});
-  /* Série EN COURS : la première série vide, dans l'ordre affiché. */
+  /* Série EN COURS : la première série pas complètement remplie (une charge
+     tapée sans les reps reste "en cours" : ✓ la complète), dans l'ordre affiché. */
   var serieEnCours = null;
   sessionItems.some(function(it){
     var en = active.entries.find(function(e){ return e.ex === it.ex; });
     if (!en) return false;
     for (var k = 0; k < en.sets.length; k++) {
-      if (en.sets[k].weight == null && en.sets[k].reps == null) { serieEnCours = { ex: it.ex, si: k, it: it, en: en }; return true; }
+      if (en.sets[k].weight == null || en.sets[k].reps == null) { serieEnCours = { ex: it.ex, si: k, it: it, en: en }; return true; }
     }
     return false;
   });
@@ -9029,7 +9386,7 @@ function SeanceTab(props) {
                  rendre plus facile ou plus dur. */
               (ex && ex.conseil) ? h("div",{style:{fontSize:12,color:C.taupe,lineHeight:1.45,marginTop:4}}, ex.conseil) : null),
             h("div",{style:{display:"flex",alignItems:"center",gap:6,flexShrink:0}},
-              ex ? h("button",{onClick:function(){ setReglagesPour(reglagesOuverts ? null : it.ex); }, "aria-expanded": reglagesOuverts?"true":"false", title:"Réglages de la machine", "aria-label":"Réglages de la machine — "+ex.name,
+              (ex && !MODE_SIMPLE) ? h("button",{onClick:function(){ setReglagesPour(reglagesOuverts ? null : it.ex); }, "aria-expanded": reglagesOuverts?"true":"false", title:"Réglages de la machine", "aria-label":"Réglages de la machine — "+ex.name,
                 style:{width:40,height:40,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:6,color:reglagesOuverts?C.pinText:C.taupe,border:"1px solid "+(reglagesOuverts?C.pin:C.line),background:"transparent"}}, h(Icon,{name:"gear",size:16})) : null,
               ex ? h("button",{onClick:function(){requestSwap(ex);}, title:"Changer de machine", "aria-label":"Changer de machine — "+ex.name,
                 style:{width:40,height:40,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:6,color:C.taupe,border:"1px solid "+C.line,background:"transparent"}}, h(Icon,{name:"repeat",size:16})) : null,
@@ -9050,7 +9407,7 @@ function SeanceTab(props) {
             /* Compteur de séries POUR AUJOURD'HUI (voir setEntrySetCount) —
                même gabarit que le compteur d'incrément juste à côté, pour ne
                pas ajouter une ligne de plus sur un écran de 320 px. */
-            h(SessionSetsStepper,{ value: entry.sets.length, max: MANUAL_SETS_MAX,
+            MODE_SIMPLE ? null : h(SessionSetsStepper,{ value: entry.sets.length, max: MANUAL_SETS_MAX,
               min: lastFilledSetIndex(entry) + 1, label: ex ? ex.name : null,
               onChange: function(v){ setEntrySetCount(idx, v); } })),
           reglagesOuverts && ex ? h("div",{style:{marginTop:10,padding:"10px 12px",borderRadius:8,background:C.shroud,border:"1px solid "+C.line,display:"flex",flexDirection:"column",gap:10}},
@@ -9103,20 +9460,32 @@ function SeanceTab(props) {
                  faire sortir le "+" du compteur de son cadre. */
               h("div",{style:{display:"flex",alignItems:"center",gap:6,minWidth:0}},
                 h("span",{style:{fontFamily:sansCond,fontSize:12,fontWeight:enCours?700:400,color:enCours?C.pinText:C.taupe,width:20,flexShrink:0}}, "S"+(si+1)),
-                h(Stepper,{value:s.weight, label:"Charge série "+(si+1), onChange:function(v){updateSetAndMaybeRest(idx,si,"weight",v,it.rest,ex?ex.name:"Repos");}, step: ex?ex.inc:2.5, suffix:"kg", compact:true, flex:true,
-                  placeholder: prevuPoids!=null ? fmtNombre(prevuPoids) : "", base: prevuPoids}),
+                h(Stepper,{value:s.weight, label:"Charge série "+(si+1), onChange:function(v){updateSetAndMaybeRest(idx,si,"weight",v,it.rest,ex?ex.name:"Repos",prevuPoids==null);}, step: ex?ex.inc:2.5, suffix:"kg", compact:true, flex:true,
+                  placeholder: prevuPoids!=null ? fmtNombre(prevuPoids) : (enCours ? "?" : ""), base: prevuPoids}),
                 h(Stepper,{value:s.reps, label:(unitLabel(ex)==="s"?"Secondes":"Répétitions")+" série "+(si+1), onChange:function(v){updateSetAndMaybeRest(idx,si,"reps",v,it.rest,ex?ex.name:"Repos");}, step:(ex&&ex.trackBy==="time")?5:1, integer:true, suffix:unitLabel(ex), compact:true, flex:true,
                   placeholder: prevuReps!=null ? String(prevuReps) : "", base: prevuReps}),
                 /* Série VIDE : ✓ = "faite comme prévu" (charge et reps en
                    filigrane) et le repos démarre — un seul appui pour le cas
                    le plus courant. Série REMPLIE : ↓ recopie sur la suivante,
                    comme avant. */
-                !started
-                  ? h("button",{onClick:function(){ faitCommePrevu(idx, si, prevuPoids, prevuReps, it.rest, ex?ex.name:"Repos"); }, disabled: prevuPoids==null || prevuReps==null,
-                      title: prevuPoids==null ? "Première fois sur cette machine : saisis la charge" : "Faite comme prévu ("+fmtNombre(prevuPoids)+" kg × "+prevuReps+") — démarre le repos",
-                      "aria-label": "Série "+(si+1)+" faite comme prévu",
-                      style:{width:44,minHeight:44,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:6,flexShrink:0,
-                        color: enCours ? C.ink : C.greenText, background: enCours ? C.green : "transparent", border: enCours ? "none" : "1px solid "+C.line, opacity:(prevuPoids==null||prevuReps==null)?0.35:1}}, h(Icon,{name:"check",size:17}))
+                /* Série À MOITIÉ remplie (29 sept. 2026, "logger en séance" jugé
+                   difficile) : seule la charge tapée, les reps prévues en
+                   filigrane → ✓ complète avec le prévu. Avant, la ligne passait
+                   en ↓ et la série restait enregistrée SANS répétitions.
+                   Charge inconnue (premier passage) : ✓ place le curseur dans
+                   la case kg au lieu d'être grisé sans explication. */
+                (s.weight==null || s.reps==null)
+                  ? (function(){
+                      var cpPoids = s.weight!=null ? s.weight : prevuPoids, cpReps = s.reps!=null ? s.reps : prevuReps;
+                      var manque = cpPoids==null || cpReps==null;
+                      return h("button",{onClick:function(e){
+                          if (manque) { var ligne = e.currentTarget.parentNode; var champs = ligne ? ligne.querySelectorAll("input") : []; var cible = cpPoids==null ? champs[0] : champs[1]; if (cible) cible.focus(); return; }
+                          faitCommePrevu(idx, si, cpPoids, cpReps, it.rest, ex?ex.name:"Repos"); },
+                        title: manque ? (cpPoids==null ? "Première fois sur cette machine : tape la charge" : "Tape le nombre de répétitions") : "Faite ("+fmtNombre(cpPoids)+" kg × "+cpReps+") — démarre le repos",
+                        "aria-label": "Série "+(si+1)+" faite comme prévu"+(manque ? " (saisis d'abord la charge)" : ""),
+                        style:{width:44,minHeight:44,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:6,flexShrink:0,
+                          color: enCours ? C.ink : C.greenText, background: enCours ? C.green : "transparent", border: enCours ? "none" : "1px solid "+C.line, opacity: manque ? 0.45 : 1}}, h(Icon,{name:"check",size:17}));
+                    })()
                   : h("button",{onClick:function(){fillNext(idx,si,it.rest,ex?ex.name:"Repos");}, title:"Recopier sur la série suivante et démarrer le repos", "aria-label":"Recopier la série "+(si+1)+" sur la suivante",
                       style:{width:44,minHeight:44,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:6,color:C.taupe,border:"1px solid "+C.line,background:"transparent",flexShrink:0}}, h(Icon,{name:"chevronDown",size:15}))),
               /* Ressenti et côté : en grand seulement sur la DERNIÈRE série
@@ -9124,7 +9493,7 @@ function SeanceTab(props) {
                  passées, une ligne courte suffit, touchable pour rouvrir. Chaque
                  série faite prenait sinon deux lignes de boutons, et une machine
                  à 5 séries dépassait deux écrans. */
-              started ? ((si === lastFilledSetIndex(entry) || ressentiOuvert[it.ex+"|"+si])
+              (started && !MODE_SIMPLE) ? ((si === lastFilledSetIndex(entry) || ressentiOuvert[it.ex+"|"+si])
                 ? h("div",{style:{display:"flex",alignItems:"center",gap:8,rowGap:6,flexWrap:"wrap",paddingLeft:26,marginTop:7}},
                     h(RirPicker,{value:s.rir, onChange:function(v){updateSet(idx,si,"rir",v);}}),
                     ex && ex.unilateral ? h(SideToggle,{value:s.weakSide, onChange:function(v){updateSet(idx,si,"weakSide",v);}}) : null)
@@ -9425,7 +9794,11 @@ function frequenceReelle(sessions, maintenant) {
   var jours = {};
   faites.forEach(function(s){
     var t = new Date(s.date).getTime();
-    if (now - t <= fenetre * 864e5) jours[jourLocal(new Date(s.date))] = true;
+    /* +1 s de marge : (now − premier) / 864e5 × 864e5 peut perdre une
+       fraction de milliseconde en virgule flottante, et la TOUTE PREMIÈRE
+       séance sortait alors de la fenêtre (vu le 29 sept. 2026 : 11 jours
+       comptés au lieu de 12, selon l'heure). */
+    if (now - t <= fenetre * 864e5 + 1000) jours[jourLocal(new Date(s.date))] = true;
   });
   var n = Object.keys(jours).length;
   var parSemaine = n / (fenetre / 7);
@@ -9455,6 +9828,7 @@ function OptionsTab(props){
      haut décalerait tous les autres. */
   var _mfo = useState(false), focusOpen=_mfo[0], setFocusOpen=_mfo[1];
   var _mr = useState(false), modeRefuse=_mr[0], setModeRefuse=_mr[1];
+  var _cr = useState(false), confReprise=_cr[0], setConfReprise=_cr[1];
   function addGym(){
     var name = newGymName.trim();
     if (!name) return;
@@ -9804,18 +10178,44 @@ function OptionsTab(props){
   }
 
   return h("div", null,
+    /* Mode simple / complet (29 sept. 2026) — en tête d'Options pour qu'on
+       le trouve sans chercher. */
+    h("div",{style:{marginBottom:20,padding:"12px",borderRadius:10,background:C.shroudDeep,border:"1px solid "+C.line}},
+      h("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap"}},
+        h("div",{style:{flex:"1 1 160px",minWidth:0}},
+          h("div",{style:{fontFamily:sansCond,fontSize:16,fontWeight:700,color:C.bone}}, "Affichage"),
+          h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.45,marginTop:2}},
+            modeSimple(profile) ? "Simple : seulement l'essentiel. Passe en complet pour les réglages avancés et les analyses." : "Complet : tous les réglages et diagnostics.")),
+        h("div",{style:{display:"flex",gap:6,flexShrink:0}},
+          [{k:true,l:"Simple"},{k:false,l:"Complet"}].map(function(o){ var on = modeSimple(profile) === o.k;
+            return h("button",{key:String(o.k), onClick:function(){ set({modeSimple:o.k}); }, "aria-pressed":on?"true":"false",
+              style:{minHeight:44,padding:"0 14px",borderRadius:6,background:on?C.pin:C.shroud,color:on?C.ink:C.taupe,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:14,fontWeight:700}}, o.l); }))),
+      /* Reconfiguration guidée (autre salle, autres machines) : relance
+         l'écran d'accueil ; l'historique est conservé. */
+      props.lancerAccueil ? h("div",{style:{marginTop:12,paddingTop:12,borderTop:"1px solid "+C.line}},
+        confReprise
+          ? h("div",null,
+              h("div",{style:{fontSize:13,color:C.bone,lineHeight:1.45,marginBottom:8}}, "Tes machines et ton programme seront remplacés. Tes séances passées sont gardées."),
+              h("div",{style:{display:"flex",gap:8,flexWrap:"wrap"}},
+                h("button",{onClick:function(){ setConfReprise(false); props.lancerAccueil(); }, style:{minHeight:44,padding:"0 14px",borderRadius:6,background:C.pin,color:C.ink,border:"none",fontFamily:sansCond,fontSize:14,fontWeight:700}}, "Oui, reconfigurer"),
+                h("button",{onClick:function(){ setConfReprise(false); }, style:{minHeight:44,padding:"0 14px",borderRadius:6,background:"transparent",color:C.bone,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:14,fontWeight:600}}, "Annuler")))
+          : h("button",{disabled:!!props.seanceEnCours, onClick:function(){ setConfReprise(true); },
+              style:{width:"100%",minHeight:44,padding:"0 12px",borderRadius:6,background:C.shroud,color:C.bone,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:14,fontWeight:700,opacity:props.seanceEnCours?0.5:1}},
+              props.seanceEnCours ? "Configurer pour ma salle (termine ta séance d'abord)" : "Configurer l'appli pour ma salle")) : null),
     h(Section, {title:"Objectif d'entraînement"},
-      h("p",{style:{fontSize:12,color:C.taupe,lineHeight:1.6,marginBottom:10}},
+      MODE_SIMPLE ? null : h("p",{style:{fontSize:12,color:C.taupe,lineHeight:1.6,marginBottom:10}},
         "Change la cible de séries par muscle, les répétitions et les repos de toutes tes séances (tout de suite), ainsi que le déficit ou surplus et les protéines par défaut plus bas. Tes séances enregistrées ne bougent pas."),
       h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8, marginBottom:10}},
         GOALS.map(function(g){ var on = (profile.goal||"loss_hyper")===g.k; return h("button",{key:g.k, onClick:function(){applyGoal(g.k);},
           style:{padding:"9px 8px",borderRadius:6,background:on?C.pin:C.shroud,color:on?C.ink:C.taupe,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:12.5,fontWeight:600}}, g.label); })),
-      h("div",{style:{borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.taupeDim,marginBottom:10}},
+      MODE_SIMPLE ? h(InfoTip,{label:"Comment faire les répétitions et à quel effort ?"},
+        (TEMPO_ADVICE[profile.goal||"loss_hyper"] || TEMPO_ADVICE.loss_hyper)+" "+(EFFORT_ADVICE[profile.goal||"loss_hyper"] || EFFORT_ADVICE.loss_hyper)) : null,
+      MODE_SIMPLE ? null : h("div",{style:{borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.taupeDim,marginBottom:10}},
         h("div",{style:{fontFamily:sansCond,fontSize:12,fontWeight:700,color:C.pinText,marginBottom:6}},
           "Comment exécuter les répétitions — "+((GOALS.find(function(g){return g.k===(profile.goal||"loss_hyper");})||{}).label||"")),
         h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.55}}, TEMPO_ADVICE[profile.goal||"loss_hyper"] || TEMPO_ADVICE.loss_hyper)
       ),
-      h("div",{style:{borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.taupeDim}},
+      MODE_SIMPLE ? null : h("div",{style:{borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.taupeDim}},
         h("div",{style:{fontFamily:sansCond,fontSize:12,fontWeight:700,color:C.pinText,marginBottom:6}},
           "À quelle distance de l'échec s'arrêter — "+((GOALS.find(function(g){return g.k===(profile.goal||"loss_hyper");})||{}).label||"")),
         h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.55}}, EFFORT_ADVICE[profile.goal||"loss_hyper"] || EFFORT_ADVICE.loss_hyper)
@@ -9879,7 +10279,7 @@ function OptionsTab(props){
           "Actuellement : +"+cardioKcalJour+" kcal/jour (moyenne sur 7 jours, estimée d'après l'intensité et ton poids — Compendium des activités physiques). Une fois la séance faite, la distance saisie affine le calcul. C'est une estimation, pas une mesure.") : null)
     ),
 
-    h(Section, {title:"Mes salles", repliable:true, resume: (gyms||[]).map(function(g){ return g.name; }).join(", ")},
+    h(Section, {title:"Mes salles", expert:true, repliable:true, resume: (gyms||[]).map(function(g){ return g.name; }).join(", ")},
       h("p",{style:{fontSize:12,color:C.taupe,lineHeight:1.6,marginBottom:10}},
         "Si tu t'entraînes dans plusieurs salles, ajoute-les ici puis indique quelle machine est dispo où (onglet Machines, sur chaque machine). La séance du jour et \"Ce qui t'attend\" (onglet Séance) remplacent alors automatiquement une machine indisponible dans la salle sélectionnée par la meilleure équivalente disponible, ou te préviennent si aucune ne l'est."),
       h("div",{style:{display:"flex",flexDirection:"column",gap:6,marginBottom:10}},
@@ -9971,7 +10371,7 @@ function OptionsTab(props){
           "Repère indicatif recalculé à chaque changement d'objectif ou de machine — pas une règle stricte (voir GOAL_PRESETS > recommendedSessions dans le code pour le détail du calcul et les sources)."))
     ),
 
-    h(Section, {title:"Temps par séance (min–max)", repliable:true, resume: (profile.sessionMinutesMin||0)+"–"+(profile.sessionMinutesMax||90)+" min"},
+    h(Section, {title:"Temps par séance (min–max)", expert:true, repliable:true, resume: (profile.sessionMinutesMin||0)+"–"+(profile.sessionMinutesMax||90)+" min"},
       h("p",{style:{fontSize:12,color:C.taupe,lineHeight:1.6,marginBottom:10}},
         /* Texte corrigé le 6 sept. 2026 en même temps que l'ajout de l'ordre de
            priorité : il affirmait "n'écourte jamais automatiquement une séance",
@@ -10008,7 +10408,7 @@ function OptionsTab(props){
        aux séances via applyBalanceOrTimeChange, sans bandeau à confirmer.
        Le texte sous chaque ligne dit ce que ce rang change CONCRÈTEMENT — un
        classement abstrait ne serait pas actionnable. */
-    h(Section, {title:"Ordre de priorité", repliable:true, resume: priorityOrderOf(profile).map(function(k){ return (PRIORITY_META[k]||{}).label || k; }).join(" › ")},
+    h(Section, {title:"Ordre de priorité", expert:true, repliable:true, resume: priorityOrderOf(profile).map(function(k){ return (PRIORITY_META[k]||{}).label || k; }).join(" › ")},
       h("p",{style:{fontSize:12,color:C.taupe,lineHeight:1.6,marginBottom:10}},
         "Ces trois exigences se contredisent dès que ton matériel ou ton emploi du temps ne suffit pas. L'ordre ci-dessous décide laquelle cède en premier. Chaque changement se répercute tout de suite sur tes séances."),
       h("div",{style:{display:"flex",flexDirection:"column",gap:8}},
@@ -10042,7 +10442,7 @@ function OptionsTab(props){
        mur de compteurs identiques qu'on ne touche presque jamais. Le résumé
        replié dit en une ligne s'il y a quelque chose à voir, et la section
        s'ouvre d'office quand un réglage a effectivement été personnalisé. */
-    usedMuscles.length ? h(Section, {title:"Priorité par muscle",
+    usedMuscles.length ? h(Section, {title:"Priorité par muscle", expert:true,
       right: h("button",{onClick:function(){setFocusOpen(!(focusOpen||muscleFocusCustomized));},
         "aria-expanded":(focusOpen||muscleFocusCustomized)?"true":"false",
         style:{padding:"5px 10px",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:12}},
@@ -10074,14 +10474,14 @@ function OptionsTab(props){
        L'action reste disponible en permanence ici — elle sert à repartir des
        repères calculés quand on a modifié des séries à la main et qu'on veut
        revenir au calcul de l'appli. */
-    h("div",{style:{marginTop:-6,marginBottom:14}},
+    MODE_SIMPLE ? null : h("div",{style:{marginTop:-6,marginBottom:14}},
       h("button",{onClick:reapplyGoalToProgram,
         style:{width:"100%",padding:"9px 0",borderRadius:6,color:C.bone,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:13.5,fontWeight:600}},
         "Recalculer toutes mes séances maintenant"),
       h(InfoTip,{label:"Quand est-ce utile ?"},
         "Remet tout à plat : la COMPOSITION des séances (quelle machine dans quel jour) puis les séries de chacune, pour ton objectif « "+((GOALS.find(function(g){return g.k===profile.goal;})||{}).label||"")+" » à "+fmt1(avgSessionsPerWeek(profile))+" séances/semaine (le milieu de ta fourchette). Deux cas où ça sert vraiment : tu as ajusté des séries à la main dans « Composer les séances » et tu veux revenir aux repères calculés ; ou un muscle est passé nettement au-dessus de sa cible parce que trop de machines le sollicitent — chacune impose son plancher de "+setsBoundsForGoal(profile.goal).min+" séries, donc le seul remède est d'en retirer une d'un jour, ce que ce bouton sait faire. Il n'enlève jamais la dernière machine qui travaille un muscle en principal, et ne vide jamais un jour. Tes retouches manuelles sont écrasées. Le reste du temps il est inutile : chaque réglage (objectif, priorité par muscle, séances, temps, ordre de priorité, type de split, ajout ou retrait d'une machine) recalcule déjà tout seul.")),
 
-    h(Section, {title:"Dépense énergétique de repos (DER)", repliable:true, resume: profile.useBmrFormula ? "Calculée (Mifflin–St Jeor)" : (profile.bmrMeasured >= 800 ? ("Mesurée : "+profile.bmrMeasured+" kcal") : "Mesure manquante — formule utilisée")},
+    h(Section, {title:"Dépense énergétique de repos (DER)", expert:true, repliable:true, resume: profile.useBmrFormula ? "Calculée (Mifflin–St Jeor)" : (profile.bmrMeasured >= 800 ? ("Mesurée : "+profile.bmrMeasured+" kcal") : "Mesure manquante — formule utilisée")},
       h("div",{style:{padding:"10px 12px",borderRadius:8,background:C.shroudDeep,border:"1px solid "+C.taupeDim,marginBottom:10}},
         h("label",{style:{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.bone,marginBottom: profile.useBmrFormula?0:10}},
           h("input",{type:"checkbox", checked:!profile.useBmrFormula, onChange:function(e){set({useBmrFormula:!e.target.checked});}}),
@@ -10093,7 +10493,7 @@ function OptionsTab(props){
       )
     ),
 
-    h(Section, {title:"Activité quotidienne", repliable:true, resume: (profile.dailySteps||0).toLocaleString("fr-FR")+" pas/jour"},
+    h(Section, {title:"Activité quotidienne", expert:true, repliable:true, resume: (profile.dailySteps||0).toLocaleString("fr-FR")+" pas/jour"},
       h("div",{style:{marginBottom:4}},
         h("label",{style:{fontFamily:sansCond,fontSize:11.5,color:C.taupe,display:"block",marginBottom:4}}, "Nombre de pas / jour en moyenne"),
         h(Stepper,{value:profile.dailySteps, step:500, min:0, max:100000, suffix:"pas", wide:true, onChange:function(v){set({dailySteps:v});}})),
@@ -10620,7 +11020,7 @@ function MachinesTab(props){
        non tout en haut de l'onglet, hors de l'écran (12 sept. 2026, même
        demande que pour la carte de remplacement en séance). */
     setNotice({ gone: out.gone.name, muscles: allMuscles(out.gone).join(" + "),
-      anchor: allMuscles(out.gone)[0] || null,
+      anchor: isCardio(out.gone) ? "Cardio" : (allMuscles(out.gone)[0] || null),
       /* Repli d'ancrage (13 sept. 2026) : si la machine supprimée était la
          SEULE de son muscle principal, ce muscle disparaît de la liste et le
          compte rendu remontait tout en haut de l'onglet — donc hors écran sur
@@ -10910,7 +11310,7 @@ function MachinesTab(props){
         h("p",{style:{fontSize:13.5,color:C.taupe,lineHeight:1.55}},
           "Une machine de ta salle manque ? Ajoute-la ici. Pour corriger le nom, la marque, les muscles ou la salle d'une machine existante, ouvre sa ligne dans la liste ci-dessous.")),
 
-    opt.score!=null ? h(Section, {title:"Score d'optimisation"},
+    opt.score!=null ? h(Section, {title:"Score d'optimisation", expert:true},
       h("div",{style:{borderRadius:10,padding:"14px 14px 10px",background:C.shroudDeep,border:"1px solid "+C.taupeDim}},
         h("div",{style:{display:"flex",alignItems:"center",gap:12,marginBottom:8}},
           h(Bar,{value:opt.score, max:100, tone: opt.score<60?C.rust:opt.score<85?C.steel:C.green}),
@@ -11002,7 +11402,7 @@ function MachinesTab(props){
           "100% par muscle = tu atteins à la fois la cible de séries/semaine ET la fréquence recommandée pour ton objectif actuel (\""+((GOALS.find(function(g){return g.k===(goal||"loss_hyper");})||{}).label||"")+"\", "+goalPreset(goal).targetSets+" séries/semaine à ~"+goalPreset(goal).minFreq+"×/semaine — voir GOAL_PRESETS, basé sur Pelland et al. 2025 pour l'hypertrophie/perte de gras, Androulakis-Korakakis et al. 2021 pour la force, Ralston et al. 2018 pour la fréquence). Le score par muscle est la moyenne de ces deux repères, chacun plafonné à 100% : dépasser la cible n'ajoute pas de points, rien ne montrant qu'aller au-delà apporte un bénéfice supplémentaire. Ce repère est le même pour tous les muscles, TOUJOURS calculé contre la cible générique de l'objectif — pas contre une cible déjà ajustée par \"Priorité par muscle\" (changé le 6 sept. 2026) : l'idée, avec trois niveaux de priorité par défaut (1. objectif d'entraînement, 2. équilibrage par muscle, 3. temps/nombre de séances), c'est que si tu baisses la priorité d'un muscle pour privilégier un autre équilibrage, ou si ta fourchette séances/temps est trop courte pour le rythme idéal, ce score baisse pour VISUALISER ce compromis plutôt que de le masquer — ce n'est pas un problème à corriger, juste la mesure honnête de ce que tu sacrifies par rapport à l'optimum pur pour ton objectif. À l'inverse, l'appli ne réduit jamais l'équilibrage que tu demandes pour remonter ce score toute seule (voir \"Priorité par muscle\" ci-dessus) ni ne raccourcit tes séances pour tenir un temps visé (elle dépasse le temps visé plutôt que rogner l'équilibrage) : à toi de trancher, en connaissance du compromis affiché. Le score global est la moyenne de tous les muscles présents dans ton matériel actuel (\"Volume prévu par semaine\" ci-dessous pour le détail). C'est calculé sur le programme tel qu'il est prévu maintenant, pas sur ce que tu as réellement fait en séance.")
       )) : null,
 
-    h(Section, {title:"Volume prévu par semaine"},
+    h(Section, {title:"Volume prévu par semaine", expert:true},
       h("div",{style:{borderRadius:10,overflow:"hidden",border:"1px solid "+C.taupeDim}},
         /* Refait le 6 sept. 2026 — INCOHÉRENCE dans le même écran : la couleur
            de ces lignes se basait sur la bande fixe VOL_MIN–VOL_MAX (5–20
@@ -11237,6 +11637,38 @@ function MachinesTab(props){
 /* ============================================================
    ANALYSE
    ============================================================ */
+/* Section "Niveau" de l'onglet Analyse : niveau, prochain titre, règles,
+   et ce qu'ont rapporté les dernières séances. */
+function SectionNiveau(props){
+  var x = props.xpInfo, nv = x.niveau;
+  var prochain = TITRES_NIVEAU.filter(function(t){ return t.n > nv.niveau; })[0];
+  var recentes = (props.sessions || []).filter(function(s){ return s.done && x.detail[String(s.id)]; })
+    .slice().sort(function(a,b){ return new Date(b.date) - new Date(a.date); }).slice(0, 5);
+  return h(Section,{title:"Niveau"},
+    h("div",{style:{borderRadius:10,padding:14,background:C.shroudDeep,border:"1px solid "+C.line}},
+      h("div",{style:{display:"flex",alignItems:"center",gap:14,marginBottom:10}},
+        h("div",{style:{width:64,height:64,borderRadius:"50%",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",
+            background:C.shroud,border:"3px solid "+C.pin,fontFamily:sansCond,fontSize:26,fontWeight:800,color:C.pinText}}, nv.niveau),
+        h("div",{style:{flex:1,minWidth:0}},
+          h("div",{style:{fontFamily:sansCond,fontSize:19,fontWeight:800,color:C.bone}}, nv.titre),
+          h("div",{style:{fontSize:13,color:C.taupe,lineHeight:1.45}}, fmtXP(nv.xp)+" XP au total"
+            + (nv.niveau < NIVEAU_MAX ? " · encore "+fmtXP(nv.reste)+" XP pour le niveau "+(nv.niveau+1) : " · niveau maximal atteint")),
+          prochain ? h("div",{style:{fontSize:12.5,color:C.taupe,marginTop:2}}, "Prochain titre : "+prochain.t+" au niveau "+prochain.n) : null)),
+      h(BarreNiveau,{niveau:nv}),
+      recentes.length ? h("div",{style:{marginTop:12,display:"flex",flexDirection:"column",gap:4}},
+        recentes.map(function(s){
+          var d = x.detail[String(s.id)];
+          var jour = (props.program || []).filter(function(p){ return p.key === s.dayKey; })[0];
+          return h("div",{key:s.id, style:{display:"flex",justifyContent:"space-between",gap:10,fontSize:13,color:C.taupe}},
+            h("span",{style:{minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},
+              new Date(s.date).toLocaleDateString("fr-FR",{weekday:"short",day:"numeric",month:"short"})+" · "+(jour ? jour.label : s.dayKey)
+              + (d.records.length ? " · "+d.records.length+" record"+(d.records.length>1?"s":"")+" (+"+fmtXP(d.recordsXP||0)+")" : "") + (d.semaine ? " · semaine tenue" : "")),
+            h("span",{style:{flexShrink:0,color:C.bone,fontVariantNumeric:"tabular-nums"}}, "+"+fmtXP(d.total)));
+        })) : null,
+      h(InfoTip,{label:"Comment gagner de l'XP ?"},
+        "Chaque séance enregistrée : "+XP_SEANCE+" XP. Chaque série faite : "+XP_SERIE+" XP, chaque minute de cardio : "+XP_MINUTE_CARDIO+" XP. Record personnel sur une machine (1RM estimé en hausse d'au moins 1 %, plus de reps au poids du corps, moins d'aide sur une machine à contrepoids), "+XP_RECORDS_MAX+" au plus par séance — sa valeur suit ta progression POSSIBLE : au début, on bat ses records presque à chaque séance ; après un an, ils deviennent rares (les gains de force ralentissent nettement avec l'expérience, Rhea et al. 2003). Un record vaut donc "+XP_RECORD_PALIERS.map(function(p){ return p.xp+" XP ("+p.etape+")"; }).join(", ")+", compté machine par machine. Les "+XP_SEANCES_APPRENTISSAGE+" premières séances sur une machine ne donnent pas de record : on y cherche encore sa charge. Semaine tenue (au moins 3 séances du lundi au dimanche, ou ton minimum réglé s'il est plus bas) : "+XP_SEMAINE+" XP. "
+        +"C'est la régularité qui fait monter, pas les kilos : récompenser la charge pousserait à forcer au détriment de la technique. Les séances de décharge rapportent autant que les autres — récupérer fait partie du programme. Les premiers niveaux vont vite, puis chaque niveau demande un peu plus ; le niveau 100 correspond à environ deux ans et demi d'entraînement régulier. C'est un repère de motivation, pas une mesure de ta forme.")));
+}
 function BalanceRow(props){
   var label=props.label, a=props.a, b=props.b, aLabel=props.aLabel, bLabel=props.bLabel;
   var total = a+b || 1;
@@ -11251,6 +11683,276 @@ function BalanceRow(props){
       h("div",{style:{width:(100-pctA)+"%",background: flagged?C.rust+"55":C.taupeDim}})),
     flagged ? h("div",{style:{fontSize:11.5,color:C.rustText,marginTop:3}}, "Déséquilibre notable — regarde si tu peux ajouter du volume du côté le plus faible.") : null);
 }
+/* ============================================================
+   BILAN AUTOMATIQUE (30 sept. 2026, demande : "l'analyse par IA n'est pas
+   nécessaire puisque la théorie du sport ne change pas, faudrait intégrer
+   l'analyse sur l'appli elle-même").
+
+   Remplace le "exporte ton carnet et fais-le relire". Mêmes règles que le
+   reste de l'appli, appliquées à l'historique, sans rien envoyer nulle part :
+   - régularité : jours d'entraînement sur 28 jours vs le rythme réglé ;
+   - progression : 1RM estimé (Epley, comme stallInfo) des exercices suivis,
+     début vs fin des 6 dernières semaines, décharges exclues ;
+   - blocages et décharge : stallInfo / reactiveDeloadDue ;
+   - volume : séries réellement faites par muscle vs la cible de l'objectif
+     (goalPreset.targetSets × priorité), comme la section "Séries réellement
+     faites par semaine" ;
+   - effort : reps en réserve notées (effortInfo) ;
+   - poids : pente de la droite de régression des pesées (≥ 4 pesées sur
+     ≥ 14 jours), en % du poids par semaine, comparée à des repères publiés :
+       · perte : 0,5 à 1 %/semaine pour préserver le muscle (Helms et al.
+         2014, JISSN 11:20) — le rythme visé est celui réglé dans l'appli
+         (deficitPctForProfile), 1 %/semaine restant le plafond ;
+       · prise : ~0,25 à 0,5 %/semaine pour un débutant/intermédiaire (Iraki
+         et al. 2019, Sports 7:154).
+     L'ajustement proposé en kcal convertit l'écart de rythme avec
+     KCAL_PER_KG_FAT (7700 kcal/kg, approximation usuelle), arrondi à 50 et
+     plafonné à ±300 kcal/j : c'est un ordre de grandeur, à revoir 2 semaines
+     plus tard.
+   Chaque point porte un ton : "alerte" (à corriger), "attention", "ok". */
+var BILAN_SEANCES_MIN = 6;
+function regressionPente(points) {
+  /* points : [{t (jours), y}] -> pente y/jour, moindres carrés. */
+  var n = points.length; if (n < 2) return null;
+  var mt = 0, my = 0; points.forEach(function(p){ mt += p.t; my += p.y; }); mt /= n; my /= n;
+  var num = 0, den = 0; points.forEach(function(p){ num += (p.t - mt) * (p.y - my); den += (p.t - mt) * (p.t - mt); });
+  return den > 0 ? num / den : null;
+}
+function dateMs(d) {
+  if (!d) return NaN;
+  var s = String(d);
+  return new Date(/^\d{4}-\d{2}-\d{2}$/.test(s) ? s + "T12:00:00" : s).getTime();
+}
+function e1rmSeance(sets, assiste, poidsCorps) {
+  var w = poidsTravail(sets, assiste);
+  if (w == null) return null;
+  var r = repsMoyennes(sets, w, assiste);
+  if (r == null) return null;
+  if (assiste) return Math.max(0, poidsCorps - w) * (1 + r / 30);
+  return w > 0 ? w * (1 + r / 30) : r;
+}
+function bilanCoach(sessions, exercises, program, profile, bodyLog, now, xpInfo) {
+  now = now || Date.now();
+  var exMap = {}; (exercises || []).forEach(function(e){ exMap[e.id] = e; });
+  var goal = (profile && profile.goal) || "loss_hyper";
+  var preset = goalPreset(goal);
+  var faites = (sessions || []).filter(function(s){ return s && s.done && s.date && isFinite(new Date(s.date).getTime()); });
+  var muscu = faites.filter(function(s){ return !s.voyage && (s.entries || []).some(function(e){ var ex = exMap[e.ex]; return ex && !isCardio(ex) && seriesFaites(e.sets).length; }); });
+  var res = { pret: muscu.length >= BILAN_SEANCES_MIN, nbSeances: muscu.length, manque: Math.max(0, BILAN_SEANCES_MIN - muscu.length), points: [] };
+  if (!res.pret) return res;
+  var poidsCorps = profile && profile.weightKg > 0 ? profile.weightKg : 80;
+  function ajoute(p){ res.points.push(p); }
+  /* Séances regroupées par exercice, en UNE passe (relecture du 30 sept.
+     2026) : les aides (historyFor, stallInfo, effortInfo) filtrent et trient
+     tout l'historique à chaque appel — ~7 fois par exercice ici, soit près
+     d'une seconde sur téléphone avec un gros historique. On leur passe
+     seulement les séances qui contiennent l'exercice. */
+  function grouper(liste){ var g = {}; liste.forEach(function(s){ var vu = {}; (s.entries || []).forEach(function(e){ if (e && e.ex && !vu[e.ex]) { vu[e.ex] = 1; (g[e.ex] = g[e.ex] || []).push(s); } }); }); return g; }
+  var parEx = grouper(faites);
+  var apresDecharge = sessionsDepuisDecharge(faites), parExApres = grouper(apresDecharge);
+  var dansProg = {}; (program || []).forEach(function(d){ (d.items || []).forEach(function(it){ dansProg[it.ex] = true; }); });
+  function suivisDans(groupe){ return (exercises || []).filter(function(e){
+    if (!dansProg[e.id]) return false;
+    var hh = historyProgression(groupe[e.id] || [], e.id);
+    return hh.length >= 4 && new Date(hh[hh.length-1].date).getTime() >= now - 42*864e5; }); }
+
+  /* 1. Régularité */
+  var premier = Math.min.apply(null, faites.map(function(s){ return new Date(s.date).getTime(); }));
+  var fenetre = Math.max(7, Math.min(28, (now - premier) / 864e5));
+  var jours = {};
+  faites.forEach(function(s){ if (!s.voyage && now - new Date(s.date).getTime() <= fenetre * 864e5 + 1000) jours[jourLocal(new Date(s.date))] = true; });
+  var parSem = Object.keys(jours).length / (fenetre / 7);
+  var vise = avgSessionsPerWeek(profile);
+  var derniere = Math.max.apply(null, faites.map(function(s){ return new Date(s.date).getTime(); }));
+  var ecart = Math.floor((now - derniere) / 864e5);
+  var ratio = vise > 0 ? parSem / vise : 1;
+  if (ecart >= 10) ajoute({ cle: "regularite", ton: "alerte", titre: "Pause de " + ecart + " jours",
+    texte: "Reprends dès que possible : après une coupure, reviens à des charges un peu plus légères et remonte en 1 à 2 séances.",
+    action: "Faire une séance cette semaine" });
+  else ajoute({ cle: "regularite", ton: ratio >= 0.9 ? "ok" : ratio >= 0.6 ? "attention" : "alerte",
+    titre: "Régularité : " + fmtNombre(Math.round(parSem * 10) / 10) + " séance" + (parSem >= 2 ? "s" : "") + "/semaine",
+    texte: ratio >= 0.9 ? "Tu tiens le rythme prévu (" + fmtNombre(vise) + "/semaine). C'est le facteur n°1 de progrès."
+      : "Prévu : " + fmtNombre(vise) + "/semaine. Des séances manquées font baisser le volume réel de chaque muscle."
+        + (ratio < 0.75 ? " Si ce rythme est ton vrai rythme, règle-le dans Options : le programme se recalcule pour que chaque séance compte plus." : ""),
+    action: ratio >= 0.9 ? null : (ratio < 0.75 ? "Régler « Séances par semaine » sur ton vrai rythme" : "Viser " + fmtNombre(vise) + " séances la semaine prochaine") });
+
+  /* 2. Progression (6 dernières semaines, exercices du programme) */
+  var limite = now - 42 * 864e5;
+  var suivis = suivisDans(parEx);
+  var evol = [];
+  suivis.forEach(function(e){
+    var ass = estAssiste(e);
+    var hh = historyProgression(parEx[e.id] || [], e.id).filter(function(x){ return new Date(x.date).getTime() >= limite; });
+    if (hh.length < 3) return;
+    var v = hh.map(function(x){ return e1rmSeance(x.entry.sets, ass, poidsCorps); }).filter(function(x){ return x != null && x > 0; });
+    if (v.length < 3) return;
+    /* Moyenne des 2 premières vs des 2 dernières : lisse une séance ratée. */
+    var a = (v[0] + v[1]) / 2, b = (v[v.length - 1] + v[v.length - 2]) / 2;
+    evol.push({ ex: e, pct: (b - a) / a * 100 });
+  });
+  if (evol.length) {
+    var hausse = evol.filter(function(x){ return x.pct >= 1; }), baisse = evol.filter(function(x){ return x.pct <= -3; });
+    var part = hausse.length / evol.length;
+    var tops = hausse.slice().sort(function(x, y){ return y.pct - x.pct; }).slice(0, 3)
+      .map(function(x){ return x.ex.name + " +" + Math.round(x.pct) + " %"; });
+    ajoute({ cle: "progression", ton: part >= 0.6 ? "ok" : part >= 0.35 ? "attention" : "alerte",
+      titre: "Progression : " + hausse.length + " exercice" + (hausse.length > 1 ? "s" : "") + " sur " + evol.length + " en hausse",
+      texte: (tops.length ? "Meilleurs progrès (force estimée, 6 semaines) : " + tops.join(", ") + ". " : "")
+        + (baisse.length ? baisse.length + " en baisse : " + baisse.slice(0, 3).map(function(x){ return x.ex.name; }).join(", ") + ". " : "")
+        + (part >= 0.6 ? "La surcharge progressive fonctionne." : "Monte d'un cran dès que tu atteins le haut de la fourchette de reps sur toutes les séries."),
+      action: part >= 0.35 ? null : "Suivre la charge proposée par l'appli à chaque série" });
+  }
+
+  /* 3. Blocages / décharge */
+  /* Après une décharge, seules les séances qui la suivent comptent (comme
+     reactiveDeloadDue) : sinon les blocages d'avant la décharge étaient
+     re-signalés juste après l'avoir faite. */
+  var suivisApres = suivisDans(parExApres);
+  var bloques = suivisApres.filter(function(e){ return stallInfo(parExApres[e.id] || [], e.id); });
+  if (suivisApres.length >= 3 && bloques.length / suivisApres.length >= 0.5) {
+    ajoute({ cle: "blocage", ton: "alerte", titre: "Plus de la moitié des exercices bloquent",
+      texte: "C'est le signe d'une fatigue accumulée plus que d'un manque d'effort. Une semaine de décharge (charges ~80 %, une série de moins) relance en général la progression.",
+      action: "Accepter la décharge proposée sur l'onglet Séance" });
+  } else if (bloques.length) {
+    ajoute({ cle: "blocage", ton: "attention", titre: bloques.length + " exercice" + (bloques.length > 1 ? "s bloquent" : " bloque"),
+      texte: bloques.slice(0, 3).map(function(e){ return e.name; }).join(", ") + " : rien n'a progressé sur les 4 dernières séances. Vérifie le réglage de la machine et l'amplitude ; si ça dure, remplace-le (voir « Ça bloque » plus bas).",
+      action: null });
+  }
+
+  /* 4. Volume réel par muscle (28 jours) */
+  var sem = Math.max(1, Math.min(4, (Math.min(28, (now - premier) / 864e5 + 1)) / 7));
+  var m = {};
+  faites.forEach(function(s){
+    if (now - new Date(s.date).getTime() >= 28 * 864e5) return;
+    (s.entries || []).forEach(function(e){ var ex = exMap[e.ex]; if (!ex || isCardio(ex)) return;
+      var n = seriesFaites(e.sets).length;
+      allMuscles(ex).forEach(function(mu){ m[mu] = (m[mu] || 0) + n * muscleWeight(ex, mu); }); });
+  });
+  var prevus = {};
+  (program || []).forEach(function(d){ (d.items || []).forEach(function(it){ var ex = exMap[it.ex]; if (ex && !isCardio(ex)) allMuscles(ex).forEach(function(mu){ if (muscleWeight(ex, mu) >= 0.75) prevus[mu] = true; }); }); });
+  if (sem >= 2) {
+    var sous = [], sur = [];
+    Object.keys(prevus).forEach(function(mu){
+      var cible = (preset.targetSets || VOL_MIN) * focusMultiplier((profile && profile.muscleFocus) || {}, mu);
+      var fait = (m[mu] || 0) / sem;
+      if (cible > 0 && fait < cible * 0.7) sous.push({ mu: mu, fait: fait, cible: cible });
+      else if (fait > VOL_MAX && fait > cible * 1.15) sur.push({ mu: mu, fait: fait });
+    });
+    sous.sort(function(a, b){ return a.fait / a.cible - b.fait / b.cible; });
+    if (sous.length) ajoute({ cle: "volume", ton: sous.length >= 3 ? "alerte" : "attention",
+      titre: sous.length + " muscle" + (sous.length > 1 ? "s" : "") + " sous la cible de séries",
+      texte: sous.slice(0, 4).map(function(x){ return x.mu + " " + fmtNombre(Math.round(x.fait * 10) / 10) + "/" + fmtNombre(x.cible); }).join(", ")
+        + " séries/semaine. " + (ratio < 0.9 ? "Surtout dû aux séances manquées." : "Le programme les prévoit peut-être trop peu : regarde « Volume prévu par semaine » (Machines)."),
+      action: ratio < 0.9 ? "Faire toutes les séances prévues" : "Recalculer le programme (Options)" });
+    else ajoute({ cle: "volume", ton: "ok", titre: "Volume : chaque muscle travaillé atteint sa cible",
+      texte: "Au moins 70 % des " + fmtNombre(preset.targetSets) + " séries/semaine visées pour ton objectif, sur les 4 dernières semaines.", action: null });
+    if (sur.length) ajoute({ cle: "volume-haut", ton: "attention", titre: "Beaucoup de séries sur " + sur.map(function(x){ return x.mu; }).slice(0, 3).join(", "),
+      texte: "Plus de " + VOL_MAX + " séries/semaine : au-delà, le gain supplémentaire devient faible alors que la fatigue et le temps de séance augmentent.", action: null });
+  }
+
+  /* 5. Effort (seulement si les reps en réserve sont notées) */
+  var mous = suivis.filter(function(e){ return !isCardio(e) && effortInfo(parEx[e.id] || [], e.id); });
+  if (mous.length) ajoute({ cle: "effort", ton: "attention", titre: "Séries trop loin de l'échec",
+    texte: mous.slice(0, 3).map(function(e){ return e.name; }).join(", ") + " : 3 reps en réserve ou plus en moyenne. Finis à 1–2 reps de l'échec, sinon la série compte peu.",
+    action: "Monter la charge sur ces exercices" });
+
+  /* 6. Poids : tendance sur 28 jours */
+  var pesees = (bodyLog || []).filter(function(b){ return b && b.weightKg > 0 && now - dateMs(b.date) <= 28 * 864e5 && now - dateMs(b.date) >= -864e5 / 2; })
+    .map(function(b){ return { t: dateMs(b.date) / 864e5, y: b.weightKg }; });
+  var etendue = pesees.length ? (Math.max.apply(null, pesees.map(function(p){ return p.t; })) - Math.min.apply(null, pesees.map(function(p){ return p.t; }))) : 0;
+  var pn = preset.nutrition || {};
+  var estPerte = !!pn.deficitPctPerWeek, estPrise = !!pn.surplusPctOfTdee;
+  if (pesees.length >= 4 && etendue >= 14) {
+    var pente = regressionPente(pesees);
+    var moy = pesees.reduce(function(a, p){ return a + p.y; }, 0) / pesees.length;
+    var pctSem = pente * 7 / moy * 100;            /* >0 = prise */
+    var kgSem = Math.round(pente * 7 * 100) / 100;
+    function signe(v){ return (v > 0 ? "+" : v < 0 ? "−" : "") + fmtNombre(Math.abs(v)); }
+    var libelle = signe(kgSem) + " kg/semaine (" + signe(Math.round(pctSem * 100) / 100) + " %)";
+    function kcal(ecartPct){ var v = Math.round(ecartPct / 100 * moy * KCAL_PER_KG_FAT / 7 / 50) * 50;
+      if (Math.abs(v) < 50) v = ecartPct < 0 ? -50 : 50;
+      return Math.max(-300, Math.min(300, v)); }
+    if (estPerte) {
+      var visePct = (deficitPctForProfile(profile) || pn.deficitPctPerWeek) * 100; /* perte visée, >0 */
+      var perte = -pctSem;
+      if (perte > 1) ajoute({ cle: "poids", ton: "alerte", titre: "Poids : " + libelle, texte: "Plus de 1 %/semaine : trop rapide, le risque de perdre du muscle augmente. Mange un peu plus.", action: "Environ +" + kcal(perte - Math.min(visePct, 0.75)) + " kcal/jour" });
+      else if (perte < visePct * 0.5) ajoute({ cle: "poids", ton: "attention", titre: "Poids : " + libelle,
+        texte: "Visé : −" + fmtNombre(Math.round(visePct * 100) / 100) + " %/semaine. " + (perte <= 0 ? "Le poids ne descend pas." : "Ça descend, mais lentement.") + " Vérifie d'abord que tu suis bien ta cible calorique.",
+        action: "Environ −" + Math.abs(kcal(visePct - perte)) + " kcal/jour, puis revoir dans 2 semaines" });
+      else ajoute({ cle: "poids", ton: "ok", titre: "Poids : " + libelle, texte: "Dans la bonne zone pour perdre du gras en gardant le muscle (visé : −" + fmtNombre(Math.round(visePct * 100) / 100) + " %/semaine).", action: null });
+    } else if (estPrise) {
+      var pourQuoi = goal === "strength" ? "Avec un léger surplus pour la force" : "Pour prendre du muscle";
+      if (pctSem > 0.5) ajoute({ cle: "poids", ton: "attention", titre: "Poids : " + libelle, texte: "Au-delà de ~0,5 %/semaine, le surplus part surtout en gras.", action: "Environ −" + Math.abs(kcal(pctSem - 0.375)) + " kcal/jour" });
+      else if (pctSem < 0.2) ajoute({ cle: "poids", ton: "attention", titre: "Poids : " + libelle, texte: pourQuoi + ", vise ~0,25 à 0,5 %/semaine." + (pctSem < 0 ? " Là, tu perds du poids." : " Là, ça ne bouge presque pas."), action: "Environ +" + kcal(0.375 - pctSem) + " kcal/jour" });
+      else ajoute({ cle: "poids", ton: "ok", titre: "Poids : " + libelle, texte: "Prise lente et contrôlée, dans la zone conseillée (~0,25 à 0,5 %/semaine).", action: null });
+    }
+  } else if (estPerte || estPrise) {
+    ajoute({ cle: "poids", ton: "attention", titre: "Pas assez de pesées", texte: "Pèse-toi 2 à 3 fois par semaine (le matin, à jeun) : il en faut au moins 4 sur 2 semaines pour juger si tes calories sont bien réglées.", action: "Ajouter une pesée (en bas de cet onglet)" });
+  }
+
+  /* 7. Records récents : du positif, calculé comme l'XP */
+  try {
+    var xp = xpInfo || calculerXP(sessions, exercises, profile), nbRec = 0;
+    faites.forEach(function(s){ if (now - new Date(s.date).getTime() <= 14 * 864e5) { var d = xp.detail[s.id]; if (d && d.records) nbRec += d.records.length; } });
+    if (nbRec > 0) ajoute({ cle: "records", ton: "ok", titre: nbRec + " record" + (nbRec > 1 ? "s" : "") + " ces 2 dernières semaines", texte: "Meilleure performance jamais faite sur ces exercices.", action: null });
+  } catch (e) {}
+
+  /* Blocage général : c'est la décharge qu'il faut, pas "suivre la charge
+     proposée" — la ligne Progression ne double pas l'action. */
+  var aDecharge = res.points.some(function(p){ return p.cle === "blocage" && p.ton === "alerte"; });
+  res.points.forEach(function(p){
+    if (aDecharge && p.cle === "progression" && p.ton !== "ok") { p.ton = "attention"; p.action = null; }
+    if (aDecharge && p.cle === "effort") p.action = null;   /* pas "monte la charge" en même temps que "décharge" */
+  });
+  /* Ordre d'importance à ton égal : la santé (perte trop rapide) d'abord,
+     puis ce qui conditionne tout le reste (être là, récupérer). */
+  var prio = { poids: 0, regularite: 1, blocage: 2, effort: 3, volume: 4, progression: 5, "volume-haut": 6, records: 7 };
+  var rang = { alerte: 0, attention: 1, ok: 2 };
+  res.points.sort(function(a, b){ return (rang[a.ton] - rang[b.ton]) || ((a.cle in prio ? prio[a.cle] : 9) - (b.cle in prio ? prio[b.cle] : 9)); });
+  res.nbAlertes = res.points.filter(function(p){ return p.ton === "alerte"; }).length;
+  res.nbAttention = res.points.filter(function(p){ return p.ton === "attention"; }).length;
+  res.priorites = res.points.filter(function(p){ return p.action && p.ton !== "ok"; }).slice(0, 3).map(function(p){ return p.action; });
+  res.verdict = res.nbAlertes ? (res.nbAlertes + " point" + (res.nbAlertes > 1 ? "s" : "") + " à corriger en priorité")
+    : res.nbAttention ? "Sur la bonne voie, " + res.nbAttention + " détail" + (res.nbAttention > 1 ? "s" : "") + " à ajuster"
+    : "Tout va dans le bon sens";
+  return res;
+}
+
+/* Carte du bilan, en tête de l'onglet Analyse (visible aussi en mode simple). */
+function CarteBilan(props){
+  var b = props.bilan;
+  var _o = useState(false), tout = _o[0], setTout = _o[1];
+  if (!b) return null;
+  var cadre = { borderRadius: 10, padding: 14, marginBottom: 20, background: C.shroudDeep, border: "1px solid " + C.line };
+  if (!b.pret) return h("div", { style: cadre },
+    h("div", { style: { fontFamily: sansCond, fontSize: 17, fontWeight: 700, marginBottom: 4 } }, "Ton bilan"),
+    h("div", { style: { fontSize: 14, color: C.taupe, lineHeight: 1.5 } },
+      "Disponible après " + BILAN_SEANCES_MIN + " séances de musculation — encore " + b.manque + ". L'appli analysera alors ta régularité, ta progression, ton volume par muscle et ton poids."));
+  var couleur = function(t){ return t === "alerte" ? C.rust : t === "attention" ? C.pin : C.green; };
+  var icone = function(t){ return t === "alerte" ? "alert" : t === "attention" ? "gauge" : "check"; };
+  var visibles = tout ? b.points : b.points.filter(function(p, i){ return p.ton !== "ok" || i < 3; }).slice(0, 4);
+  var caches = b.points.length - visibles.length;
+  return h("div", { style: cadre, "data-bilan": "1" },
+    h("div", { style: { display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, marginBottom: 2 } },
+      h("div", { style: { fontFamily: sansCond, fontSize: 17, fontWeight: 700 } }, "Ton bilan"),
+      h("div", { style: { fontSize: 12, color: C.taupe } }, "calculé sur ton historique")),
+    h("div", { style: { fontSize: 14.5, fontWeight: 600, color: toneText(couleur(b.nbAlertes ? "alerte" : b.nbAttention ? "attention" : "ok")), marginBottom: 10 } }, b.verdict),
+    b.priorites.length ? h("div", { style: { padding: "10px 12px", borderRadius: 8, background: C.shroud, border: "1px solid " + C.line, marginBottom: 10 } },
+      h("div", { style: { fontFamily: sansCond, fontSize: 13, fontWeight: 700, color: C.pinText, letterSpacing: 0.4, marginBottom: 4 } }, "À FAIRE"),
+      b.priorites.map(function(a, i){ return h("div", { key: i, style: { display: "flex", gap: 8, fontSize: 14, lineHeight: 1.45, color: C.bone } },
+        h("span", { style: { fontFamily: sansCond, fontWeight: 800, color: C.pinText, flexShrink: 0 } }, (i + 1) + "."), h("span", null, a)); })) : null,
+    h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
+      visibles.map(function(p){ return h("div", { key: p.cle, "data-ton": p.ton, style: { display: "flex", gap: 10, alignItems: "flex-start" } },
+        h("span", { style: { width: 26, height: 26, borderRadius: 13, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", border: "2px solid " + couleur(p.ton), color: toneText(couleur(p.ton)) } }, h(Icon, { name: icone(p.ton), size: 13 })),
+        h("div", { style: { flex: 1, minWidth: 0 } },
+          h("div", { style: { fontSize: 14.5, fontWeight: 600, lineHeight: 1.35 } }, p.titre),
+          h("div", { style: { fontSize: 13, color: C.taupe, lineHeight: 1.5, marginTop: 1 } }, p.texte))); })),
+    (caches > 0 || tout) ? h("button", { onClick: function(){ setTout(!tout); }, style: { marginTop: 10, minHeight: 40, padding: "0 12px", borderRadius: 6, background: "transparent", color: C.taupe, border: "1px solid " + C.line, fontFamily: sansCond, fontSize: 13.5, fontWeight: 600 } },
+      tout ? "Voir moins" : (caches > 1 ? "Voir les " + caches + " autres points" : "Voir l'autre point")) : null,
+    h("p", { style: { fontSize: 11.5, color: C.taupe, lineHeight: 1.45, margin: "10px 0 0" } },
+      "Repères : 0,5–1 %/semaine en perte (Helms 2014), ~0,25–0,5 %/semaine en prise (Iraki 2019), séries par muscle de ton objectif, force estimée (Epley). Un avis, pas un diagnostic médical."));
+}
+
 function AnalyseTab(props){
   var sessions=props.sessions, exercises=props.exercises, exMap=props.exMap, program=props.program,
       persistConfig=props.persistConfig, bodyLog=props.bodyLog, addBodyEntry=props.addBodyEntry, goal=props.goal, profile=props.profile;
@@ -11273,6 +11975,7 @@ function AnalyseTab(props){
     setSwapDone(Object.assign({}, swapDone, (function(){ var o={}; o[oldExId]=newEx.name; return o; })()));
   }
   var last28 = done.filter(function(s){ return (Date.now()-new Date(s.date)) < 28*864e5; });
+  var bilan = useMemo(function(){ try { return bilanCoach(sessions, exercises, program, profile, bodyLog, null, props.xpInfo); } catch (e) { return null; } }, [sessions, exercises, program, profile, bodyLog, props.xpInfo]);
 
   /* Corrigé le 24 sept. 2026 (audit) : on divisait TOUJOURS par 4 semaines,
      même avec 10 jours d'historique — tous les muscles apparaissaient alors
@@ -11471,7 +12174,7 @@ function AnalyseTab(props){
       a2.href = url; a2.download = "sunglo-programme.json";
       document.body.appendChild(a2); a2.click(); document.body.removeChild(a2);
       setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
-      setExportMsg("Téléchargé — envoie ce fichier à Claude pour qu'il travaille sur tes vraies données.");
+      setExportMsg("Téléchargé.");
     } catch (e) { setExportMsg("Le téléchargement a échoué — réessaie."); }
   }
   async function exportText(){
@@ -11508,7 +12211,7 @@ function AnalyseTab(props){
       a.href = url; a.download = "carnet-entrainement.txt";
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
-      setExportMsg("Téléchargé — envoie ce fichier à Claude dans une conversation si tu veux qu'il analyse ton historique.");
+      setExportMsg("Téléchargé.");
     } catch (e) {
       setExportMsg("Le téléchargement a échoué — réessaie.");
     }
@@ -11521,6 +12224,8 @@ function AnalyseTab(props){
   var aucuneSeance = done.length===0;
 
   return h("div", null,
+    h(CarteBilan,{bilan:bilan}),
+    props.xpInfo ? h(SectionNiveau,{xpInfo:props.xpInfo, sessions:sessions, program:program}) : null,
     aucuneSeance ? h("div",{style:{borderRadius:10,padding:24,marginBottom:20,textAlign:"center",background:C.shroudDeep,border:"1px dashed "+C.taupeDim}},
       h("div",{style:{fontFamily:sansCond,fontSize:17,fontWeight:600,marginBottom:6}}, "Pas encore de données"),
       h("div",{style:{fontSize:14,color:C.taupe,lineHeight:1.5}}, "L'analyse devient utile vers la 6ᵉ séance. Avant ça, les chiffres bougent trop pour dire quoi que ce soit.")) :
@@ -11552,18 +12257,18 @@ function AnalyseTab(props){
                 h("button",{onClick:function(){doSwap(x.ex.id, swap);}, style:{padding:"5px 10px",borderRadius:6,color:C.bone,fontFamily:sansCond,fontSize:12.5,fontWeight:600,border:"1px solid "+C.taupeDim,background:"transparent",whiteSpace:"nowrap"}}, "Remplacer dans le programme"))
               : null)); })) : null,
 
-    symFlags.length>0 ? h(Section,{title:"Asymétrie gauche/droite"},
+    symFlags.length>0 ? h(Section,{title:"Asymétrie gauche/droite", expert:true},
       symFlags.map(function(x){ return h("div",{key:x.ex.id, style:{display:"flex",alignItems:"flex-start",gap:10,padding:"12px",marginBottom:8,borderRadius:10,background:C.shroudDeep,border:"1px solid "+C.steel}},
         h(Icon,{name:"scale",size:17,color:C.steelText}),
         h("div",null, h("div",{style:{fontSize:14.5,fontWeight:600}}, x.ex.name),
           h("div",{style:{fontSize:13,color:C.taupe,lineHeight:1.5}}, "Côté "+x.sym.weaker+" signalé plus dur sur "+x.sym.count+" des dernières séries ("+x.sym.pct+"%). Continue à commencer par ce côté et à égaliser les reps avant de monter la charge."))); })) : null,
 
-    h(Section,{title:"Équilibre du programme"},
+    h(Section,{title:"Équilibre du programme", expert:true},
       h(BalanceRow,{label:"Haut du corps vs bas du corps", a:region.haut, b:region.bas, aLabel:"haut", bLabel:"bas"}),
       h(BalanceRow,{label:"Push vs pull (haut du corps)", a:pp.push, b:pp.pull, aLabel:"push", bLabel:"pull"}),
       h("p",{style:{fontSize:12,color:C.taupe,lineHeight:1.5}}, "Basé sur ce que tu as réellement fait sur 28 jours (ou sur le programme prévu si tu manques encore de données).")),
 
-    h(Section,{title:"Séries réellement faites par semaine"},
+    h(Section,{title:"Séries réellement faites par semaine", expert:true},
       h("div",{style:{borderRadius:10,padding:"10px 12px",background:C.shroudDeep,border:"1px solid "+C.taupeDim}},
         setsByMuscle.length===0 ? h("div",{style:{fontSize:13,color:C.taupe,padding:"8px 0"}}, "Pas encore de séance de musculation dans les 28 derniers jours.") :
         /* Aligné le 6 sept. 2026 sur "Volume prévu par semaine" (onglet
@@ -11591,7 +12296,7 @@ function AnalyseTab(props){
       h("p",{style:{fontSize:12.5,color:C.taupe,marginTop:6,lineHeight:1.5}},
         "Séries réellement faites / cible de ton objectif, le trait clair marquant cette cible. À comparer au volume PRÉVU dans l'onglet Machines : l'écart entre les deux, c'est l'assiduité — un muscle bas ici alors qu'il est bien prévu là-bas signale surtout des séances manquées ou écourtées.")),
 
-    h(Section,{title:"Séries de musculation par séance"},
+    h(Section,{title:"Séries de musculation par séance", expert:true},
       h("div",{style:{borderRadius:10,padding:"6px 8px",background:C.shroudDeep,border:"1px solid "+C.taupeDim}},
         h(SparkChart,{data:trend, color:C.pinText, unit:" séries"})),
       h("p",{style:{fontSize:12,color:C.taupe,marginTop:6,lineHeight:1.5}}, "Une chute durable signale des séances écourtées ; une courbe en dents de scie est normale si tes jours n'ont pas le même nombre de séries.")),
@@ -11637,7 +12342,7 @@ function AnalyseTab(props){
       })(),
       h("p",{style:{fontSize:12,color:C.taupe,marginTop:8,lineHeight:1.5}}, "Pèse-toi dans les mêmes conditions (à jeun, le matin) — regarde la tendance sur 2–3 semaines, pas une pesée isolée : le poids bouge avec l'eau et la digestion.")),
 
-    h(Section,{title:"Sortir les données"},
+    h(Section,{title:"Sauvegarde et partage", repliable:true, resume:"Télécharger le carnet, exporter ou importer un programme"},
       h("button",{onClick:exportText, style:{width:"100%",padding:"12px 0",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",gap:8,color:C.pinText,border:"1px solid "+C.pin,background:"transparent",fontFamily:sansCond,fontSize:15,fontWeight:600}},
         h(Icon,{name:"download",size:16}), "Télécharger le carnet en texte"),
       /* Ajouté le 13 sept. 2026. Trois échanges de suite à reconstruire son
@@ -11648,7 +12353,7 @@ function AnalyseTab(props){
          personnelle dedans : ni poids, ni nutrition, ni historique — seulement
          les machines, les jours, les séries et les salles. */
       h("button",{onClick:exportProgram, style:{width:"100%",marginTop:8,padding:"10px 0",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center",gap:8,color:C.bone,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:14,fontWeight:600}},
-        h(Icon,{name:"download",size:15}), "Exporter le programme (pour diagnostic)"),
+        h(Icon,{name:"download",size:15}), "Exporter le programme (sauvegarde ou partage)"),
       /* Import — volontairement en retrait (bordure seule, pas de couleur
          d'action) : c'est une opération rare qui écrase la composition des
          séances, elle n'a pas à attirer le doigt. */
@@ -11667,7 +12372,7 @@ function AnalyseTab(props){
       h("p",{style:{fontSize:11.5,color:C.taupe,lineHeight:1.45,marginTop:6}},
         "L'import remplace tes machines et la composition de tes séances par celles du fichier. Ton historique de séances, ton suivi de poids et tes réglages personnels ne sont pas touchés."),
       exportMsg && exportMsg!=="saving" ? h("p",{role:"status", style:{fontSize:12.5,color: /^(Téléchargé|Programme importé)/.test(exportMsg)?(C.greenText||C.greenText):(C.rustText||C.rustText), marginTop:8}}, exportMsg) : null,
-      h("p",{style:{fontSize:12.5,color:C.taupe,marginTop:8,lineHeight:1.55}}, "Toutes les 6–8 semaines, exporte ce fichier et fais-le relire."))
+      h("p",{style:{fontSize:12.5,color:C.taupe,marginTop:8,lineHeight:1.55}}, "Garde une copie de temps en temps : tes données ne vivent que dans ce téléphone. L'analyse, elle, se fait directement dans l'appli (« Ton bilan », en haut de cet onglet)."))
   );
 }
 
@@ -11727,6 +12432,11 @@ function App(props){
     return function(){ try { if (ro) ro.disconnect(); } catch (e) {} window.removeEventListener("resize", mesurer); };
   }, []);
   var _st = useState(initial), state=_st[0], setStateRaw=_st[1];
+  /* Niveau et XP, recalculés à partir de l'historique (voir calculerXP). */
+  var xpInfo = useMemo(function(){
+    try { return calculerXP(state.sessions, state.exercises, state.profile); }
+    catch (e) { return { total: 0, detail: {}, niveau: niveauPourXP(0) }; }
+  }, [state.sessions, state.exercises, state.profile && state.profile.weightKg, state.profile && state.profile.sessionsMin]);
   var _sync = useState(initial ? "local" : "saving"), syncStatus=_sync[0], setSyncStatus=_sync[1];
   /* PLUSIEURS ONGLETS (24 sept. 2026, audit) : l'appli ouverte dans deux
      onglets (ou la PWA + le navigateur), chacun écrasait les séances de
@@ -11752,6 +12462,7 @@ function App(props){
      coup dans un useEffect (qui tournerait trop tard, après un premier
      rendu avec les mauvaises couleurs). Voir Options > Apparence. */
   applyTheme(state.profile.theme);
+  MODE_SIMPLE = modeSimple(state.profile);
   useEffect(function(){
     try {
       var isLight = state.profile.theme === "light";
@@ -12032,6 +12743,7 @@ function App(props){
   function snoozeDeload(){ setState(function(prev){ return Object.assign({},prev,{meta:Object.assign({}, prev.meta, {deloadSnoozeUntil: prev.sessions.filter(function(s){return s.done;}).length + 4})}); }); }
   function finishSession(){
     var active = state.active;
+    var xpAvant = xpInfo;
     var cleaned = Object.assign({}, active, { done:true, entries: cleanSessionEntries(active, exMap) });
     /* Marquée "voyage" pour que ni le recalibrage ni la fréquence réelle ne
        la comptent au retour (voir recalibrateProgramFromHistory). */
@@ -12058,7 +12770,14 @@ function App(props){
       var restantes = Math.max(0, (state.deloadRestantes || 1) - 1);
       patchDecharge = { deloadRestantes: restantes, deloadForNextStart: restantes > 0 };
     }
-    function fermer(patch){ setState(Object.assign({ sessions: newSessions, active: null }, patchDecharge, patch || {})); }
+    /* XP rapportée par cette séance, et niveau avant/après (voir calculerXP). */
+    var gainXP = null;
+    try {
+      var xpApres = calculerXP(newSessions, state.exercises, state.profile);
+      gainXP = { quand: Date.now(), seanceId: cleaned.id, detail: xpApres.detail[String(cleaned.id)] || { total: xpApres.total - xpAvant.total },
+        avant: xpAvant.niveau, apres: xpApres.niveau };
+    } catch (e) {}
+    function fermer(patch){ setState(Object.assign({ sessions: newSessions, active: null, gainXP: gainXP }, patchDecharge, patch || {})); }
     if (modeVoyage(state.profile)) { fermer(); return; }
     /* Recalibrage automatique et silencieux des séries prescrites (pas de la
        liste des machines — voir recalibrateProgramFromHistory) après CHAQUE
@@ -12184,6 +12903,17 @@ function App(props){
     { k:"options", label:"Options", icon:"gear" },
   ];
 
+  /* Premier démarrage (ou reconfiguration demandée depuis Options). */
+  /* Un carnet jamais utilisé (aucune séance, accueil jamais vu) passe aussi
+     par l'accueil : c'est le cas des copains qui avaient installé l'appli
+     avant qu'il existe, avec le catalogue et le profil d'origine. */
+  var etapeAccueil = state.meta && state.meta.accueil;
+  if (!etapeAccueil && !state.active && (!state.sessions || !state.sessions.length)) etapeAccueil = "a-faire";
+  if (etapeAccueil === "a-faire" || etapeAccueil === "reprise") {
+    return h(Accueil,{ reprise: etapeAccueil === "reprise", ancien: state,
+      onAnnuler: function(){ setState(function(prev){ return Object.assign({}, prev, { meta: Object.assign({}, prev.meta, { accueil: "fait" }) }); }); },
+      onTerminer: function(nouvel){ setState(function(){ return nouvel; }); setTab("seance"); } });
+  }
   /* minHeight : 100dvh (hauteur RÉELLE visible, barre d'URL rétractée comprise)
      avec repli 100vh pour les navigateurs qui ne connaissent pas dvh — sans ça,
      sur mobile, 100vh compte la barre d'URL et laissait un décalage vertical au
@@ -12195,11 +12925,11 @@ function App(props){
       h("h1",{style:{fontFamily:sansCond,fontSize:21,fontWeight:700,margin:0}}, "Sunglo sport"),
       h("div",{style:{display:"flex",alignItems:"center",gap:12}},
         h(SyncDot,{status:syncStatus}),
-        h("span",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe}}, state.sessions.filter(function(s){return s.done;}).length+" séances"))),
+        h(PastilleNiveau,{niveau:xpInfo.niveau, onClick:function(){ goToTab("analyse"); }}))),
     h("main",{style:{padding:"16px",paddingLeft:"calc(16px + var(--sal))",paddingRight:"calc(16px + var(--sar))",
         paddingBottom: hauteurBarre ? (hauteurBarre + 20) + "px" : "calc("+(restTimer?170:88)+"px + var(--sab))", maxWidth:640, margin:"0 auto", width:"100%"}},
       h(OngletSecours,{key:tab},
-      tab==="seance" ? h(SeanceTab,{ setEnsuite:setEnsuiteSeance, program:state.program, exercises:state.exercises, exMap:exMap, sessions:state.sessions, nextDayKey:nextDayKey,
+      tab==="seance" ? h(SeanceTab,{ xpInfo:xpInfo, gainXP: (!state.active && state.gainXP) ? state.gainXP : null, fermerGainXP:function(){ setState({gainXP:null}); }, setEnsuite:setEnsuiteSeance, program:state.program, exercises:state.exercises, exMap:exMap, sessions:state.sessions, nextDayKey:nextDayKey,
         active:state.active, setActive:setActive, finishSession:finishSession, startRestTimer:startRestTimer,
         deloadForNextStart:state.deloadForNextStart, setDeloadForNextStart:setDeloadForNextStart,
         consommerDecharge:consommerDecharge, deloadRestantes:state.deloadRestantes||0,
@@ -12211,8 +12941,8 @@ function App(props){
       tab==="historique" ? h(HistoriqueTab,{ sessions:state.sessions, exMap:exMap, program:state.program, deleteSession:deleteSession }) : null,
       tab==="machines" ? h(MachinesTab,{ exercises:state.exercises, program:state.program, persistConfig:persistConfig, sessions:state.sessions, updateExerciseInc:updateExerciseInc, goal:state.profile.goal, profile:state.profile,
         active:state.active, addToActiveSession:addExerciseToActiveSession }) : null,
-      tab==="analyse" ? h(AnalyseTab,{ seanceEnCours:!!state.active, sessions:state.sessions, exercises:state.exercises, exMap:exMap, program:state.program, persistConfig:persistConfig, bodyLog:state.bodyLog, addBodyEntry:addBodyEntry, removeBodyEntry:removeBodyEntry, goal:state.profile.goal, profile:state.profile }) : null,
-      tab==="options" ? h(OptionsTab,{ profile:state.profile, setProfile:setProfile, program:state.program, exercises:state.exercises, bodyLog:state.bodyLog, persistConfig:persistConfig, sessions:state.sessions, basculerVoyage:basculerVoyage, seanceEnCours:!!state.active }) : null)),
+      tab==="analyse" ? h(AnalyseTab,{ xpInfo:xpInfo, seanceEnCours:!!state.active, sessions:state.sessions, exercises:state.exercises, exMap:exMap, program:state.program, persistConfig:persistConfig, bodyLog:state.bodyLog, addBodyEntry:addBodyEntry, removeBodyEntry:removeBodyEntry, goal:state.profile.goal, profile:state.profile }) : null,
+      tab==="options" ? h(OptionsTab,{ lancerAccueil:function(){ setState(function(prev){ return Object.assign({}, prev, { meta: Object.assign({}, prev.meta, { accueil: "reprise" }) }); }); window.scrollTo(0,0); }, profile:state.profile, setProfile:setProfile, program:state.program, exercises:state.exercises, bodyLog:state.bodyLog, persistConfig:persistConfig, sessions:state.sessions, basculerVoyage:basculerVoyage, seanceEnCours:!!state.active }) : null)),
     h("div",{ref:barreBasRef, "data-barre-bas":"1", style:{position:"fixed",bottom:0,left:0,right:0,zIndex:20}},
       restTimer ? h(RestTimerBar,{timer:restTimer, onAdjust:adjustRestTimer, onDismiss:stopRestTimer, volume: state.profile.alertVolume, ensuite: (state.active && !state.active.freeform && ensuiteSeance) ? ensuiteSeance : texteEnsuite()}) : null,
       /* paddingBottom = retrait de zone sûre : la barre reste collée en bas
@@ -12233,6 +12963,120 @@ function App(props){
               color:on?C.pinText:C.taupe}},
             h(Icon,{name:t.icon,size:19}), h("span",{style:{fontFamily:sansCond,fontSize:10.5,fontWeight:on?700:600}}, t.label)); })))
   ));
+}
+
+/* ============================================================
+   ÉCRAN DE PREMIER DÉMARRAGE (29 sept. 2026) — voir etatDepuisAccueil.
+   Cinq écrans, un choix par écran, gros boutons, presque pas de texte.
+   ============================================================ */
+var OBJECTIFS_ACCUEIL = [
+  { k: "loss_hyper", t: "Perdre du gras et me muscler", d: "Le plus courant : sécher en gardant (et gagnant) du muscle." },
+  { k: "hyper", t: "Prendre du muscle", d: "Grossir les muscles, avec un léger surplus calorique." },
+  { k: "loss", t: "Perdre du gras", d: "Priorité à la perte de poids, la muscu protège le muscle." },
+  { k: "strength", t: "Devenir plus fort", d: "Charges lourdes, peu de répétitions." }
+];
+function Accueil(props){
+  var reprise = !!props.reprise;
+  var _e = useState(reprise ? 1 : 0), etape = _e[0], setEtape = _e[1];
+  var _r = useState({ goal: "loss_hyper", seances: 3, duree: 60, sexe: null, age: null, poids: null, taille: null,
+    machines: SELECTION_DE_DEPART.map(idGenerique) }), rep = _r[0], setRep = _r[1];
+  var _p = useState(false), prep = _p[0], setPrep = _p[1];
+  var _res = useState(null), resultat = _res[0], setResultat = _res[1];
+  var _err = useState(false), erreur = _err[0], setErreur = _err[1];
+  var catalogue = useMemo(function(){ return catalogueGenerique(); }, []);
+  function maj(patch){ setRep(Object.assign({}, rep, patch)); }
+  function basculer(id){ var l = rep.machines.slice(); var i = l.indexOf(id); if (i >= 0) l.splice(i, 1); else l.push(id); maj({ machines: l }); }
+  function construire(){
+    setPrep(true);
+    setTimeout(function(){
+      var r = null;
+      try { r = etatDepuisAccueil(rep, props.ancien); } catch (e) {}
+      setPrep(false);
+      if (r) { setErreur(false); setResultat(r); setEtape(5); } else setErreur(true);
+    }, 40);
+  }
+  var gros = function(on){ return { width:"100%", minHeight:56, padding:"12px 14px", borderRadius:10, textAlign:"left",
+    background: on ? C.pin : C.shroud, color: on ? C.ink : C.bone, border:"1px solid "+(on ? "transparent" : C.line), fontFamily:sansBody }; };
+  var puce = function(on){ return { minWidth:52, minHeight:52, padding:"0 14px", borderRadius:10, background: on ? C.pin : C.shroud,
+    color: on ? C.ink : C.bone, border:"1px solid "+(on ? "transparent" : C.line), fontFamily:sansCond, fontSize:18, fontWeight:700 }; };
+  var titre = function(t){ return h("h2",{style:{fontFamily:sansCond,fontSize:26,fontWeight:800,color:C.bone,margin:"0 0 6px",lineHeight:1.15}}, t); };
+  var sous = function(t){ return h("p",{style:{fontSize:15,color:C.taupe,lineHeight:1.5,margin:"0 0 18px"}}, t); };
+  var ecrans = [];
+  ecrans[0] = h("div", null,
+    h("div",{style:{fontFamily:sansCond,fontSize:15,fontWeight:700,color:C.pinText,letterSpacing:1,marginBottom:8}}, "BIENVENUE"),
+    titre("Ton coach de muscu, dans ta poche"),
+    sous("En 1 minute, l'appli te prépare un programme pour ta salle."),
+    h("div",{style:{display:"flex",flexDirection:"column",gap:12,marginBottom:24}},
+      [["1","Tu choisis ton objectif et les machines de ta salle."],["2","L'appli construit tes séances et te dit quelle charge mettre."],["3","En séance, tu appuies sur ✓ après chaque série. C'est tout."]].map(function(x){
+        return h("div",{key:x[0], style:{display:"flex",gap:12,alignItems:"center"}},
+          h("span",{style:{width:34,height:34,borderRadius:"50%",background:C.shroud,border:"2px solid "+C.pin,color:C.pinText,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:sansCond,fontWeight:800,flexShrink:0}}, x[0]),
+          h("span",{style:{fontSize:15.5,color:C.bone,lineHeight:1.4}}, x[1]));
+      })),
+    props.onAnnuler ? h("button",{onClick:props.onAnnuler, style:{background:"none",border:"none",padding:"8px 0",color:C.taupe,fontSize:14,textDecoration:"underline",textAlign:"left"}},
+      "J'ai déjà un carnet (sauvegarde à importer) : passer") : null);
+  ecrans[1] = h("div", null, titre("Ton objectif ?"), sous("Tu pourras le changer quand tu veux."),
+    h("div",{style:{display:"flex",flexDirection:"column",gap:10}},
+      OBJECTIFS_ACCUEIL.map(function(o){ var on = rep.goal === o.k;
+        return h("button",{key:o.k, onClick:function(){ maj({goal:o.k}); }, "aria-pressed":on?"true":"false", style:gros(on)},
+          h("div",{style:{fontFamily:sansCond,fontSize:18,fontWeight:700}}, o.t),
+          h("div",{style:{fontSize:13.5,opacity:0.85,marginTop:2,lineHeight:1.35}}, o.d)); })));
+  ecrans[2] = h("div", null, titre("Ton rythme ?"),
+    h("div",{style:{fontFamily:sansCond,fontSize:16,fontWeight:600,color:C.bone,margin:"4px 0 10px"}}, "Séances par semaine"),
+    h("div",{style:{display:"flex",gap:8,flexWrap:"wrap",marginBottom:22}},
+      [2,3,4,5,6].map(function(n){ var on = rep.seances === n; return h("button",{key:n, onClick:function(){ maj({seances:n}); }, "aria-pressed":on?"true":"false", style:puce(on)}, n); })),
+    h("div",{style:{fontFamily:sansCond,fontSize:16,fontWeight:600,color:C.bone,margin:"4px 0 10px"}}, "Temps par séance"),
+    h("div",{style:{display:"flex",gap:8,flexWrap:"wrap"}},
+      [45,60,75,90].map(function(n){ var on = rep.duree === n; return h("button",{key:n, onClick:function(){ maj({duree:n}); }, "aria-pressed":on?"true":"false", style:puce(on)}, n+" min"); })));
+  ecrans[3] = h("div", null, titre("Un peu sur toi"), sous("Pour calculer tes calories et tes protéines. Tu peux passer."),
+    h("div",{style:{display:"flex",gap:8,marginBottom:14}},
+      [["M","Homme"],["F","Femme"]].map(function(x){ var on = rep.sexe === x[0]; return h("button",{key:x[0], onClick:function(){ maj({sexe:x[0]}); }, "aria-pressed":on?"true":"false", style:Object.assign(puce(on),{flex:1,fontSize:16})}, x[1]); })),
+    [["age","Âge","ans",10,120,1],["poids","Poids","kg",30,400,0.5],["taille","Taille","cm",100,250,1]].map(function(c){
+      return h("div",{key:c[0], style:{marginBottom:12}},
+        h("label",{style:{display:"block",fontFamily:sansCond,fontSize:14,color:C.taupe,marginBottom:4}}, c[1]),
+        h("div",{style:{display:"flex"}},
+          h(Stepper,{value:rep[c[0]], step:c[5], min:c[3], max:c[4], suffix:c[2], wide:true, viderSiTropBas:true, label:c[1], onChange:function(v){ var o={}; o[c[0]]=v; maj(o); }})));
+    }));
+  ecrans[4] = h("div", null, titre("Les machines de ta salle"), sous("Coche ce qu'il y a dans ta salle. Une sélection de base est déjà cochée ; tu pourras en ajouter ou renommer plus tard."),
+    CATALOGUE_GENERIQUE_NOMS.map(function(grp){
+      var liste = catalogue.filter(function(e){ return e.groupe === grp.g; });
+      return h("div",{key:grp.g, style:{marginBottom:14}},
+        h("div",{style:{fontFamily:sansCond,fontSize:14,fontWeight:700,color:C.pinText,marginBottom:6}}, grp.g),
+        h("div",{style:{display:"flex",flexWrap:"wrap",gap:8}},
+          liste.map(function(e){ var on = rep.machines.indexOf(e.id) >= 0;
+            return h("button",{key:e.id, onClick:function(){ basculer(e.id); }, "aria-pressed":on?"true":"false",
+              style:{minHeight:44,padding:"8px 12px",borderRadius:22,background:on?C.pin:C.shroud,color:on?C.ink:C.bone,border:"1px solid "+(on?"transparent":C.line),fontFamily:sansCond,fontSize:14.5,fontWeight:600,display:"flex",alignItems:"center",gap:6}},
+              on ? h(Icon,{name:"check",size:14}) : null, e.name); })));
+    }),
+    erreur ? h("div",{role:"alert",style:{fontSize:14,color:C.rustText,margin:"6px 0"}}, "Le programme n'a pas pu être créé avec cette sélection. Coche une ou deux machines de plus et réessaie.") : null,
+    h("div",{style:{fontSize:13,color:C.taupe,marginTop:4}}, rep.machines.length+" machine"+(rep.machines.length>1?"s":"")+" cochée"+(rep.machines.length>1?"s":"")+(rep.machines.length<3?" — il en faut au moins 3.":"")));
+  ecrans[5] = resultat ? h("div", null,
+    h("div",{style:{textAlign:"center",fontSize:44,lineHeight:1,marginBottom:8,color:C.greenText}}, h(Icon,{name:"check",size:44})),
+    titre("Ton programme est prêt"),
+    sous((function(){ var nj = musculationDays(resultat.etat.program).length;
+      return (resultat.split ? resultat.split.label+" : " : "")+(nj > 1 ? nj+" séances différentes qui s'enchaînent dans l'ordre" : "une séance")+", "+rep.seances+" fois par semaine. L'appli choisit la charge de chaque série et l'ajuste à chaque fois."; })()),
+    h("div",{style:{display:"flex",flexDirection:"column",gap:6,marginBottom:14}},
+      musculationDays(resultat.etat.program).map(function(d){
+        return h("div",{key:d.key, style:{padding:"10px 12px",borderRadius:10,background:C.shroud,border:"1px solid "+C.line}},
+          h("div",{style:{fontFamily:sansCond,fontSize:16,fontWeight:700,color:resolveAccent(d.accent)}}, d.label),
+          h("div",{style:{fontSize:13,color:C.taupe,lineHeight:1.4,marginTop:2}}, d.items.map(function(it){ var e = resultat.etat.exercises.filter(function(x){ return x.id === it.ex; })[0]; return e ? e.name : ""; }).filter(Boolean).join(" · ")));
+      }))) : null;
+  var peutSuivre = etape !== 4 || rep.machines.length >= 3;
+  var dernier = etape === 5;
+  return h("div",{style:{minHeight:"100dvh",background:C.shroudDeep,color:C.bone,fontFamily:sansBody,display:"flex",flexDirection:"column"}},
+    h("div",{style:{flex:1,width:"100%",maxWidth:560,margin:"0 auto",padding:"calc(24px + var(--sat)) calc(20px + var(--sar)) 24px calc(20px + var(--sal))"}},
+      h("div",{style:{display:"flex",gap:6,marginBottom:22}},
+        [0,1,2,3,4,5].map(function(i){ return h("div",{key:i, style:{flex:1,height:4,borderRadius:2,background: i <= etape ? C.pin : C.line}}); })),
+      ecrans[etape]),
+    h("div",{style:{position:"sticky",bottom:0,background:C.shroudDeep,borderTop:"1px solid "+C.line,padding:"12px calc(20px + var(--sar)) calc(12px + var(--sab)) calc(20px + var(--sal))"}},
+      h("div",{style:{maxWidth:560,margin:"0 auto",display:"flex",gap:10}},
+        (etape > 0 && !dernier) ? h("button",{onClick:function(){ setEtape(etape - 1); }, style:{minHeight:52,padding:"0 18px",borderRadius:10,background:"transparent",color:C.bone,border:"1px solid "+C.line,fontFamily:sansCond,fontSize:16,fontWeight:600}}, "Retour") : null,
+        (reprise && etape === 1 && props.onAnnuler) ? h("button",{onClick:props.onAnnuler, style:{minHeight:52,padding:"0 18px",borderRadius:10,background:"transparent",color:C.bone,border:"1px solid "+C.line,fontFamily:sansCond,fontSize:16,fontWeight:600}}, "Annuler") : null,
+        h("button",{disabled: !peutSuivre || prep, onClick:function(){
+            if (dernier) { props.onTerminer(resultat.etat); return; }
+            if (etape === 4) { construire(); return; }
+            setEtape(etape + 1);
+          }, style:{flex:1,minHeight:52,borderRadius:10,background:C.pin,color:C.ink,border:"none",fontFamily:sansCond,fontSize:17,fontWeight:800,opacity:(!peutSuivre||prep)?0.5:1}},
+          prep ? "Préparation…" : dernier ? "C'est parti" : etape === 0 ? "Commencer" : etape === 3 ? ((rep.poids||rep.age||rep.taille||rep.sexe) ? "Suivant" : "Passer") : etape === 4 ? "Créer mon programme" : "Suivant"))));
 }
 
 /* FILET CONTRE L'ÉCRAN BLANC (25 sept. 2026, audit). Sans lui, une seule
@@ -12285,38 +13129,10 @@ OngletSecours.prototype.render = function(){
 })();
 </script>
 
+
 <script>
-// v2 (2026-09-04) : le fetch handler du service worker est déjà en
-// network-first (voir service-worker.js), donc une simple réouverture de
-// l'appli va normalement chercher index.html à jour sur GitHub Pages. Le
-// trou restant : sur mobile, l'appli PWA n'est presque jamais "relancée à
-// froid" — l'OS la garde gelée en arrière-plan quand tu changes d'appli,
-// puis la ranime telle quelle (le JS déjà chargé continue de tourner) sans
-// jamais refaire de navigation ni redéclencher la vérif de mise à jour du
-// navigateur. Résultat vu par l'utilisateur : "je dois réinstaller l'appli
-// pour voir mes changements" alors que le vrai problème est juste que la
-// vérif ne se relance jamais toute seule. Deux ajouts pour ça :
-// 1) reg.update() forcé à chaque retour au premier plan (visibilitychange)
-//    — revérifie service-worker.js sur le réseau, indépendamment de tout
-//    cache navigateur, à chaque fois que tu reviens sur l'appli ;
-// 2) reload() automatique une seule fois quand un nouveau service worker
-//    prend le contrôle (controllerchange) — sinon le nouveau code est bien
-//    activé en arrière-plan mais la page déjà ouverte continue de tourner
-//    avec l'ancien JS déjà en mémoire jusqu'à un rechargement.
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", function(){
-    navigator.serviceWorker.register("service-worker.js").then(function(reg){
-      document.addEventListener("visibilitychange", function(){
-        if (document.visibilityState === "visible") reg.update().catch(function(){});
-      });
-    }).catch(function(){});
-    var reloaded = false;
-    navigator.serviceWorker.addEventListener("controllerchange", function(){
-      if (reloaded) return;
-      reloaded = true;
-      window.location.reload();
-    });
-  });
+  window.addEventListener("load", function(){ navigator.serviceWorker.register("service-worker.js").catch(function(){}); });
 }
 </script>
 </body>
