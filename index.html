@@ -558,6 +558,7 @@ var SEED_PROGRAM = [
     { ex: "lf-dev-tronc", sets: 4, min: 8, max: 12, rest: 110 },  /* Développé du Tronc */
     { ex: "lf-rotation", sets: 4, min: 12, max: 15, rest: 65 },  /* Rotation du Torse */
     { ex: "u1788769758052", sets: 5, min: 10, max: 15, rest: 85 },  /* Extension dorsale */
+    { ex: "u1788773897255", sets: 5, min: 12, max: 15, rest: 65 },  /* Corde triceps — passée de Haut B à Haut A le 26 oct. 2026 (triceps 4/10 -> 8/6 entre les deux séances, voir repartirEntreJoursJumeaux) */
   ]},
   { key: "BA", label: "Bas A", accent: C.taupe, items: [
     { ex: "tg-leg-press", sets: 5, min: 8, max: 12, rest: 110 },  /* Leg Press */
@@ -578,7 +579,6 @@ var SEED_PROGRAM = [
     { ex: "lf-rotation", sets: 4, min: 12, max: 15, rest: 65 },  /* Rotation du Torse */
     { ex: "u1788761248906", sets: 4, min: 8, max: 12, rest: 110 },  /* Tirage vertical */
     { ex: "lf-dev-tronc", sets: 3, min: 8, max: 12, rest: 110 },  /* Développé du Tronc */
-    { ex: "u1788773897255", sets: 5, min: 12, max: 15, rest: 65 },  /* Corde triceps */
   ]},
   { key: "BB", label: "Bas B", accent: C.taupe, items: [
     { ex: "lf-flex-jambes", sets: 4, min: 10, max: 15, rest: 85 },  /* Flexion des Jambes (allongé) */
@@ -1655,6 +1655,13 @@ function etatDepuisAccueil(rep, ancien) {
   if (!prog || !prog.length) prog = [{ key: "A", label: "Séance A", accent: C.pin, items: choisis.map(function(e){ var td = tierDefaultsForGoal(goal, exerciseOrderTier(e)); return { ex: e.id, sets: td.sets, min: td.min, max: td.max, rest: td.rest }; }) }];
   try { if (programHorsFourchette(prog, exercises, goal, n, {})) prog = reflowStable(prog, exercises, goal, n, {}, "g1", profil); } catch (e) {}
   prog = applyGoalToProgram(prog, exercises, goal, n, {}, profil);
+  /* Dernier coup de peigne sur les séries définitives (26 oct. 2026) : ne
+     déplace que des machines entre séances jumelles, et seulement si le volume
+     par semaine recalculé n'en souffre pas. */
+  try {
+    var reparti = repartirEntreJoursJumeaux(prog, exercises, goal, { avgSessions: n, muscleFocus: {}, profile: profil });
+    if (reparti !== prog) prog = applyGoalToProgram(reparti, exercises, goal, n, {}, profil);   /* séries définitives de la nouvelle composition */
+  } catch (e) {}
   /* Reconfiguration : les machines de l'ancienne salle déjà utilisées restent
      au catalogue, EN RÉSERVE (hors programme), pour que l'historique et les
      courbes gardent leurs noms. */
@@ -1670,7 +1677,7 @@ function etatDepuisAccueil(rep, ancien) {
   var etat = {
     v: STATE_VERSION, programVersion: PROGRAM_VERSION, exercises: exercises, program: prog,
     sessions: (ancien && Array.isArray(ancien.sessions)) ? ancien.sessions : [], active: null, deloadForNextStart: false,
-    meta: Object.assign({}, (ancien && ancien.meta) || {}, { deloadSnoozeUntil: 0, accueil: "fait", cardio275: true }),
+    meta: Object.assign({}, (ancien && ancien.meta) || {}, { deloadSnoozeUntil: 0, accueil: "fait", cardio275: true, repartition1: true }),
     bodyLog: rep.poids ? [{ id: "b" + Date.now(), date: todayISO(), weightKg: rep.poids, source: "manuel" }] : [],
     profile: profil, catalogueVu: SEED_EXERCISES.map(function(e){ return e.id; })
   };
@@ -4400,6 +4407,12 @@ function evaluer1Split(tpl, exercises, goal, avgSessions, muscleFocus, gymId, pr
       } catch (e) {}
     }
     var applied = applyGoalToProgram(prog, exercises, goal, avgSessions, muscleFocus, profile);
+    /* Même répartition entre séances jumelles que le programme réellement
+       appliqué (26 oct. 2026) : la carte du split montre ce qu'on obtiendra. */
+    try {
+      var reparti = repartirEntreJoursJumeaux(applied, exercises, goal, { avgSessions: avgSessions, muscleFocus: muscleFocus, profile: profile });
+      if (reparti !== applied) applied = applyGoalToProgram(reparti, exercises, goal, avgSessions, muscleFocus, profile);
+    } catch (e) {}
     var exMap = {}; exercises.forEach(function(e){ exMap[e.id]=e; });
     var vol = plannedVolume(applied, exercises, avgSessions);
     var joursM = musculationDays(applied);
@@ -4804,6 +4817,240 @@ function applyGoalCache(program, exercises, goal, avgSessions, muscleFocus, prof
   r = applyGoalToProgram(program, exercises, goal, avgSessions, muscleFocus, profile);
   parEx.m[cle] = r; parEx.n++;
   return r;
+}
+/* ============================================================
+   RÉPARTITION ENTRE SÉANCES JUMELLES (26 oct. 2026, demande : "pourquoi pas
+   équilibrer les muscles pour mieux répartir par séance quand c'est possible").
+
+   Constat sur le programme de départ : le volume HEBDOMADAIRE de chaque muscle
+   était bon, mais mal partagé entre les deux séances du même type — triceps à
+   4 séries fractionnaires sur Haut A contre 10 sur Haut B, épaules 6 contre 10.
+   Rien ne regardait ça : la note du programme ne parle que de volume par
+   semaine, et l'ancienne passe "jours jumeaux" n'égalisait que la DURÉE.
+
+   Pourquoi répartir, sources vérifiées le 26 oct. 2026 :
+   - le gain d'une séance augmente avec ses séries mais avec des rendements
+     décroissants, nets au-delà d'environ 11 séries fractionnaires par muscle
+     pour l'hypertrophie (Remmert, Pelland et al., SportRxiv 2025). Quand le
+     rendement par séance décroît, un total donné rapporte le plus s'il est
+     partagé à parts égales — c'est une déduction de cette courbe, pas un
+     résultat testé tel quel ;
+   - honnêteté : à volume hebdomadaire ÉGAL, la façon de le répartir sur la
+     semaine change peu le résultat dans les essais (ex. Neves et al. 2022,
+     PLoS ONE, 1×/semaine contre 3×/semaine : pas de différence significative).
+     Le gain attendu est donc modeste ; l'intérêt pratique est surtout des
+     séries de meilleure qualité (moins de fatigue accumulée sur un même
+     muscle dans une séance) et des séances de durée comparable.
+
+   Ce que fait la passe : entre jours JUMEAUX seulement (Haut A / Haut B,
+   Full A / B / C, Poussée A / Poussée B...), elle déplace une machine d'un jour
+   à l'autre, ou en échange deux, quand ça rapproche le volume de chaque muscle
+   d'une séance à l'autre. Dans une rotation, chaque jour revient aussi souvent
+   que les autres : le volume HEBDOMADAIRE ne change pas d'un dixième. Elle ne
+   touche jamais à des jours de types différents (une machine de tirage ne part
+   pas dans "Poussée"), ne bouge pas les machines de tronc, ne vide pas un jour, ne crée pas de doublon, ne rallonge
+   jamais la séance la plus longue, et n'aggrave pas le repère de volume par
+   séance. Quand le matériel ne permet pas mieux (une seule machine pour un
+   muscle), rien ne bouge. */
+function baseLibelleJour(label) {
+  var s = String(label || "").trim().toLowerCase();
+  var m = s.match(/^(.*\S)\s+([a-z]|\d+)$/);
+  return m ? m[1] : null;          /* null = pas de suffixe A/B/C/1/2... */
+}
+/* Familles de mouvements d'un jour : poussée, tirage, jambes. Deux jours
+   ne sont jumeaux que s'ils ont exactement les mêmes familles, et un
+   déplacement ne doit pas en faire perdre ou gagner une (sinon un jour
+   "poussée + jambes" et un jour "tirage + jambes" deviendraient deux full
+   body). */
+function famillesJour(d, exMap) {
+  var f = {};
+  (d.items || []).forEach(function(it){
+    var e = exMap[it.ex]; if (!e || isCardio(e)) return;
+    var mu = allMuscles(e)[0]; if (!mu) return;
+    if (REGION[mu] === "bas") f.jambes = 1;
+    else if (PUSHPULL[mu]) f[PUSHPULL[mu]] = 1;
+  });
+  return Object.keys(f).sort().join("+");
+}
+function groupesJumeaux(program, exMap) {
+  var idx = [];
+  (program || []).forEach(function(d, i){ if (d && (d.items || []).length) idx.push(i); });
+  var parent = {}; idx.forEach(function(i){ parent[i] = i; });
+  function racine(i){ while (parent[i] !== i) i = parent[i]; return i; }
+  function unir(a, b){ var ra = racine(a), rb = racine(b); if (ra !== rb) { if (ra < rb) parent[rb] = ra; else parent[ra] = rb; } }
+  function profil(d){
+    var s = {}, haut = 0, bas = 0;
+    d.items.forEach(function(it){
+      var e = exMap[it.ex]; if (!e || isCardio(e)) return;
+      var mu = allMuscles(e)[0]; if (!mu) return;
+      var r = REGION[mu];
+      if (r === "haut") haut++; else if (r === "bas") bas++;
+      if (r === "haut" || r === "bas") s[mu] = true;      /* tronc : se place partout, ne dit rien du type de jour */
+    });
+    return { mus: s, complet: haut > 0 && bas > 0 };
+  }
+  var profils = {}; idx.forEach(function(i){ profils[i] = profil(program[i]); });
+  function jaccard(a, b){
+    var ka = Object.keys(a), kb = Object.keys(b), inter = 0, uni = {};
+    ka.forEach(function(k){ uni[k] = 1; if (b[k]) inter++; }); kb.forEach(function(k){ uni[k] = 1; });
+    var n = Object.keys(uni).length; return n ? inter / n : 0;
+  }
+  for (var x = 0; x < idx.length; x++) for (var y = x + 1; y < idx.length; y++) {
+    var a = idx[x], b = idx[y], da = program[a], db = program[b];
+    if (famillesJour(da, exMap) !== famillesJour(db, exMap)) continue;
+    var ba = baseLibelleJour(da.label), bb = baseLibelleJour(db.label);
+    var memeNom = ba != null && ba === bb;
+    /* Deux full body ("Full A"/"Full B") : jumeaux même si l'un penche un peu
+       plus vers le haut ou le bas du corps. */
+    if (memeNom && profils[a].complet && profils[b].complet) { unir(a, b); continue; }
+    if (dayRegion(da, exMap) !== dayRegion(db, exMap)) continue;
+    var j = jaccard(profils[a].mus, profils[b].mus);
+    /* Même nom à la lettre près ("Haut A"/"Haut B") : jumeaux, sauf si leur
+       contenu n'a visiblement rien à voir (jours renommés "Séance A" = poussée,
+       "Séance B" = tirage). Sans nom commun, il faut un contenu très proche. */
+    if ((memeNom && j >= 0.2) || j >= 0.6) unir(a, b);
+  }
+  var groupes = {};
+  idx.forEach(function(i){ var r = racine(i); (groupes[r] = groupes[r] || []).push(i); });
+  return Object.keys(groupes).map(function(k){ return groupes[k]; }).filter(function(g){ return g.length >= 2; });
+}
+var REPARTITION_POIDS_MINUTES = 0.25;   /* (minutes d'écart au-delà de 10)² × 0,25 */
+/* `ctx` = { avgSessions, muscleFocus, profile } : les séries d'un programme
+   sont recalculées par l'objectif à chaque réglage et après chaque séance
+   (applyGoalToProgram), et ce recalcul dépend de la composition des jours
+   (plafond par séance notamment). Un déplacement n'est donc retenu que si,
+   séries RECALCULÉES, (1) il améliore vraiment la répartition, (2) aucun
+   muscle ne s'éloigne de sa cible hebdomadaire (ni plus de manque, ni plus
+   d'excès au-dessus de 20), (3) le repère par séance n'est pas plus dépassé,
+   (4) la séance la plus longue ne s'allonge pas. Mesuré sur 80 programmes
+   d'accueil : sans cette vérification, le recalcul qui suivait remettait des
+   muscles sous leur cible dans un cas sur dix. Les machines déplacées gardent
+   leurs séries actuelles (l'historique de recalibrage n'est pas perdu). */
+function repartirEntreJoursJumeaux(program, exercises, goal, ctx) {
+  if (!program || !program.length) return program;
+  var exMap = {}; (exercises || []).forEach(function(e){ exMap[e.id] = e; });
+  var groupes = groupesJumeaux(program, exMap);
+  if (!groupes.length) return program;
+  var cap = SESSION_VOLUME_CAP[goal] || null;
+  var mf = (ctx && ctx.muscleFocus) || {};
+  var base = goalPreset(goal).targetSets || VOL_MIN;
+  var sansMachine = musclesSansMachineDediee(exercises);
+  /* Séries de référence : celles que l'objectif donnerait à cette composition
+     (si ctx), sinon celles du programme tel quel. */
+  function appliquer(p){ return ctx ? applyGoalCache(p, exercises, goal, ctx.avgSessions, mf, ctx.profile) : p; }
+  function hebdo(ap){
+    if (!ctx) return { manque: 0, trop: 0 };
+    var manque = 0, trop = 0;
+    plannedVolume(ap, exercises, ctx.avgSessions).forEach(function(v){
+      var f = focusMultiplier(mf, v.muscle);
+      if (!sansMachine[v.muscle]) manque += Math.max(0, base * f - v.sets);
+      trop += Math.max(0, v.sets - Math.max(base * f, VOL_MAX * f));
+    });
+    return { manque: manque, trop: trop };
+  }
+  /* Les machines de TRONC (abdominaux, obliques, lombaires) ne bougent pas :
+     elles se placent dans des jours de types différents, et les déplacer
+     entre jumeaux changerait leur écart de récupération avec les autres
+     séances (deux jours de suite au lieu d'un jour sur deux, par ex.). */
+  function mobile(e){ var r = REGION[allMuscles(e)[0]]; return r === "haut" || r === "bas"; }
+  function volJour(d){
+    var v = {};
+    d.items.forEach(function(it){
+      var e = exMap[it.ex]; if (!e || isCardio(e)) return;
+      allMuscles(e).forEach(function(mu){ v[mu] = (v[mu] || 0) + (it.sets || 0) * muscleWeight(e, mu); });
+    });
+    return v;
+  }
+  function bilanGroupe(p, g){
+    var vols = g.map(function(i){ return volJour(p[i]); });
+    var mus = {}; vols.forEach(function(v){ Object.keys(v).forEach(function(mu){ mus[mu] = 1; }); });
+    var ecarts = 0;
+    Object.keys(mus).forEach(function(mu){
+      var xs = vols.map(function(v){ return v[mu] || 0; });
+      var moy = xs.reduce(function(q, r){ return q + r; }, 0) / xs.length;
+      xs.forEach(function(q){ ecarts += (q - moy) * (q - moy); });
+    });
+    var mins = g.map(function(i){ return estimateDayMinutes(p[i], exMap); });
+    var plusLong = Math.max.apply(null, mins), ecartMin = plusLong - Math.min.apply(null, mins);
+    var exces = 0;
+    if (cap) vols.forEach(function(v){ Object.keys(v).forEach(function(mu){ if (v[mu] > cap) exces += v[mu] - cap; }); });
+    return { cout: ecarts + REPARTITION_POIDS_MINUTES * Math.pow(Math.max(0, ecartMin - 10), 2),
+      plusLong: plusLong, ecartMin: ecartMin, exces: exces };
+  }
+  /* Un coup = déplacer (s, i) vers t, ou échanger (s, i) avec (t, j). Il
+     s'applique aussi bien au programme brut qu'au programme aux séries
+     recalculées, dont les jours et les machines sont dans le même ordre. */
+  function jouer(p, c){
+    var ch = {};
+    if (c.type === "dep") {
+      ch[c.s] = p[c.s].items.filter(function(_, k){ return k !== c.i; });
+      ch[c.t] = p[c.t].items.concat([p[c.s].items[c.i]]);
+    } else {
+      ch[c.s] = p[c.s].items.slice(); ch[c.s][c.i] = p[c.t].items[c.j];
+      ch[c.t] = p[c.t].items.slice(); ch[c.t][c.j] = p[c.s].items[c.i];
+    }
+    return p.map(function(d, k){ return ch[k] ? Object.assign({}, d, { items: ch[k] }) : d; });
+  }
+  function gardeFamilles(p, c){
+    var q = jouer(p, c);
+    return famillesJour(q[c.s], exMap) === famillesJour(p[c.s], exMap) && famillesJour(q[c.t], exMap) === famillesJour(p[c.t], exMap);
+  }
+  function coups(p, g){
+    var out = [];
+    g.forEach(function(s){ g.forEach(function(t){
+      if (s === t) return;
+      var src = p[s], dst = p[t];
+      if (src.items.length > 2) src.items.forEach(function(it, ii){
+        var e = exMap[it.ex]; if (!e || isCardio(e) || !mobile(e)) return;
+        if (dst.items.some(function(q){ return q.ex === it.ex; })) return;
+        if (!machineFitsDay(e, dst, exMap)) return;
+        var cd = { type: "dep", s: s, t: t, i: ii }; if (gardeFamilles(p, cd)) out.push(cd);
+      });
+      if (s < t) src.items.forEach(function(a, ia){ dst.items.forEach(function(b, ib){
+        if (a.ex === b.ex) return;
+        var ea = exMap[a.ex], eb = exMap[b.ex];
+        if (!ea || !eb || isCardio(ea) || isCardio(eb) || !mobile(ea) || !mobile(eb)) return;
+        if (dst.items.some(function(q){ return q.ex === a.ex; }) || src.items.some(function(q){ return q.ex === b.ex; })) return;
+        if (!machineFitsDay(ea, dst, exMap) || !machineFitsDay(eb, src, exMap)) return;
+        var ce = { type: "ech", s: s, t: t, i: ia, j: ib }; if (gardeFamilles(p, ce)) out.push(ce);
+      }); });
+    }); });
+    return out;
+  }
+  var prog = program, touches = {};
+  for (var tour = 0; tour < 30; tour++) {
+    var ap = appliquer(prog), hAvant = hebdo(ap);
+    var cands = [];
+    groupes.forEach(function(g){
+      var avant = bilanGroupe(ap, g);
+      coups(ap, g).forEach(function(c){
+        var est = bilanGroupe(jouer(ap, c), g);           /* estimation rapide, séries actuelles */
+        if (avant.cout - est.cout > 0.5) cands.push({ c: c, g: g, avant: avant, estime: avant.cout - est.cout });
+      });
+    });
+    /* Ordre déterministe : meilleur gain estimé, puis ordre d'énumération. */
+    cands.sort(function(x, y){ return y.estime - x.estime; });
+    var retenu = null;
+    for (var k = 0; k < cands.length && k < 12 && !retenu; k++) {
+      var cd = cands[k], brut = jouer(prog, cd.c), ap2 = appliquer(brut);
+      var apres = bilanGroupe(ap2, cd.g);
+      if (cd.avant.cout - apres.cout <= 0.5) continue;
+      if (apres.plusLong > cd.avant.plusLong) continue;
+      if (apres.ecartMin > Math.max(cd.avant.ecartMin, 10)) continue;
+      if (apres.exces > cd.avant.exces + 1e-9) continue;
+      var h2 = hebdo(ap2);
+      if (h2.manque > hAvant.manque + 0.05 || h2.trop > hAvant.trop + 0.05) continue;
+      retenu = { prog: brut, c: cd.c };
+    }
+    if (!retenu) break;
+    prog = retenu.prog; touches[retenu.c.s] = true; touches[retenu.c.t] = true;
+  }
+  if (!Object.keys(touches).length) return program;
+  /* Ordre de la séance : poly d'abord, isolation ensuite (même règle que
+     partout) — seulement dans les jours modifiés. */
+  return prog.map(function(d, i){
+    return touches[i] ? Object.assign({}, d, { items: sortByExerciseOrder(d.items, function(it){ return it.ex; }, exMap) }) : d;
+  });
 }
 function reflowProgramForCatalogue(program, exercises, goal, avgSessions, muscleFocus, gymId, profile) {
   var known = {}; (exercises||[]).forEach(function(e){ known[e.id] = true; });
@@ -5211,60 +5458,17 @@ function reflowProgramForCatalogue(program, exercises, goal, avgSessions, muscle
     if (!bestMove) break;
     prog = bestMove; best = bestMoveScore;
   }
-  /* DERNIÈRE PASSE — égaliser les jours de MÊME type (13 sept. 2026 :
-     "pourquoi Haut A et Haut B autant déséquilibrés ?").
-
-     Constat sur son programme : Haut A à 7 exercices / 70 min contre Haut B à
-     10 exercices / 101 min. Rien dans tout ce qui précède ne regardait
-     l'équilibre ENTRE les jours : le score ne parle que de volume hebdomadaire
-     par muscle, et deux jours du haut très inégaux le satisfont exactement
-     autant qu'une répartition régulière.
-
-     Déplacer une machine d'un jour vers un autre jour du MÊME type ne change
-     RIEN au volume hebdomadaire — dans une rotation, chaque jour est parcouru
-     aussi souvent que les autres. Ça ne déplace que la durée et la fréquence
-     par muscle. Cette passe est donc sans risque pour l'équilibre musculaire,
-     et c'est pour ça qu'elle est séparée du score : il n'y a rien à arbitrer,
-     juste à ne pas laisser une séance faire 30 minutes de plus que sa jumelle.
-
-     Ne déplace jamais une machine vers un jour qui la contient déjà (ça ferait
-     un doublon), ne vide jamais un jour, et s'arrête dès que l'écart repasse
-     sous 10 minutes ou qu'aucun déplacement ne l'améliore. */
-  (function equilibrerJoursJumeaux(){
-    for (var passe = 0; passe < 30; passe++) {
-      var applique = applyGoalCache(prog, exercises, goal, avgSessions, muscleFocus, profile);
-      var infos = prog.map(function(d, i){
-        return { i: i, region: dayRegion(d, exMap), min: estimateDayMinutes(applique[i], exMap) };
-      });
-      var meilleur = null;
-      ["haut","bas"].forEach(function(region){
-        var grp = infos.filter(function(x){ return x.region === region; });
-        if (grp.length < 2) return;
-        var longs = grp.slice().sort(function(a,b){ return b.min - a.min; });
-        var source = longs[0], cible = longs[longs.length-1];
-        var ecart = source.min - cible.min;
-        if (ecart <= 10) return;
-        prog[source.i].items.forEach(function(it, ii){
-          if (prog[source.i].items.length <= 2) return;               /* ne pas vider */
-          if (prog[cible.i].items.some(function(x){ return x.ex === it.ex; })) return;
-          var ex = exMap[it.ex]; if (!ex) return;
-          if (!machineFitsDay(ex, prog[cible.i], exMap)) return;
-          var cand = prog.map(function(d, di){
-            if (di === source.i) return Object.assign({}, d, { items: d.items.filter(function(_, j){ return j !== ii; }) });
-            if (di === cible.i) return Object.assign({}, d, { items: d.items.concat([Object.assign({}, it)]) });
-            return d;
-          });
-          var ap2 = applyGoalCache(cand, exercises, goal, avgSessions, muscleFocus, profile);
-          var g2 = cand.map(function(d, i2){ return { region: dayRegion(d, exMap), min: estimateDayMinutes(ap2[i2], exMap) }; })
-            .filter(function(x){ return x.region === region; }).map(function(x){ return x.min; });
-          var ecart2 = Math.max.apply(null, g2) - Math.min.apply(null, g2);
-          if (ecart2 < ecart - 0.5 && (!meilleur || ecart2 < meilleur.ecart)) meilleur = { prog: cand, ecart: ecart2 };
-        });
-      });
-      if (!meilleur) return;
-      prog = meilleur.prog;
-    }
-  })();
+  /* L'ancienne passe "jours jumeaux" (13 sept. 2026, "pourquoi Haut A et
+     Haut B autant déséquilibrés ?" : égaliser la DURÉE des deux séances) a
+     été retirée d'ici le 26 oct. 2026 : elle est remplacée par
+     repartirEntreJoursJumeaux, qui égalise la durée ET le volume de chaque
+     muscle, appliquée une fois la recomposition terminée (voir reflowStable).
+     Deux défauts corrigés au passage : les "jumeaux" étaient tous les jours de
+     la même région, si bien qu'en Push / Pull / Legs la poussée et le tirage
+     (tous deux "haut du corps") pouvaient s'échanger des machines ; et la
+     placer au milieu de la recomposition changeait le point de départ des
+     passes suivantes — mesuré, un peu plus de muscles finissaient sous leur
+     cible. */
   return prog;
 }
 /* Recomposition jusqu'au POINT FIXE — ajouté le 14 sept. 2026 pendant l'audit
@@ -5292,6 +5496,25 @@ function reflowProgramForCatalogue(program, exercises, goal, avgSessions, muscle
    au sens où il n'y a plus rien de mieux à en tirer. Coût : quelques passages
    de plus, uniquement quand le programme change vraiment. */
 function reflowStable(program, exercises, goal, avgSessions, muscleFocus, gymId, profile) {
+  var r = reflowStableBrut(program, exercises, goal, avgSessions, muscleFocus, gymId, profile);
+  /* Répartition entre séances jumelles, une fois la composition stabilisée
+     (26 oct. 2026) — elle ne change ni le volume hebdomadaire recalculé, ni
+     la séance la plus longue (voir repartirEntreJoursJumeaux).
+     Elle n'est gardée que si la recomposition, relancée dessus, n'y trouve
+     plus rien à changer : sinon l'ouverture suivante de l'appli redéplacerait
+     des machines (test de point fixe). Sinon, on rend le résultat de la
+     recomposition seule. */
+  var ctx = { avgSessions: avgSessions, muscleFocus: muscleFocus, profile: profile };
+  function empreinte(p){ return JSON.stringify(p.map(function(d){ return (d.items||[]).map(function(i){ return i.ex; }); })); }
+  try {
+    var b = repartirEntreJoursJumeaux(r, exercises, goal, ctx);
+    if (b === r) return r;
+    var rb = reflowStableBrut(b, exercises, goal, avgSessions, muscleFocus, gymId, profile);
+    if (empreinte(rb) === empreinte(b)) return b;
+  } catch (e) {}
+  return r;
+}
+function reflowStableBrut(program, exercises, goal, avgSessions, muscleFocus, gymId, profile) {
   var vus = [], etats = [], prog = program;
   /* Empreinte INDÉPENDANTE DE L'ORDRE des machines dans un jour (24 sept.
      2026, audit) : deux passes qui ne faisaient que permuter deux machines
@@ -5805,7 +6028,7 @@ var PROGRAM_VERSION = 7;   /* 7 (23 sept. 2026) : exercices poids du corps du mo
    recommitée à la main — contrairement au lien Artifact qui se met à jour
    tout seul". Change cette date à chaque publication notable pour que la
    comparaison soit possible côté utilisateur. */
-var APP_BUILD = "2026-09-30b";
+var APP_BUILD = "2026-10-26a";
 
 function seedState() {
   return {
@@ -5816,7 +6039,7 @@ function seedState() {
     sessions: [],
     active: null,
     deloadForNextStart: false,
-    meta: { deloadSnoozeUntil: 0 },
+    meta: { deloadSnoozeUntil: 0, repartition1: true },
     bodyLog: [
       { id: "b1", date: null, weightKg: 84.6, fatKg: 22.4, muscleKg: 59.1, bmr: 1846, source: "Boditrax" },
       { id: "b2", date: todayISO(), weightKg: 85.1, fatKg: 22.4, muscleKg: 59.5, bmr: 1860, source: "Boditrax" },
@@ -8714,7 +8937,9 @@ function SeanceTab(props) {
     return h("div",{style:{marginBottom:16,borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.steel}},
       h("div",{style:{fontFamily:sansCond,fontSize:15,fontWeight:600,marginBottom:6,color:C.steelText}}, "Programme réajusté tout seul"),
       h("div",{style:{fontSize:13,color:C.taupe,lineHeight:1.5,marginBottom:8}},
-        "Un ou plusieurs muscles étaient nettement au-dessus de leur cible à cause du nombre de machines qui les sollicitent. L'appli a réorganisé la composition des séances pour revenir dans la fourchette — tes séries enregistrées ne sont pas touchées."),
+        autoFix.raison === "repartition"
+          ? "Certains muscles travaillaient beaucoup plus sur une séance que sur sa jumelle. L'appli a déplacé ces machines pour mieux répartir chaque muscle entre tes séances — même volume par semaine, séances plus régulières. Ton historique n'est pas touché."
+          : "Un ou plusieurs muscles étaient nettement au-dessus de leur cible à cause du nombre de machines qui les sollicitent. L'appli a réorganisé la composition des séances pour revenir dans la fourchette — tes séries enregistrées ne sont pas touchées."),
       h("div",{style:{display:"flex",flexDirection:"column",gap:4,marginBottom:10}},
         autoFix.moves.slice(0,6).map(function(m,i){
           return h("div",{key:i, style:{fontSize:12.5,color:C.bone,lineHeight:1.45}},
@@ -12733,13 +12958,32 @@ function App(props){
     autoFixSig.current = sig;
     try {
       var g = state.profile.goal, avg = avgSessionsPerWeek(state.profile), mf = state.profile.muscleFocus || {};
-      if (!programHorsFourchette(state.program, state.exercises, g, avg, mf)) return;
-      var reflowed = reflowStable(state.program, state.exercises, g, avg, mf, state.profile.currentGymId, state.profile);
-      var diff = describeProgramDiff(state.program, reflowed, state.exercises);
-      if (!diff.changed) return;
-      var next = applyGoalToProgram(reflowed, state.exercises, g, avg, mf, state.profile);
-      autoFixSig.current = programSignature(next, state.exercises);
-      setState({ program: next, autoFix: diff });
+      /* Répartition entre séances jumelles (26 oct. 2026, voir
+         repartirEntreJoursJumeaux) : appliquée UNE fois aux programmes déjà
+         enregistrés, puis à chaque recomposition. Pas à chaque ouverture : une
+         machine que tu déplaces toi-même d'un jour à l'autre doit rester où tu
+         l'as mise. Le déplacement n'est jamais silencieux (carte "Programme
+         réajusté" sur l'onglet Séance) et les séries restent les mêmes. */
+      var dejaReparti = !!(state.meta && state.meta.repartition1);
+      var marquer = function(patch){ setState(function(prev){
+        return Object.assign({}, prev, patch || {}, { meta: Object.assign({}, prev.meta, { repartition1: true }) }); }); };
+      if (programHorsFourchette(state.program, state.exercises, g, avg, mf)) {
+        var reflowed = reflowStable(state.program, state.exercises, g, avg, mf, state.profile.currentGymId, state.profile);
+        var diff = describeProgramDiff(state.program, reflowed, state.exercises);
+        if (diff.changed) {
+          var next = applyGoalToProgram(reflowed, state.exercises, g, avg, mf, state.profile);
+          autoFixSig.current = programSignature(next, state.exercises);
+          marquer({ program: next, autoFix: diff });
+          return;
+        }
+      }
+      if (dejaReparti) return;
+      var reparti = repartirEntreJoursJumeaux(state.program, state.exercises, g, { avgSessions: avg, muscleFocus: mf, profile: state.profile });
+      var dRep = reparti !== state.program ? describeProgramDiff(state.program, reparti, state.exercises) : { changed: false };
+      if (dRep.changed) {
+        autoFixSig.current = programSignature(reparti, state.exercises);
+        marquer({ program: reparti, autoFix: Object.assign({ raison: "repartition" }, dRep) });
+      } else marquer();
     } catch (e) {}
     // eslint-disable-next-line
   }, [state.program, state.exercises, state.active]);
