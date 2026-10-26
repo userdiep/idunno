@@ -1162,8 +1162,8 @@ function historyFor(sessions, exId) {
     .sort(function(a,b){ return new Date(a.date)-new Date(b.date); });
 }
 /* Historique qui sert à PROGRESSER — ajouté le 24 sept. 2026 (audit).
-   Une séance de décharge est volontairement plus légère (~80 %, une série de
-   moins) : la prendre comme "dernière fois" faisait repartir la séance
+   Une séance de décharge est volontairement plus légère (~90 %, moitié des
+   séries) : la prendre comme "dernière fois" faisait repartir la séance
    suivante de la charge de décharge, et comptait comme une séance "sans
    progrès" dans la détection des blocages. On l'écarte ici ; l'historique
    affiché (graphiques, Historique) garde toutes les séances. */
@@ -1390,7 +1390,9 @@ function prescribe(sessions, item, deload, ex) {
      machine, ~20 % de la charge. Au poids du corps, pas de charge à baisser :
      on allège la variante. Et on ne passe jamais sous une série. */
   var inc = itemInc(item, ex);
-  var nSets = Math.max(1, item.sets - 1);
+  /* Moitié des séries, arrondie au-dessus (4 -> 2, 3 -> 2, 5 -> 3), au moins
+     une — voir REVUE_2026 (Bell et al. 2023, 2025). */
+  var nSets = Math.max(1, Math.round(item.sets / 2));
   /* Base = la charge de TRAVAIL de la dernière fois (25 sept. 2026, audit),
      pas la charge prévue pour la séance suivante, qui peut déjà avoir monté
      d'un cran : la décharge partait alors de la charge normale. */
@@ -1401,27 +1403,28 @@ function prescribe(sessions, item, deload, ex) {
   /* Machine à contrepoids : décharger = AJOUTER de l'aide (~20 % de l'aide
      actuelle, au moins un cran). */
   if (assisteD) {
-    var cransA = Math.max(1, Math.round(Math.max(wBase, 10) * 0.2 / inc));
+    var cransA = Math.max(1, Math.round(Math.max(wBase, 10) * 0.1 / inc));
     return { weight: surPas(wBase + cransA * inc), targetReps: item.min, state: "deload", setsOverride: nSets,
-      note: "Semaine de décharge — " + fmtNombre(cransA * inc) + " kg d'aide en plus, une série de moins, technique propre." };
+      note: "Semaine de décharge — " + fmtNombre(cransA * inc) + " kg d'aide en plus, moitié moins de séries, technique propre." };
   }
   if ((ex && ex.kind === "bodyweight") || p.weight === 0 || wBase === 0) {
     return { weight: p.weight, targetReps: item.min, state: "deload", setsOverride: nSets,
-      note: "Semaine de décharge — une série de moins, variante un cran plus facile (ou 3 reps en réserve), technique propre." };
+      note: "Semaine de décharge — moitié moins de séries, même variante avec 3 reps en réserve, technique propre." };
   }
-  /* Un seul cran représente parfois plus de 30 % de la charge (15 kg sur une
-     colonne à pas de 7,5) : retirer ce cran reviendrait à diviser par deux.
-     On garde alors la charge et la décharge passe par le volume et l'effort. */
-  var crans = Math.max(1, Math.round(wBase * 0.2 / inc));
-  if (crans * inc / wBase > 0.3) crans = 0;
+  /* ~10 % de charge en moins, arrondi au cran INFÉRIEUR (on retire au plus
+     10 %) : si un seul cran dépasse déjà ~15 % (colonne à gros pas), on garde
+     la charge et la décharge passe par le volume et l'effort — c'est ce que
+     dit le consensus (l'intensité peut rester, c'est le volume qui baisse). */
+  var crans = Math.floor(wBase * 0.1 / inc + 1e-9);
+  if (crans === 0 && inc / wBase <= 0.15) crans = 1;
   if (crans === 0) {
     return { weight: surPas(wBase), targetReps: item.min, state: "deload", setsOverride: nSets,
-      note: "Semaine de décharge — même charge (un cran de moins serait trop), une série de moins et 3 reps en réserve." };
+      note: "Semaine de décharge — même charge (un cran de moins serait trop), moitié moins de séries et 3 reps en réserve." };
   }
   var w2 = wBase - crans * inc;
   if (w2 < inc) w2 = Math.min(wBase, inc);
   return { weight: surPas(w2), targetReps: item.min, state: "deload", setsOverride: nSets,
-    note: "Semaine de décharge — environ 80 % de la charge habituelle, une série de moins, technique propre." };
+    note: "Semaine de décharge — environ 90 % de la charge habituelle, moitié moins de séries, technique propre." };
 }
 
 /* BLOCAGE — réécrit le 24 sept. 2026 (audit). Avant : "la charge max n'a pas
@@ -1677,7 +1680,7 @@ function etatDepuisAccueil(rep, ancien) {
   var etat = {
     v: STATE_VERSION, programVersion: PROGRAM_VERSION, exercises: exercises, program: prog,
     sessions: (ancien && Array.isArray(ancien.sessions)) ? ancien.sessions : [], active: null, deloadForNextStart: false,
-    meta: Object.assign({}, (ancien && ancien.meta) || {}, { deloadSnoozeUntil: 0, accueil: "fait", cardio275: true, repartition1: true }),
+    meta: Object.assign({}, (ancien && ancien.meta) || {}, { deloadSnoozeUntil: 0, accueil: "fait", cardio275: true, repartition3: true, revue2610: true }),
     bodyLog: rep.poids ? [{ id: "b" + Date.now(), date: todayISO(), weightKg: rep.poids, source: "manuel" }] : [],
     profile: profil, catalogueVu: SEED_EXERCISES.map(function(e){ return e.id; })
   };
@@ -2492,7 +2495,7 @@ function swapRecommendation(oldEx, newEx, program, goal) {
      source (deficitPctPerWeek), converti en kcal/jour d'après le poids
      renseigné dans Options — équivalence usuelle 7700 kcal par kg de masse
      grasse. Les objectifs de prise de masse, eux, portent leur surplus en %
-     du TDEE (surplusPctOfTdee, ~5 % — Helms et al. 2023), qui suit
+     du TDEE (surplusPctOfTdee, ~10 % depuis le 27 oct. 2026, voir REVUE_2026), qui suit
      déjà le poids par construction. `deficitKcal` reste dans chaque preset
      comme valeur de repli quand le poids n'est pas renseigné, et le réglage
      manuel du curseur reste possible et prioritaire (voir deficitMode).
@@ -2737,6 +2740,69 @@ var EFFORT_ADVICE = {
   loss_strength: "Sur les machines poly/lourdes visées par cet objectif : 1-3 reps en réserve suffisent, l'échec strict n'apporte rien de plus pour la force (voir \"Force\"). Sur les accessoires/isolation : repère \"Hypertrophie\" (0-2 reps en réserve), là où l'effort proche de l'échec fait vraiment la différence.",
   hyper_strength: "Même logique que \"Perte de gras + Force\" sans le déficit : 1-3 reps en réserve sur les mouvements poly/lourds (voir \"Force\"), 0-2 reps en réserve sur les accessoires/isolation (voir \"Hypertrophie\").",
 };
+/* REVUE_2026 — revue de la littérature du 27 oct. 2026 (demande : "revois
+   toutes les bonnes études et optimise mon app" ; règle choisie : ne changer
+   que ce qu'appuient des méta-analyses ou des revues récentes). Sources lues
+   en ligne ce jour-là, chiffres repris des textes eux-mêmes :
+
+   CHANGÉ
+   - SURPLUS des objectifs de prise : 5 % -> 10 % du TDEE. 5 % donnait
+     ~0,16 %/semaine pour 80 kg, SOUS la fourchette de 0,25-0,5 %/semaine que
+     l'appli vise elle-même dans le bilan (Iraki et al. 2019). Helms et al.
+     2023 (Sports Med Open, essai randomisé) jugent 5 % "trop petit pour être
+     tenable en pratique" et recommandent 5-20 % ou 0,25-0,5 %/semaine ; Iraki
+     2019 : ~10-20 % ; Slater et al. 2019 : départ vers +360-480 kcal/j. 10 %
+     est le bas de ces fourchettes ; le bilan ajuste ensuite d'après les
+     pesées.
+   - PROTÉINES en recomposition (déficit léger) : 2,0 -> 2,2 g/kg. Morton et
+     al. 2018 (BJSM, méta-analyse) : plus de bénéfice moyen au-delà de 1,6, IC
+     jusqu'à 2,2 — 2,2 étant la valeur "prudente" des auteurs ; en déficit, les
+     repères montent (ISSN 2017 : 2,3-3,1 g/kg en période hypocalorique ; Refalo
+     et al. 2025, méta-régression : moins de perte de masse maigre avec plus de
+     protéines). Les objectifs de prise (1,8-1,9) restent : ≥ 1,6 suffit
+     (Nunes et al. 2022, 74 essais).
+   - REPOS : au moins 90 s partout où l'objectif contient de l'hypertrophie
+     (isolation à 60-75 s avant). Singer et al. 2024 (méta-analyse bayésienne,
+     Frontiers) : au-delà de 60 s, petit bénéfice pour l'hypertrophie, sans gain
+     net au-delà de ~90 s. Force en déficit, gros mouvements : 120 -> 150 s
+     (Grgic et al. 2018 : les pratiquants entraînés ont besoin de > 2 min pour
+     maximiser la force).
+   - DÉCHARGE : moitié des séries (au lieu d'une de moins) et ~10 % de charge
+     en moins (au lieu de ~20 %). Consensus Delphi (Bell et al. 2023) :
+     baisser le VOLUME par les séries, l'intensité peut rester ; revue de Bell
+     et al. 2025 : -25 à -60 % de volume, ~-10 % de charge. Le seul essai
+     (Coleman et al. 2024, PeerJ) : une semaine d'ARRÊT complet n'a rien
+     apporté au muscle et a légèrement freiné la force — d'où une décharge
+     allégée plutôt qu'un arrêt. Avis d'experts surtout : c'est le meilleur
+     niveau de preuve disponible sur ce point précis.
+   - MESSAGE D'EFFORT : "ces séries ne comptent presque pas" était faux. À 3
+     reps en réserve, le muscle progresse encore, un peu moins (Robinson et al.
+     2024, méta-régression : l'hypertrophie augmente légèrement à l'approche de
+     l'échec, la force pas du tout ; Refalo et al. 2024 : 1-2 RIR = même
+     croissance que l'échec).
+
+   VÉRIFIÉ, INCHANGÉ
+   - Volume 12 séries/semaine (Pelland et al. 2025 : courbe racine carrée,
+     rendements décroissants, efficacité "élevée" de 5 à 10 séries,
+     "intermédiaire" de 11 à 18) ; force 6 (plateau fonctionnel vers 4
+     séries fractionnaires/semaine) ; comptage fractionnaire (le meilleur
+     des trois comptages pour tous les résultats) ; fréquence ≥ 2 (effet net
+     pour la force : +3,27 %/séance hebdomadaire ; pour l'hypertrophie,
+     probablement négligeable).
+   - Fourchettes de reps (Lopez et al. 2021 : même hypertrophie de ≤ 8 à > 15
+     RM menées à l'échec ; charges lourdes meilleures pour la force), cible
+     1-2 RIR, double progression (essai PeerJ 2022 : ajouter des reps ou de la
+     charge, même hypertrophie).
+   - Déficits : perte 0,7 %/semaine (Garthe et al. 2011 : 0,7 %/semaine a
+     même augmenté la masse maigre chez des athlètes, 1,4 % non) ;
+     recomposition 0,375 %/semaine, sous le seuil de ~500 kcal/j au-delà
+     duquel le déficit empêche de gagner de la masse maigre (Murphy & Koehler
+     2022, méta-analyse). Lipides 25 % (20-35 % selon Iraki 2019).
+
+   NON CHANGÉ FAUTE DE PREUVE SOLIDE : minimum de 3 séries par machine
+   (Krieger 2010 groupe 2 et 3 séries), cible 10 -> 12 pour "hypertrophie +
+   force" (déduction), seuils de blocage (4 séances) et de décharge réactive
+   (50 % des exercices) — conventions sans étude dédiée. */
 var GOAL_PRESETS = {
   // Perte de gras seule : déficit haut de fourchette Helms (~1%/sem pour ce
   // poids — corrigé le 4 sept. 2026 de 600 à 925 kcal/j, voir note "Perte de
@@ -2783,10 +2849,10 @@ var GOAL_PRESETS = {
   // affiché en clair dans Options pour que tu voies le compromis réel de TON
   // réglage actuel plutôt que de deviner.
   loss:           { nutrition: { activityMultiplier: 1.55, deficitKcal: 650, deficitPctPerWeek: 0.007, proteinPerKg: 2.3 }, targetSets: 12, minFreq: 2, setsMin: 3, setsMax: 5, recommendedSessions: {min:4, max:5},
-    tiers: { 1: {sets:4, min:8,  max:12, rest:90},  2: {sets:4, min:10, max:15, rest:75}, 3: {sets:4, min:12, max:15, rest:60} } },
+    tiers: { 1: {sets:4, min:8,  max:12, rest:100}, 2: {sets:4, min:10, max:15, rest:90}, 3: {sets:4, min:12, max:15, rest:90} } },
   // Hypertrophie seule : léger SURPLUS calorique (mise à jour du 4 sept.
   // 2026, remplace la maintenance d'avant — voir note "Prise de masse" plus
-  // haut, Helms et al. 2023 : ~5% du TDEE, ≈-125 kcal/j pour
+  // haut ; ~10 % du TDEE depuis le 27 oct. 2026, voir REVUE_2026 — était ~5 %, ≈-125 kcal/j pour
   // ce profil, càd deficitKcal NÉGATIF = surplus). targetSets:12 — baissé de
   // 14 à 12 le 4 sept. 2026 (voir note détaillée sur "Perte de gras"
   // ci-dessus, même raisonnement : Baz-Valle et al. 2022 proposent
@@ -2798,7 +2864,7 @@ var GOAL_PRESETS = {
   // sur la semaine (voir note fréquence — pas un effet indépendant
   // démontré, juste plus facile à bien exécuter réparti que tout en une
   // séance).
-  hyper:          { nutrition: { activityMultiplier: 1.55, deficitKcal: -125, surplusPctOfTdee: 0.05, proteinPerKg: 1.8 }, targetSets: 12, minFreq: 2, setsMin: 3, setsMax: 5, recommendedSessions: {min:4, max:5},
+  hyper:          { nutrition: { activityMultiplier: 1.55, deficitKcal: -250, surplusPctOfTdee: 0.10, proteinPerKg: 1.8 }, targetSets: 12, minFreq: 2, setsMin: 3, setsMax: 5, recommendedSessions: {min:4, max:5},
     tiers: { 1: {sets:4, min:6,  max:10, rest:110}, 2: {sets:4, min:8,  max:12, rest:95}, 3: {sets:4, min:10, max:15, rest:90} } },
   // Force seule : léger SURPLUS (mise à jour du 4 sept. 2026, voir note
   // "Prise de masse" plus haut — l'essai Helms et al. 2023 compare maintenance,
@@ -2806,7 +2872,7 @@ var GOAL_PRESETS = {
   // développé couché, rien de net au squat ni sur l'épaisseur musculaire,
   // plus de gras dans les groupes en surplus ; revérifié le 25 sept. 2026 —
   // l'ancienne note disait à tort que le surplus MODÉRÉ battait la
-  // maintenance. Le +5 % est donc un compromis prudent, pas un optimum
+  // maintenance. Le surplus (+10 % depuis le 27 oct. 2026, voir REVUE_2026) reste un compromis, pas un optimum
   // démontré), ≥80% 1RM (≈4-6 reps)/2-3 séries (ACSM 2026), repos long
   // (2-3 min, convention NSCA/ACSM pour charge quasi-maximale).
   // targetSets:6 (mise à jour du 4 sept. 2026) — dose minimale efficace pour
@@ -2824,7 +2890,7 @@ var GOAL_PRESETS = {
   // tient dans des séances courtes (~90-130 min) sans avoir besoin d'en
   // faire plus — contrairement aux 5 autres objectifs, ici minimiser le
   // temps total ne coûte rien niveau fréquence.
-  strength:       { nutrition: { activityMultiplier: 1.55, deficitKcal: -125, surplusPctOfTdee: 0.05, proteinPerKg: 1.8 }, targetSets: 6, minFreq: 2, setsMin: 3, setsMax: 5, recommendedSessions: {min:2, max:3},
+  strength:       { nutrition: { activityMultiplier: 1.55, deficitKcal: -250, surplusPctOfTdee: 0.10, proteinPerKg: 1.8 }, targetSets: 6, minFreq: 2, setsMin: 3, setsMax: 5, recommendedSessions: {min:2, max:3},
     tiers: { 1: {sets:3, min:4,  max:6,  rest:180}, 2: {sets:3, min:5,  max:8,  rest:150}, 3: {sets:3, min:8,  max:12, rest:90} } },
   // targetSets:12 comme "hyper" (baissé de 14 à 12 le 4 sept. 2026, voir
   // note détaillée sur "Perte de gras" plus haut) — la recomposition (prise
@@ -2833,8 +2899,8 @@ var GOAL_PRESETS = {
   // et les notes Roth et al. 2023 / EJCN 2026 sur le déficit, plus haut).
   // Nutrition/tiers eux-mêmes restent les réglages historiques, volontairement
   // inchangés.
-  loss_hyper:     { nutrition: { activityMultiplier: 1.55, deficitKcal: 350, deficitPctPerWeek: 0.00375, proteinPerKg: 2.0 }, targetSets: 12, minFreq: 2, setsMin: 3, setsMax: 5, recommendedSessions: {min:4, max:5},  // = réglages historiques (recomposition), nutrition volontairement inchangée ; recommendedSessions même logique que "loss"/"hyper" (même targetSets/minFreq)
-    tiers: { 1: {sets:3, min:8,  max:12, rest:110}, 2: {sets:3, min:10, max:15, rest:85}, 3: {sets:3, min:12, max:15, rest:65} } },
+  loss_hyper:     { nutrition: { activityMultiplier: 1.55, deficitKcal: 350, deficitPctPerWeek: 0.00375, proteinPerKg: 2.2 }, targetSets: 12, minFreq: 2, setsMin: 3, setsMax: 5, recommendedSessions: {min:4, max:5},  // = réglages historiques (recomposition), nutrition volontairement inchangée ; recommendedSessions même logique que "loss"/"hyper" (même targetSets/minFreq)
+    tiers: { 1: {sets:3, min:8,  max:12, rest:110}, 2: {sets:3, min:10, max:15, rest:90}, 3: {sets:3, min:12, max:15, rest:90} } },
   // Perte de gras + Force : déficit plus prudent que "Perte de gras" seule
   // (préserver la performance/force pendant la restriction, cf. Helms :
   // plus lent préserve mieux), reps mi-chemin force/hypertrophie.
@@ -2845,7 +2911,7 @@ var GOAL_PRESETS = {
   // reflète que cet objectif garde des mouvements lourds à faible volume
   // (force) ET des accessoires qui profitent du volume hypertrophique.
   loss_strength:  { nutrition: { activityMultiplier: 1.55, deficitKcal: 450, deficitPctPerWeek: 0.0048, proteinPerKg: 2.1 }, targetSets: 8, minFreq: 2, setsMin: 3, setsMax: 5, recommendedSessions: {min:4, max:5},
-    tiers: { 1: {sets:3, min:5,  max:8,  rest:120}, 2: {sets:3, min:6,  max:10, rest:100}, 3: {sets:3, min:10, max:15, rest:75} } },
+    tiers: { 1: {sets:3, min:5,  max:8,  rest:150}, 2: {sets:3, min:6,  max:10, rest:100}, 3: {sets:3, min:10, max:15, rest:90} } },
   // Hypertrophie + Force ("powerbuilding") : léger SURPLUS (mise à jour du
   // 4 sept. 2026, remplace la maintenance d'avant — voir note "Prise de
   // masse" plus haut ; pas de perte de gras visée ici, donc pas de conflit
@@ -2856,8 +2922,8 @@ var GOAL_PRESETS = {
   // détaillée plus haut sur "Perte de gras"/"Hypertrophie"), les mouvements
   // lourds tirant vers moins de séries (logique "force") tandis que les
   // accessoires restent proches du volume hypertrophique.
-  hyper_strength: { nutrition: { activityMultiplier: 1.55, deficitKcal: -125, surplusPctOfTdee: 0.05, proteinPerKg: 1.9 }, targetSets: 10, minFreq: 2, setsMin: 3, setsMax: 5, recommendedSessions: {min:4, max:5},
-    tiers: { 1: {sets:4, min:5,  max:8,  rest:130}, 2: {sets:4, min:8,  max:12, rest:100}, 3: {sets:4, min:12, max:15, rest:85} } },
+  hyper_strength: { nutrition: { activityMultiplier: 1.55, deficitKcal: -250, surplusPctOfTdee: 0.10, proteinPerKg: 1.9 }, targetSets: 10, minFreq: 2, setsMin: 3, setsMax: 5, recommendedSessions: {min:4, max:5},
+    tiers: { 1: {sets:4, min:5,  max:8,  rest:130}, 2: {sets:4, min:8,  max:12, rest:100}, 3: {sets:4, min:12, max:15, rest:90} } },
 };
 function goalPreset(goal) { return GOAL_PRESETS[goal] || GOAL_PRESETS.loss_hyper; }
 function tierDefaultsForGoal(goal, tier) { var g = goalPreset(goal); return g.tiers[tier] || g.tiers[2]; }
@@ -2955,21 +3021,111 @@ function tierDefaultsForGoal(goal, tier) { var g = goalPreset(goal); return g.ti
    étude le situe encore PLUS BAS (~2 séries directes par séance), donc
    l'appliquer aussi à ces deux objectifs est le choix conservateur, jamais
    l'inverse. */
-var SESSION_VOLUME_CAP = { loss: 11, hyper: 11, loss_hyper: 11, strength: 11, loss_strength: 11, hyper_strength: 11 };
-function capSessionVolume(program, exercises, goal) {
+/* PAR OBJECTIF depuis le 27 oct. 2026 (question : "t'as pris en compte qu'il
+   ne faut pas faire plus de 11 séries sur le même muscle ? fais en sorte que
+   ce soit le plus opti pour l'objectif").
+
+   Le chiffre de 11 était appliqué à TOUS les objectifs. Or le texte intégral
+   de Remmert et al. 2025 (relu le 27 oct. 2026, tableau 1) donne deux repères
+   différents, en séries fractionnaires (secondaires à 0,5, comme l'appli) :
+   ~11 pour l'HYPERTROPHIE, mais ~3,5 pour la FORCE (soit ~2 séries directes).
+   Mesuré sur 120 programmes générés par l'accueil, l'objectif Force montait
+   jusqu'à 9,8 séries par muscle et par séance — près de trois fois le repère
+   de la force, sans qu'aucun avertissement ne se déclenche.
+
+   Ce n'est pas un mur : au-delà, l'étude ne montre plus de gain DÉTECTABLE,
+   elle ne montre pas de perte (données trop rares à très haut volume). Mais
+   chaque série au-delà coûte du temps et de la fatigue pour presque rien —
+   mieux vaut la placer un autre jour.
+
+   Règle par objectif :
+   - hypertrophie, perte de gras, recomposition : 11 ;
+   - force : compté en séries directes (voir poidsSeance) : 2 dans l'étude,
+     relevé à 3 car une machine a au moins 3 séries (Krieger 2010) — en
+     pratique, une seule machine par muscle et par séance ;
+   - objectifs mixtes : entre les deux, au prorata de la part hypertrophie
+     (voir PART_HYPERTROPHIE) ;
+   - jamais en dessous de ce qu'exige la cible hebdomadaire de l'objectif
+     à 2 séances par muscle et par semaine (targetSets / minFreq) : un
+     repère qui rendrait la cible impossible se contredirait lui-même. Ça ne
+     joue que pour "Perte + force" (8 séries/semaine -> 4 par séance). */
+var REPERE_SEANCE_HYPERTROPHIE = 11, REPERE_SEANCE_FORCE_FRACTIONNAIRE = 3.5, REPERE_SEANCE_FORCE_DIRECT = 2;
+var PART_HYPERTROPHIE = { loss: 1, hyper: 1, loss_hyper: 1, strength: 0, loss_strength: 0, hyper_strength: 0.5 };
+function repereSeancePourObjectif(goal) {
+  var pH = PART_HYPERTROPHIE[goal]; if (pH == null) pH = 1;
+  var g = goalPreset(goal) || {};
+  var besoin = (g.targetSets || VOL_MIN) / (g.minFreq || 2);
+  if (pH === 0) {
+    /* Séries directes : 2 dans l'étude, mais une machine a au moins
+       setsMin séries — le repère ne peut pas être plus bas. */
+    return Math.max(REPERE_SEANCE_FORCE_DIRECT, g.setsMin || MIN_SETS_PER_EXERCISE, besoin);
+  }
+  var etude = REPERE_SEANCE_FORCE_FRACTIONNAIRE + pH * (REPERE_SEANCE_HYPERTROPHIE - REPERE_SEANCE_FORCE_FRACTIONNAIRE);
+  return Math.round(Math.max(etude, besoin) * 4) / 4;
+}
+var SESSION_VOLUME_CAP = {};
+["loss", "hyper", "loss_hyper", "strength", "loss_strength", "hyper_strength"].forEach(function(k){ SESSION_VOLUME_CAP[k] = repereSeancePourObjectif(k); });
+/* COMPTAGE PAR OBJECTIF. Pour la force, la même étude trouve que c'est le
+   comptage en séries DIRECTES (machines dont le muscle est le moteur
+   principal) qui colle le mieux aux résultats — pas les séries
+   fractionnaires. Compter les secondaires à 0,5 faisait "dépasser" presque
+   toutes les séances de force (mesuré : les 40 programmes Force et Perte +
+   force testés), uniquement à cause des effets de bord des mouvements
+   composés, et empêchait d'atteindre la cible hebdomadaire. Pour la force, le
+   repère porte donc sur les séries directes : 2 dans l'étude, relevé au
+   minimum de 3 séries par machine (Krieger 2010) — soit, en pratique, UNE
+   machine par muscle et par séance. Objectifs mixtes : comptage fractionnaire
+   comme l'hypertrophie. */
+function comptageForce(goal) { return PART_HYPERTROPHIE[goal] === 0; }
+function poidsSeance(ex, mu, goal) {
+  var w = muscleWeight(ex, mu);
+  return comptageForce(goal) ? (w >= 0.75 ? 1 : 0) : w;
+}
+/* Repère PAR MUSCLE pour un programme donné : celui de l'objectif, sauf si le
+   muscle revient trop rarement dans la semaine pour atteindre sa cible
+   hebdomadaire sans le dépasser (ex. un muscle sur un seul jour d'une
+   rotation de quatre). Dans ce cas, le repère est relevé juste à ce qu'il
+   faut : la cible hebdomadaire (Pelland et al. 2025, volume par semaine)
+   passe devant le repère par séance, qui ne mesure qu'un gain marginal. Le
+   bon remède — remettre ce muscle un autre jour — reste celui de la
+   recomposition. Sans `avgSessions`, repère de l'objectif seul. */
+function plafondsSeance(program, exercises, goal, avgSessions) {
   var cap = SESSION_VOLUME_CAP[goal];
-  if (!cap) return program; // objectif hors du champ de cette étude (voir la note ci-dessus) — pas de plafond ajouté
+  var out = { defaut: cap };
+  if (!cap || !(avgSessions > 0)) return out;
+  var exMap = {}; (exercises || []).forEach(function(e){ exMap[e.id] = e; });
+  var jours = musculationDays(program), n = {};
+  jours.forEach(function(d){
+    var vu = {};
+    (d.items || []).forEach(function(it){ var ex = exMap[it.ex]; if (!ex || isCardio(ex)) return;
+      allMuscles(ex).forEach(function(mu){ if (poidsSeance(ex, mu, goal) > 0) vu[mu] = 1; }); });
+    Object.keys(vu).forEach(function(mu){ n[mu] = (n[mu] || 0) + 1; });
+  });
+  var cible = goalPreset(goal).targetSets || VOL_MIN, parTour = avgSessions / Math.max(1, jours.length);
+  Object.keys(n).forEach(function(mu){
+    var besoin = cible / (n[mu] * parTour);
+    out[mu] = Math.max(cap, Math.ceil(besoin * 2) / 2);
+  });
+  return out;
+}
+function plafondDe(plafonds, mu) { return plafonds[mu] != null ? plafonds[mu] : plafonds.defaut; }
+function capSessionVolume(program, exercises, goal, avgSessions) {
+  if (!SESSION_VOLUME_CAP[goal]) return program; // objectif hors du champ de cette étude (voir la note ci-dessus) — pas de plafond ajouté
+  var plafonds = plafondsSeance(program, exercises, goal, avgSessions);
   var exMap = {}; exercises.forEach(function(e){ exMap[e.id]=e; });
   return program.map(function(d){
     var byMuscle = {};
     d.items.forEach(function(it){
       var ex = exMap[it.ex]; if (!ex) return;
-      allMuscles(ex).forEach(function(mu){ (byMuscle[mu] = byMuscle[mu]||[]).push(it); });
+      /* Seulement les machines qui COMPTENT pour ce muscle selon l'objectif
+         (voir poidsSeance : en force, pas les muscles secondaires). */
+      allMuscles(ex).forEach(function(mu){ if (poidsSeance(ex, mu, goal) > 0) (byMuscle[mu] = byMuscle[mu]||[]).push(it); });
     });
     var cappedSets = {}; // it.ex -> valeur retenue, la plus contraignante si plusieurs muscles
     Object.keys(byMuscle).forEach(function(mu){
       var items = byMuscle[mu];
-      var total = items.reduce(function(a,it){ return a + it.sets*muscleWeight(exMap[it.ex], mu); }, 0);
+      var total = items.reduce(function(a,it){ return a + it.sets*poidsSeance(exMap[it.ex], mu, goal); }, 0);
+      var cap = plafondDe(plafonds, mu);
       if (total <= cap) return;
       var scale = cap / total;
       /* Répartition des restes ("plus forts restes") au lieu d'un Math.floor
@@ -3002,13 +3158,13 @@ function capSessionVolume(program, exercises, goal) {
         return { it: it, i: i, floor: Math.max(floorSets, Math.min(it.sets, Math.floor(exact))),
           frac: exact - Math.floor(exact), sets: it.sets };
       });
-      var used = parts.reduce(function(a,p){ return a + p.floor*muscleWeight(exMap[p.it.ex], mu); }, 0);
+      var used = parts.reduce(function(a,p){ return a + p.floor*poidsSeance(exMap[p.it.ex], mu, goal); }, 0);
       parts.slice().sort(function(a,b){
         if (Math.abs(a.frac-b.frac) > 1e-9) return b.frac - a.frac;
         if (a.sets !== b.sets) return b.sets - a.sets;
         return a.i - b.i;
       }).forEach(function(p){
-        var w = muscleWeight(exMap[p.it.ex], mu) || 1;
+        var w = poidsSeance(exMap[p.it.ex], mu, goal) || 1;
         if (p.floor < p.sets && used + w <= cap + 1e-9) { p.floor += 1; used += w; }
       });
       parts.forEach(function(p){
@@ -3600,6 +3756,7 @@ function liftMusclesBelowTarget(program, exercises, goal, avgSessions, muscleFoc
     }).sort(function(a,b){ return b.sets-a.sets; });
   }
   var capS = SESSION_VOLUME_CAP[goal];
+  var plafondsS = capS ? plafondsSeance(out, exercises, goal, avgSessions) : null;
   for (var tour = 0; tour < 60; tour++) {
     var vol = volume();
     var parMuscle = {}; vol.forEach(function(v){ parMuscle[v.muscle] = v.sets; });
@@ -3636,8 +3793,9 @@ function liftMusclesBelowTarget(program, exercises, goal, avgSessions, muscleFoc
         if (!casse && capS) {
           for (var r = 0; r < ms2.length && !casse; r++) {
             var m3 = ms2[r];
-            var jour = out[cd.di].items.reduce(function(a, it2){ var e3 = exMap[it2.ex]; return a + (e3 && allMuscles(e3).indexOf(m3) >= 0 ? it2.sets * muscleWeight(e3, m3) : 0); }, 0);
-            if (jour + muscleWeight(ex2, m3) > capS + 0.05) casse = true;
+            if (!(poidsSeance(ex2, m3, goal) > 0)) continue;
+            var jour = out[cd.di].items.reduce(function(a, it2){ var e3 = exMap[it2.ex]; return a + (e3 && allMuscles(e3).indexOf(m3) >= 0 ? it2.sets * poidsSeance(e3, m3, goal) : 0); }, 0);
+            if (jour + poidsSeance(ex2, m3, goal) > plafondDe(plafondsS, m3) + 0.05) casse = true;
           }
         }
         if (casse) continue;
@@ -3654,7 +3812,7 @@ function applyGoalToProgram(program, exercises, goal, avgSessions, muscleFocus, 
   var order = priorityOrderOf(profile);
   var out = capSessionVolume(
     _applyGoalToProgramRaw(program, exercises, goal, avgSessions, muscleFocus, null, order),
-    exercises, goal);
+    exercises, goal, avgSessions);
   if (profile && priorityRank(order,"time") < priorityRank(order,"goal")) {
     out = trimToTimeBudget(out, exercises, profile.sessionMinutesMax, goal);
     return clampSetsToBounds(out, goal, exercises);   /* temps prioritaire : on ne remonte rien */
@@ -4409,7 +4567,11 @@ function evaluer1Split(tpl, exercises, goal, avgSessions, muscleFocus, gymId, pr
     var applied = applyGoalToProgram(prog, exercises, goal, avgSessions, muscleFocus, profile);
     /* Même répartition entre séances jumelles que le programme réellement
        appliqué (26 oct. 2026) : la carte du split montre ce qu'on obtiendra. */
-    try {
+    /* Seulement pour la simulation complète (celle qui est appliquée telle
+       quelle) : sur la liste des splits à comparer, ce calcul multipliait par
+       trois le temps de l'écran d'accueil pour un écart de durée d'une minute
+       ou deux. */
+    if (complet) try {
       var reparti = repartirEntreJoursJumeaux(applied, exercises, goal, { avgSessions: avgSessions, muscleFocus: muscleFocus, profile: profile });
       if (reparti !== applied) applied = applyGoalToProgram(reparti, exercises, goal, avgSessions, muscleFocus, profile);
     } catch (e) {}
@@ -4842,13 +5004,14 @@ function applyGoalCache(program, exercises, goal, avgSessions, muscleFocus, prof
      séries de meilleure qualité (moins de fatigue accumulée sur un même
      muscle dans une séance) et des séances de durée comparable.
 
-   Ce que fait la passe : entre jours JUMEAUX seulement (Haut A / Haut B,
-   Full A / B / C, Poussée A / Poussée B...), elle déplace une machine d'un jour
-   à l'autre, ou en échange deux, quand ça rapproche le volume de chaque muscle
-   d'une séance à l'autre. Dans une rotation, chaque jour revient aussi souvent
+   Ce que fait la passe : entre jours JUMEAUX (Haut A / Haut B, Full A / B / C,
+   Poussée A / Poussée B...), elle déplace une machine d'un jour à l'autre, ou
+   en échange deux, quand ça rapproche le volume de chaque muscle d'une séance
+   à l'autre. Les machines de tronc, elles, sont réparties sur toute la
+   rotation (voir MUSCLES_TRONC, 27 oct. 2026). Dans une rotation, chaque jour revient aussi souvent
    que les autres : le volume HEBDOMADAIRE ne change pas d'un dixième. Elle ne
    touche jamais à des jours de types différents (une machine de tirage ne part
-   pas dans "Poussée"), ne bouge pas les machines de tronc, ne vide pas un jour, ne crée pas de doublon, ne rallonge
+   pas dans "Poussée"), ne vide pas un jour, ne crée pas de doublon, ne rallonge
    jamais la séance la plus longue, et n'aggrave pas le repère de volume par
    séance. Quand le matériel ne permet pas mieux (une seule machine pour un
    muscle), rien ne bouge. */
@@ -4926,11 +5089,72 @@ var REPARTITION_POIDS_MINUTES = 0.25;   /* (minutes d'écart au-delà de 10)² �
    d'accueil : sans cette vérification, le recalcul qui suivait remettait des
    muscles sous leur cible dans un cas sur dix. Les machines déplacées gardent
    leurs séries actuelles (l'historique de recalibrage n'est pas perdu). */
+/* TRONC (27 oct. 2026, signalement : "regarde, les 2 exos abdos sont sur le
+   Haut A"). Les machines d'abdominaux, d'obliques et de lombaires étaient
+   exclues de la répartition, de peur de les mettre deux jours de suite. Mais
+   rien ne les étalait non plus : la recomposition pouvait en empiler deux ou
+   trois sur une séance et aucune sur la suivante. Elles se placent dans
+   n'importe quel jour (voir machineFitsDay) : on les répartit donc sur TOUTE
+   la rotation, pas seulement entre jumeaux — volume du tronc aussi égal que
+   possible d'une séance à l'autre, et à égalité, des jours qui ne se suivent
+   pas (Haut A + Haut B plutôt que Haut A + Bas A), pour garder un jour de
+   récupération entre deux séances du même muscle. */
+var MUSCLES_TRONC = ["Abdominaux", "Obliques", "Lombaires"];
+var REPARTITION_POIDS_CONSECUTIFS = 0.5;
+var REPARTITION_POIDS_NB_TRONC = 2;
+/* CRITÈRE : LE STIMULUS PRÉDIT PAR LES ÉTUDES (27 oct. 2026, demande : "fais en
+   sorte que ce soit le plus opti en prenant en compte les études citées").
+
+   Jusqu'ici la répartition visait l'ÉGALITÉ (écart à la moyenne au carré) —
+   un substitut. On maximise maintenant directement ce que prédit la
+   méta-régression de Remmert, Pelland, Robinson, Hinson & Zourdos (SportRxiv
+   2025, texte intégral vérifié le 27 oct. 2026), qui a comparé 7 formes de
+   courbe (linéaire, spline, linéaire-log, polynôme, racine, quadratique,
+   réciproque) pour le gain d'UNE séance en fonction de ses séries :
+   - HYPERTROPHIE : meilleure forme = linéaire-log, en séries fractionnaires
+     (secondaires à 0,5 — le même comptage que l'appli, voir muscleWeight).
+     Gain ∝ ln(séries) : chaque série de plus rapporte moins que la
+     précédente, repère "plus de différence détectable" vers 11 séries ;
+   - FORCE : meilleure forme = réciproque, en séries DIRECTES (le muscle est
+     le principal de la machine), repère vers 2 séries par séance — les
+     rendements décroissent beaucoup plus vite.
+   Conséquence directe, valable pour toute courbe de ce type : à volume
+   hebdomadaire égal, partager un muscle entre plusieurs séances rapporte plus
+   que le concentrer, et beaucoup plus pour la force que pour l'hypertrophie
+   (le même article conseille pour la force peu de séries par séance, 2 à 3
+   séances par semaine). L'appli calcule donc, pour chaque muscle et chaque
+   séance, le gain prédit par la bonne courbe selon l'objectif, et choisit la
+   composition qui maximise la somme sur la semaine.
+   Mise en œuvre : ln(1 + séries fractionnaires) / ln(12) et
+   (d / (1 + d)) / (2/3) pour d séries directes — le "+1" évite le logarithme
+   de zéro, et chaque courbe vaut 1 à son repère (11 et 2) pour pouvoir les
+   mélanger (objectif "hypertrophie + force" : moitié-moitié). Les
+   coefficients exacts ne sont pas publiés (seulement les formes et les
+   repères) : seules la FORME et le repère sont repris, ce qui suffit à
+   comparer deux répartitions entre elles. Les muscles mis en priorité
+   (Options › Priorité par muscle) pèsent d'autant plus.
+   Honnêteté : l'étude mesure l'effet du volume PAR SÉANCE ; qu'un volume
+   hebdomadaire partagé rapporte plus en découle mathématiquement, mais n'a
+   pas été testé tel quel — et à volume égal, des essais trouvent peu d'écart
+   selon la fréquence (Neves et al. 2022, PLoS ONE). Le gain attendu reste
+   modeste ; ce critère garantit seulement que, quand l'appli doit choisir,
+   elle choisit dans le sens des données. */
+var REPARTITION_POIDS_STIMULUS = 100;
+var REPARTITION_POIDS_EXCES = 30;   /* par série fractionnaire au-dessus du repère de la séance */
+function stimulusSeance(seriesFractionnaires, seriesDirectes, goal) {
+  var pH = PART_HYPERTROPHIE[goal]; if (pH == null) pH = 1;
+  var s = 0;
+  if (pH > 0) s += pH * Math.log(1 + Math.max(0, seriesFractionnaires)) / Math.log(12);
+  if (pH < 1) { var d = Math.max(0, seriesDirectes); s += (1 - pH) * (d / (1 + d)) / (2 / 3); }
+  return s;
+}
 function repartirEntreJoursJumeaux(program, exercises, goal, ctx) {
   if (!program || !program.length) return program;
   var exMap = {}; (exercises || []).forEach(function(e){ exMap[e.id] = e; });
   var groupes = groupesJumeaux(program, exMap);
-  if (!groupes.length) return program;
+  var rotation = []; program.forEach(function(d, i){ if (d && (d.items || []).length) rotation.push(i); });
+  if (rotation.length < 2) return program;
+  var jumeauDe = {}; groupes.forEach(function(g, gi){ g.forEach(function(i){ jumeauDe[i] = gi; }); });
   var cap = SESSION_VOLUME_CAP[goal] || null;
   var mf = (ctx && ctx.muscleFocus) || {};
   var base = goalPreset(goal).targetSets || VOL_MIN;
@@ -4948,34 +5172,86 @@ function repartirEntreJoursJumeaux(program, exercises, goal, ctx) {
     });
     return { manque: manque, trop: trop };
   }
-  /* Les machines de TRONC (abdominaux, obliques, lombaires) ne bougent pas :
-     elles se placent dans des jours de types différents, et les déplacer
-     entre jumeaux changerait leur écart de récupération avec les autres
-     séances (deux jours de suite au lieu d'un jour sur deux, par ex.). */
-  function mobile(e){ var r = REGION[allMuscles(e)[0]]; return r === "haut" || r === "bas"; }
+  function regionDe(e){ return REGION[allMuscles(e)[0]]; }
+  /* Haut / bas : entre jumeaux seulement. Tronc : sur toute la rotation. */
+  function membre(e){ var r = regionDe(e); return r === "haut" || r === "bas"; }
+  function tronc(e){ return regionDe(e) === "core"; }
+  /* Séries fractionnaires par muscle (v) et séries DIRECTES (v.__direct :
+     machines dont ce muscle est le moteur principal, poids ≥ 0,75). */
   function volJour(d){
-    var v = {};
+    var v = {}, dir = {};
     d.items.forEach(function(it){
       var e = exMap[it.ex]; if (!e || isCardio(e)) return;
-      allMuscles(e).forEach(function(mu){ v[mu] = (v[mu] || 0) + (it.sets || 0) * muscleWeight(e, mu); });
+      allMuscles(e).forEach(function(mu){
+        var w = muscleWeight(e, mu);
+        v[mu] = (v[mu] || 0) + (it.sets || 0) * w;
+        if (w >= 0.75) dir[mu] = (dir[mu] || 0) + (it.sets || 0);
+      });
     });
+    Object.defineProperty(v, "__direct", { value: dir, enumerable: false });
     return v;
   }
-  function bilanGroupe(p, g){
-    var vols = g.map(function(i){ return volJour(p[i]); });
-    var mus = {}; vols.forEach(function(v){ Object.keys(v).forEach(function(mu){ mus[mu] = 1; }); });
-    var ecarts = 0;
-    Object.keys(mus).forEach(function(mu){
-      var xs = vols.map(function(v){ return v[mu] || 0; });
-      var moy = xs.reduce(function(q, r){ return q + r; }, 0) / xs.length;
-      xs.forEach(function(q){ ecarts += (q - moy) * (q - moy); });
+  function stimulusTotal(vols){
+    var t = 0;
+    rotation.forEach(function(i){
+      var v = vols[i], dir = v.__direct || {};
+      Object.keys(v).forEach(function(mu){ t += focusMultiplier(mf, mu) * stimulusSeance(v[mu], dir[mu] || 0, goal); });
     });
-    var mins = g.map(function(i){ return estimateDayMinutes(p[i], exMap); });
-    var plusLong = Math.max.apply(null, mins), ecartMin = plusLong - Math.min.apply(null, mins);
+    return t;
+  }
+  function minutes(p, i){ return estimateDayMinutes(p[i], exMap); }
+  /* Écart entre jumeaux : tous les muscles + durée. */
+  /* Entre jumeaux : des durées comparables (le volume, lui, est jugé par le
+     stimulus ci-dessus). */
+  function coutJumeaux(p, g){
+    var ecarts = 0;
+    var mins = g.map(function(i){ return minutes(p, i); });
+    var ecartMin = Math.max.apply(null, mins) - Math.min.apply(null, mins);
+    return ecarts + REPARTITION_POIDS_MINUTES * Math.pow(Math.max(0, ecartMin - 10), 2);
+  }
+  /* Tronc sur toute la rotation : à stimulus égal, éviter le chevauchement de
+     deux jours qui se suivent (la rotation boucle : le dernier jour précède le
+     premier). */
+  function coutTronc(vols){
+    var c = 0, n = rotation.length;
+    MUSCLES_TRONC.forEach(function(mu){
+      var xs = rotation.map(function(i){ return vols[i][mu] || 0; });
+      if (n >= 3) for (var k = 0; k < n; k++) c += REPARTITION_POIDS_CONSECUTIFS * Math.min(xs[k], xs[(k + 1) % n]);
+    });
+    return c;
+  }
+  /* Et le NOMBRE de machines de tronc par séance : à volume égal, trois
+     exercices de tronc sur une séance et un sur la suivante, c'est ce qui se
+     voit (et se ressent) — mieux vaut deux et deux. */
+  /* Compté par famille : abdos (abdominaux + obliques : crunch, rotation...)
+     et lombaires — deux exercices d'abdos le même jour, c'est précisément ce
+     qui a été signalé. */
+  function familleTronc(e){ var mu = allMuscles(e)[0]; return mu === "Lombaires" ? "lombaires" : "abdos"; }
+  function coutNbTronc(p){
+    var c = 0;
+    [null, "abdos", "lombaires"].forEach(function(fam){       /* null = tout le tronc */
+      var xs = rotation.map(function(i){ return p[i].items.filter(function(it){ var e = exMap[it.ex]; return e && !isCardio(e) && tronc(e) && (fam === null || familleTronc(e) === fam); }).length; });
+      var moy = xs.reduce(function(q, r){ return q + r; }, 0) / xs.length;
+      xs.forEach(function(q){ c += REPARTITION_POIDS_NB_TRONC * (q - moy) * (q - moy); });
+    });
+    return c;
+  }
+  function bilan(p){
+    var vols = {}; rotation.forEach(function(i){ vols[i] = volJour(p[i]); });
+    var cout = - REPARTITION_POIDS_STIMULUS * stimulusTotal(vols) + coutTronc(vols) + coutNbTronc(p);
+    groupes.forEach(function(g){ cout += coutJumeaux(p, g); });
     var exces = 0;
-    if (cap) vols.forEach(function(v){ Object.keys(v).forEach(function(mu){ if (v[mu] > cap) exces += v[mu] - cap; }); });
-    return { cout: ecarts + REPARTITION_POIDS_MINUTES * Math.pow(Math.max(0, ecartMin - 10), 2),
-      plusLong: plusLong, ecartMin: ecartMin, exces: exces };
+    if (cap) {
+      var plaf = plafondsSeance(p, exercises, goal, ctx && ctx.avgSessions);
+      rotation.forEach(function(i){
+        var parSeance = comptageForce(goal) ? (vols[i].__direct || {}) : vols[i];
+        Object.keys(parSeance).forEach(function(mu){ var c = plafondDe(plaf, mu); if (parSeance[mu] > c) exces += parSeance[mu] - c; });
+      });
+    }
+    /* Chaque série au-dessus du repère par séance de l'objectif coûte : un
+       déplacement qui en résorbe est recherché, pas seulement toléré. */
+    cout += REPARTITION_POIDS_EXCES * exces;
+    return { cout: cout, exces: exces };
   }
   /* Un coup = déplacer (s, i) vers t, ou échanger (s, i) avec (t, j). Il
      s'applique aussi bien au programme brut qu'au programme aux séries
@@ -4991,56 +5267,69 @@ function repartirEntreJoursJumeaux(program, exercises, goal, ctx) {
     }
     return p.map(function(d, k){ return ch[k] ? Object.assign({}, d, { items: ch[k] }) : d; });
   }
+  function familleComplete(d){ var f = famillesJour(d, exMap); return f.indexOf("jambes") >= 0 && (f.indexOf("push") >= 0 || f.indexOf("pull") >= 0); }
   function gardeFamilles(p, c){
     var q = jouer(p, c);
     return famillesJour(q[c.s], exMap) === famillesJour(p[c.s], exMap) && famillesJour(q[c.t], exMap) === famillesJour(p[c.t], exMap);
   }
-  function coups(p, g){
+  function coups(p){
     var out = [];
-    g.forEach(function(s){ g.forEach(function(t){
+    rotation.forEach(function(s){ rotation.forEach(function(t){
       if (s === t) return;
+      var jumeaux = jumeauDe[s] != null && jumeauDe[s] === jumeauDe[t];
+      /* Ce qui peut aller de s à t : le tronc partout, le reste entre jumeaux. */
       var src = p[s], dst = p[t];
+      /* Deux full body : haut et bas du corps vont dans les deux, peu importe
+         lequel des deux "penche" un peu plus d'un côté (dayRegion). */
+      var deuxComplets = familleComplete(src) && familleComplete(dst);
+      function permis(e, jourCible){ if (!e || isCardio(e)) return false; if (tronc(e)) return true; return jumeaux && membre(e) && (deuxComplets || machineFitsDay(e, jourCible, exMap)); }
       if (src.items.length > 2) src.items.forEach(function(it, ii){
-        var e = exMap[it.ex]; if (!e || isCardio(e) || !mobile(e)) return;
+        var e = exMap[it.ex]; if (!permis(e, dst)) return;
         if (dst.items.some(function(q){ return q.ex === it.ex; })) return;
-        if (!machineFitsDay(e, dst, exMap)) return;
         var cd = { type: "dep", s: s, t: t, i: ii }; if (gardeFamilles(p, cd)) out.push(cd);
       });
       if (s < t) src.items.forEach(function(a, ia){ dst.items.forEach(function(b, ib){
         if (a.ex === b.ex) return;
         var ea = exMap[a.ex], eb = exMap[b.ex];
-        if (!ea || !eb || isCardio(ea) || isCardio(eb) || !mobile(ea) || !mobile(eb)) return;
+        if (!permis(ea, dst) || !permis(eb, src)) return;
+        /* Tronc contre membre : seulement entre jumeaux (voir permis) — c'est
+           souvent le seul moyen d'alléger une séance de tronc sans rallonger
+           l'autre. */
         if (dst.items.some(function(q){ return q.ex === a.ex; }) || src.items.some(function(q){ return q.ex === b.ex; })) return;
-        if (!machineFitsDay(ea, dst, exMap) || !machineFitsDay(eb, src, exMap)) return;
         var ce = { type: "ech", s: s, t: t, i: ia, j: ib }; if (gardeFamilles(p, ce)) out.push(ce);
       }); });
     }); });
     return out;
   }
+  /* Garde-fous d'un coup, séries recalculées : aucune des deux séances
+     touchées ne dépasse la séance la plus longue du programme (une séance
+     courte peut gagner deux minutes, la plus longue jamais) ; entre jumeaux, leurs durées ne deviennent pas
+     plus inégales ; le repère par séance n'est pas plus dépassé ; le volume
+     hebdomadaire ne s'éloigne d'aucune cible. */
+  function ecartMinJumeaux(p, gi){ if (gi == null) return 0; var m = groupes[gi].map(function(i){ return minutes(p, i); }); return Math.max.apply(null, m) - Math.min.apply(null, m); }
   var prog = program, touches = {};
-  for (var tour = 0; tour < 30; tour++) {
-    var ap = appliquer(prog), hAvant = hebdo(ap);
+  for (var tour = 0; tour < 40; tour++) {
+    var ap = appliquer(prog), bAvant = bilan(ap), hAvant = hebdo(ap);
+    var plusLongueAvant = Math.max.apply(null, rotation.map(function(i){ return minutes(ap, i); }));
     var cands = [];
-    groupes.forEach(function(g){
-      var avant = bilanGroupe(ap, g);
-      coups(ap, g).forEach(function(c){
-        var est = bilanGroupe(jouer(ap, c), g);           /* estimation rapide, séries actuelles */
-        if (avant.cout - est.cout > 0.5) cands.push({ c: c, g: g, avant: avant, estime: avant.cout - est.cout });
-      });
+    coups(ap).forEach(function(c){
+      var est = bilan(jouer(ap, c)).cout;                   /* estimation rapide, séries actuelles */
+      if (bAvant.cout - est > 0.5) cands.push({ c: c, estime: bAvant.cout - est });
     });
     /* Ordre déterministe : meilleur gain estimé, puis ordre d'énumération. */
     cands.sort(function(x, y){ return y.estime - x.estime; });
     var retenu = null;
-    for (var k = 0; k < cands.length && k < 12 && !retenu; k++) {
-      var cd = cands[k], brut = jouer(prog, cd.c), ap2 = appliquer(brut);
-      var apres = bilanGroupe(ap2, cd.g);
-      if (cd.avant.cout - apres.cout <= 0.5) continue;
-      if (apres.plusLong > cd.avant.plusLong) continue;
-      if (apres.ecartMin > Math.max(cd.avant.ecartMin, 10)) continue;
-      if (apres.exces > cd.avant.exces + 1e-9) continue;
+    for (var k = 0; k < cands.length && k < 15 && !retenu; k++) {
+      var c = cands[k].c, brut = jouer(prog, c), ap2 = appliquer(brut);
+      var b2 = bilan(ap2);
+      if (bAvant.cout - b2.cout <= 0.5) continue;
+      if (Math.max(minutes(ap2, c.s), minutes(ap2, c.t)) > Math.max(plusLongueAvant, minutes(ap, c.s), minutes(ap, c.t))) continue;
+      var gi = jumeauDe[c.s] != null && jumeauDe[c.s] === jumeauDe[c.t] ? jumeauDe[c.s] : null;
+      if (ecartMinJumeaux(ap2, gi) > Math.max(ecartMinJumeaux(ap, gi), 10)) continue;
+      if (b2.exces > bAvant.exces + 1e-9) continue;
       var h2 = hebdo(ap2);
       if (h2.manque > hAvant.manque + 0.05 || h2.trop > hAvant.trop + 0.05) continue;
-      retenu = { prog: brut, c: cd.c };
+      retenu = { prog: brut, c: c };
     }
     if (!retenu) break;
     prog = retenu.prog; touches[retenu.c.s] = true; touches[retenu.c.t] = true;
@@ -5260,7 +5549,7 @@ function reflowProgramForCatalogue(program, exercises, goal, avgSessions, muscle
     /* Excédent de volume PAR SÉANCE avant ce tour (SESSION_VOLUME_CAP,
        Remmert et al. 2025) — voir le refus dans evalMove ci-dessous. */
     function excesParSeance(p){
-      return sessionVolumeOvershoot(p, exercises, goal)
+      return sessionVolumeOvershoot(p, exercises, goal, avgSessions)
         .reduce(function(a, o){ return a + (o.sets - o.cap); }, 0);
     }
     var excesAvant = excesParSeance(applyGoalCache(prog, exercises, goal, avgSessions, muscleFocus, profile));
@@ -5688,7 +5977,7 @@ function recalibrateProgramFromHistory(program, exercises, goal, avgSessions, mu
   var order = priorityOrderOf(profile);
   var recalibrated = capSessionVolume(
     _applyGoalToProgramRaw(program, exercises, goal, avgSessions, muscleFocus, actualWeekly, order),
-    exercises, goal);
+    exercises, goal, avgSessions);
   /* Même post-traitement que applyGoalToProgram, pour que les deux chemins
      d'écriture du programme ne puissent pas diverger — remontée des muscles
      sous leur cible comprise (voir liftMusclesBelowTarget). */
@@ -6028,7 +6317,7 @@ var PROGRAM_VERSION = 7;   /* 7 (23 sept. 2026) : exercices poids du corps du mo
    recommitée à la main — contrairement au lien Artifact qui se met à jour
    tout seul". Change cette date à chaque publication notable pour que la
    comparaison soit possible côté utilisateur. */
-var APP_BUILD = "2026-10-26a";
+var APP_BUILD = "2026-10-27d";
 
 function seedState() {
   return {
@@ -6039,7 +6328,7 @@ function seedState() {
     sessions: [],
     active: null,
     deloadForNextStart: false,
-    meta: { deloadSnoozeUntil: 0, repartition1: true },
+    meta: { deloadSnoozeUntil: 0, repartition3: true, revue2610: true },
     bodyLog: [
       { id: "b1", date: null, weightKg: 84.6, fatKg: 22.4, muscleKg: 59.1, bmr: 1846, source: "Boditrax" },
       { id: "b2", date: todayISO(), weightKg: 85.1, fatKg: 22.4, muscleKg: 59.5, bmr: 1860, source: "Boditrax" },
@@ -6047,7 +6336,7 @@ function seedState() {
     profile: {
       weightKg: 85.1, heightCm: null, age: 31, sex: null,
       bmrMeasured: 1860, useBmrFormula: false,
-      activityMultiplier: 1.55, deficitKcal: 350, proteinPerKg: 2.0,
+      activityMultiplier: 1.55, deficitKcal: 350, proteinPerKg: 2.2,
       manualTarget: true, manualTargetKcal: 2250, manualProteinG: 175,
       targetMode: "manual", dailySteps: 8000, sessionsMin: 3, sessionsMax: 4, alertVolume: 1,
       wheyLabel: "HSN Whey Protein Isolate (scoop 30 g)", wheyKcal: 116, wheyProtein: 27.9,
@@ -6689,9 +6978,9 @@ function structuralOvershoot(program, exercises, goal, avgSessions, muscleFocus)
    que l'appli dit pourtant signaler plutôt que subir (voir l'info-bulle
    "Pourquoi un maximum de 5 séries par machine ?"). Le remède n'est pas de
    rogner encore : c'est de répartir ces machines sur des jours différents. */
-function sessionVolumeOvershoot(program, exercises, goal) {
-  var cap = SESSION_VOLUME_CAP[goal];
-  if (!cap) return [];
+function sessionVolumeOvershoot(program, exercises, goal, avgSessions) {
+  if (!SESSION_VOLUME_CAP[goal]) return [];
+  var plafonds = plafondsSeance(program, exercises, goal, avgSessions);
   var exMap = {}; exercises.forEach(function(e){ exMap[e.id]=e; });
   var out = [];
   program.forEach(function(d){
@@ -6699,11 +6988,13 @@ function sessionVolumeOvershoot(program, exercises, goal) {
     d.items.forEach(function(it){
       var ex = exMap[it.ex]; if (!ex) return;
       allMuscles(ex).forEach(function(mu){
-        by[mu] = (by[mu]||0) + it.sets*muscleWeight(ex, mu);
+        var w = poidsSeance(ex, mu, goal); if (!(w > 0)) return;
+        by[mu] = (by[mu]||0) + it.sets*w;
         machines[mu] = (machines[mu]||0) + 1;
       });
     });
     Object.keys(by).forEach(function(mu){
+      var cap = plafondDe(plafonds, mu);
       if (by[mu] > cap + 1e-9) out.push({ muscle: mu, day: d.label, sets: Math.round(by[mu]*10)/10,
         cap: cap, machines: machines[mu] });
     });
@@ -7053,6 +7344,33 @@ function withCardioPlan275(state) {
 function etapeSure(f, s) {
   try { var r = f(s); return r || s; } catch (e) { return s; }
 }
+/* Revue du 27 oct. 2026 (voir REVUE_2026), appliquée UNE fois aux carnets
+   existants, sans toucher à ce qui a été réglé à la main :
+   - protéines en recomposition : 2,0 -> 2,2 g/kg seulement si la valeur est
+     encore l'ancien défaut (2,0) ;
+   - temps de repos du programme : seulement les machines dont le repos est
+     encore l'ancienne valeur par défaut de leur palier pour l'objectif. */
+var ANCIENS_REPOS_2026 = { loss: { 1: 90, 2: 75, 3: 60 }, loss_hyper: { 2: 85, 3: 65 }, loss_strength: { 1: 120, 3: 75 }, hyper_strength: { 3: 85 } };
+function withRevue2026(state) {
+  if (!state || !state.profile || (state.meta && state.meta.revue2610)) return state;
+  var goal = state.profile.goal, profile = state.profile, program = state.program;
+  if (goal === "loss_hyper" && profile.proteinPerKg === 2) profile = Object.assign({}, profile, { proteinPerKg: 2.2 });
+  var anciens = ANCIENS_REPOS_2026[goal];
+  if (anciens && Array.isArray(program)) {
+    var exMap = {}; (state.exercises || []).forEach(function(e){ exMap[e.id] = e; });
+    program = program.map(function(d){
+      var change = false;
+      var items = (d.items || []).map(function(it){
+        var ex = exMap[it.ex]; if (!ex || isCardio(ex)) return it;
+        var palier = exerciseOrderTier(ex);
+        if (anciens[palier] != null && it.rest === anciens[palier]) { change = true; return Object.assign({}, it, { rest: tierDefaultsForGoal(goal, palier).rest }); }
+        return it;
+      });
+      return change ? Object.assign({}, d, { items: items }) : d;
+    });
+  }
+  return Object.assign({}, state, { profile: profile, program: program, meta: Object.assign({}, state.meta, { revue2610: true }) });
+}
 function withAllMigrations(state) {
   var s = etapeSure(withStructureDefaults, state);
   return [withLatestProgram, withCatalogueVu, withNutritionDefaults, withOptionsDefaults,
@@ -7060,7 +7378,7 @@ function withAllMigrations(state) {
     withThemeDefault, withGymsDefault, withSessionMinutesDefault, withSetsBoundsMigration,
     withMuscleCorrections, withSecondaryMuscleUpdates, withSecondaryMuscleDefaults,
     withTrackingDefaults, withCardioDefaults, withCardioFieldUpdates, withCardioPlan275,
-    withRestTimerRestore].reduce(function(acc, f){ return etapeSure(f, acc); }, s);
+    withRevue2026, withRestTimerRestore].reduce(function(acc, f){ return etapeSure(f, acc); }, s);
 }
 /* CHRONO DE REPOS RETROUVÉ APRÈS UNE FERMETURE (22 sept. 2026).
 
@@ -8939,7 +9257,7 @@ function SeanceTab(props) {
       h("div",{style:{fontSize:13,color:C.taupe,lineHeight:1.5,marginBottom:8}},
         autoFix.raison === "repartition"
           ? "Certains muscles travaillaient beaucoup plus sur une séance que sur sa jumelle. L'appli a déplacé ces machines pour mieux répartir chaque muscle entre tes séances — même volume par semaine, séances plus régulières. Ton historique n'est pas touché."
-          : "Un ou plusieurs muscles étaient nettement au-dessus de leur cible à cause du nombre de machines qui les sollicitent. L'appli a réorganisé la composition des séances pour revenir dans la fourchette — tes séries enregistrées ne sont pas touchées."),
+          : "Un ou plusieurs muscles étaient hors de leur fourchette de séries par semaine (trop ou pas assez). L'appli a réorganisé la composition des séances pour y revenir, en répartissant chaque muscle entre tes séances — tes séries enregistrées ne sont pas touchées."),
       h("div",{style:{display:"flex",flexDirection:"column",gap:4,marginBottom:10}},
         autoFix.moves.slice(0,6).map(function(m,i){
           return h("div",{key:i, style:{fontSize:12.5,color:C.bone,lineHeight:1.45}},
@@ -11595,7 +11913,7 @@ function MachinesTab(props){
      musclesWithoutPrimary). */
   var noPrimary = musclesWithoutPrimary(exercises, program, goal, avgSessions, (profile && profile.muscleFocus) || {});
   var overshoot = structuralOvershoot(program, exercises, goal, avgSessions, (profile && profile.muscleFocus) || {});
-  var sessionOver = sessionVolumeOvershoot(program, exercises, goal);
+  var sessionOver = sessionVolumeOvershoot(program, exercises, goal, avgSessions);
   /* Ajouté le 6 sept. 2026 — troisième cause de score bas, distincte des deux
      autres et jamais expliquée jusqu'ici : la LONGUEUR DE LA ROTATION. La
      fréquence par muscle vaut (jours du programme qui le sollicitent) ×
@@ -11761,15 +12079,17 @@ function MachinesTab(props){
         /* Ajouté le 12 sept. 2026 (voir sessionVolumeOvershoot) : le plafond
            par SÉANCE pouvait être dépassé sans que rien ne le dise. */
         sessionOver.length ? h(Callout,{title:"Trop de séries dans une même séance", accent:C.steel, defaultOpen:true,
-            summary: sessionOver.slice(0,2).map(function(o){return o.muscle+" "+o.sets+" séries le jour « "+o.day+" »";}).join(", ")+" — au-dessus du repère de "+sessionOver[0].cap+" par séance."},
+            summary: sessionOver.slice(0,2).map(function(o){return o.muscle+" "+o.sets+" séries le jour « "+o.day+" »";}).join(", ")+" — au-dessus du repère de "+fmtNombre(sessionOver[0].cap)+" par séance."},
           h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.55}},
-            "Au-delà d'environ "+sessionOver[0].cap+" séries pour un même muscle DANS UNE SÉANCE, le gain des séries supplémentaires devient indétectable (Remmert, Pelland, Robinson, Hinson & Zourdos, « Is There Too Much of a Good Thing? », SportRxiv 2025 — préprint, séries fractionnelles). Ici : "+
+            "Au-delà d'environ "+fmtNombre(sessionOver[0].cap)+" séries pour un même muscle DANS UNE SÉANCE, le gain des séries supplémentaires devient indétectable (Remmert, Pelland, Robinson, Hinson & Zourdos, « Is There Too Much of a Good Thing? », SportRxiv 2025 — préprint, "+(comptageForce(goal) ? "en séries directes : seules les machines dont ce muscle est le moteur principal comptent" : "en séries fractionnelles : une série où le muscle est secondaire compte pour moitié")+"). Ici : "+
             sessionOver.slice(0,4).map(function(o){ return o.muscle+" — "+o.sets+" séries le jour « "+o.day+" », réparties sur "+o.machines+" machines"; }).join(" ; ")+
-            ". L'appli essaie de tenir ce plafond, mais elle ne peut pas descendre une machine sous "+setsBoundsForGoal(goal).min+" séries (Krieger 2010) : à partir de quatre machines pour le même muscle le même jour, c'est arithmétiquement impossible."),
+            ". L'appli essaie de tenir ce plafond, mais elle ne peut pas descendre une machine sous "+setsBoundsForGoal(goal).min+" séries (Krieger 2010) : avec plusieurs machines pour le même muscle le même jour, ce n'est pas toujours possible."),
           h("div",{style:{fontSize:12.5,color:C.bone,lineHeight:1.55,marginTop:6}},
             "La solution n'est pas de rogner encore, c'est de RÉPARTIR : déplace une de ces machines sur un autre jour depuis « Composer les séances » ci-dessous. Le volume hebdomadaire reste le même, il travaille juste mieux."),
           h("div",{style:{fontSize:12,color:C.taupe,lineHeight:1.45,marginTop:5}},
-            "Ce repère est mesuré pour l'hypertrophie ; pour la force, la même étude le situe encore plus bas (~2 séries directes par séance). Il est donc plutôt prudent que sévère.")
+            (PART_HYPERTROPHIE[goal] === 0 ? "Pour la force, la même étude situe ce repère bien plus bas que pour la prise de muscle : ~2 séries DIRECTES (le muscle est le moteur principal de la machine), contre ~11 séries fractionnaires pour la prise de muscle. Comme une machine a au moins 3 séries, l'appli vise une machine par muscle et par séance ; les muscles secondaires ne comptent pas ici."
+              : PART_HYPERTROPHIE[goal] === 1 || PART_HYPERTROPHIE[goal] == null ? "Repère mesuré pour l'hypertrophie (~11). Ce n'est pas un mur : au-delà, l'étude ne montre plus de gain détectable, pas de perte."
+              : "Objectif mixte : repère entre celui de la prise de muscle (~11) et celui de la force (~3,5)."))
         ) : null,
         noPrimary.length ? h(Callout,{title:"Muscles sans machine dédiée", accent:C.rust, defaultOpen:true,
             summary: noPrimary.map(function(n){return n.muscle;}).join(", ")+" "+(noPrimary.length>1?"ne sont travaillés":"n'est travaillé")+" qu'en secondaire — c'est la cause principale du déséquilibre."},
@@ -12205,7 +12525,7 @@ function bilanCoach(sessions, exercises, program, profile, bodyLog, now, xpInfo)
   var bloques = suivisApres.filter(function(e){ return stallInfo(parExApres[e.id] || [], e.id); });
   if (suivisApres.length >= 3 && bloques.length / suivisApres.length >= 0.5) {
     ajoute({ cle: "blocage", ton: "alerte", titre: "Plus de la moitié des exercices bloquent",
-      texte: "C'est le signe d'une fatigue accumulée plus que d'un manque d'effort. Une semaine de décharge (charges ~80 %, une série de moins) relance en général la progression.",
+      texte: "C'est le signe d'une fatigue accumulée plus que d'un manque d'effort. Une semaine de décharge (moitié des séries, charges ~90 %) aide souvent à repartir.",
       action: "Accepter la décharge proposée sur l'onglet Séance" });
   } else if (bloques.length) {
     ajoute({ cle: "blocage", ton: "attention", titre: bloques.length + " exercice" + (bloques.length > 1 ? "s bloquent" : " bloque"),
@@ -12247,7 +12567,7 @@ function bilanCoach(sessions, exercises, program, profile, bodyLog, now, xpInfo)
   /* 5. Effort (seulement si les reps en réserve sont notées) */
   var mous = suivis.filter(function(e){ return !isCardio(e) && effortInfo(parEx[e.id] || [], e.id); });
   if (mous.length) ajoute({ cle: "effort", ton: "attention", titre: "Séries trop loin de l'échec",
-    texte: mous.slice(0, 3).map(function(e){ return e.name; }).join(", ") + " : 3 reps en réserve ou plus en moyenne. Finis à 1–2 reps de l'échec, sinon la série compte peu.",
+    texte: mous.slice(0, 3).map(function(e){ return e.name; }).join(", ") + " : 3 reps en réserve ou plus en moyenne. Ça fait encore progresser, mais un peu moins : vise 1–2 reps de l'échec.",
     action: "Monter la charge sur ces exercices" });
 
   /* 6. Poids : tendance sur 28 jours */
@@ -12628,7 +12948,7 @@ function AnalyseTab(props){
       effortFlags.map(function(x){ return h("div",{key:x.ex.id, style:{display:"flex",alignItems:"flex-start",gap:10,padding:"12px",marginBottom:8,borderRadius:10,background:C.shroudDeep,border:"1px solid "+C.rust}},
         h(Icon,{name:"gauge",size:17,color:C.rustText}),
         h("div",null, h("div",{style:{fontSize:14.5,fontWeight:600}}, x.ex.name),
-          h("div",{style:{fontSize:13,color:C.taupe,lineHeight:1.5}}, x.eff.avg+" reps en réserve en moyenne. Ces séries ne comptent presque pas — monte la charge jusqu'à finir à 1–2 reps de l'échec."))); })) : null,
+          h("div",{style:{fontSize:13,color:C.taupe,lineHeight:1.5}}, fmtNombre(x.eff.avg)+" reps en réserve en moyenne. Ça fait encore progresser, mais un peu moins que plus près de l'échec (Robinson et al. 2024) — monte la charge pour finir à 1–2 reps de l'échec."))); })) : null,
 
     stalls.length>0 ? h(Section,{title:"Ça bloque"},
       stalls.map(function(x){
@@ -12964,9 +13284,9 @@ function App(props){
          machine que tu déplaces toi-même d'un jour à l'autre doit rester où tu
          l'as mise. Le déplacement n'est jamais silencieux (carte "Programme
          réajusté" sur l'onglet Séance) et les séries restent les mêmes. */
-      var dejaReparti = !!(state.meta && state.meta.repartition1);
+      var dejaReparti = !!(state.meta && state.meta.repartition3);
       var marquer = function(patch){ setState(function(prev){
-        return Object.assign({}, prev, patch || {}, { meta: Object.assign({}, prev.meta, { repartition1: true }) }); }); };
+        return Object.assign({}, prev, patch || {}, { meta: Object.assign({}, prev.meta, { repartition3: true }) }); }); };
       if (programHorsFourchette(state.program, state.exercises, g, avg, mf)) {
         var reflowed = reflowStable(state.program, state.exercises, g, avg, mf, state.profile.currentGymId, state.profile);
         var diff = describeProgramDiff(state.program, reflowed, state.exercises);
