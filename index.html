@@ -2076,11 +2076,16 @@ function bestCandidate(candidates, referenceOrder, referenceMuscles) {
   candidates = candidates.filter(function(e){ return !isCardio(e); });
   if (!candidates.length) return null;
   var refM = referenceMuscles || [];
+  /* MÊME MUSCLE PRINCIPAL d'abord (31 oct. 2026, capture : remplacer un leg
+     curl proposait une machine à MOLLETS, parce que les mollets sont un
+     muscle secondaire du leg curl et que "partager un muscle" suffisait). */
   var scored = candidates.map(function(e, i){
     var overlap = allMuscles(e).filter(function(mu){ return refM.indexOf(mu) >= 0; }).length;
-    return { e: e, i: i, verified: e.brand !== "?" ? 1 : 0, overlap: overlap, sameTier: exerciseOrderTier(e) === referenceOrder ? 1 : 0 };
+    return { e: e, i: i, verified: e.brand !== "?" ? 1 : 0, overlap: overlap, sameTier: exerciseOrderTier(e) === referenceOrder ? 1 : 0,
+      samePrimary: (refM.length && allMuscles(e)[0] === refM[0]) ? 1 : 0 };
   });
   scored.sort(function(a, b){
+    if (a.samePrimary !== b.samePrimary) return b.samePrimary - a.samePrimary;
     if (a.verified !== b.verified) return b.verified - a.verified;
     if (a.overlap !== b.overlap) return b.overlap - a.overlap;
     if (a.sameTier !== b.sameTier) return b.sameTier - a.sameTier;
@@ -2160,6 +2165,75 @@ function suggestSwap(exId, exercises, program, gymId, alsoUsedIds) {
       && allMuscles(e).some(function(mu){ return exMuscles.indexOf(mu)>=0; });
   });
   return bestCandidate(candidates, exerciseOrderTier(ex), exMuscles);
+}
+/* REMPLACEMENT POUR UNE SEULE SÉANCE (31 oct. 2026, demande : "faut que ça
+   change qu'une fois hein, et revenir dans la séance opti après").
+
+   Le bouton ⟳ d'une machine remplaçait la machine dans TOUT le programme : une
+   machine prise, en panne, ou une envie de changer pour un jour devenait un
+   changement définitif — et le programme optimisé était perdu. Désormais le
+   remplacement porte par défaut sur la séance seulement ; le programme n'est
+   pas touché, et la séance suivante de ce jour retrouve sa machine habituelle.
+   Le remplacement définitif reste possible en second choix.
+
+   Le remplaçant d'un jour peut être une machine qui sert AILLEURS dans le
+   programme (un autre jour) : pour une seule séance, aucun doublon n'est
+   créé. Il doit avoir le MÊME MUSCLE PRINCIPAL (au moins 0,75 sur ce muscle) :
+   un leg curl ne se remplace pas par une machine à mollets. */
+function suggestSwapSeance(exId, exercises, gymId, excludeIds) {
+  var ex = exercises.find(function(e){ return e.id === exId; });
+  if (!ex) return null;
+  var principal = allMuscles(ex)[0];
+  if (!principal) return null;
+  var exclus = {}; (excludeIds || []).forEach(function(id){ exclus[id] = true; });
+  var candidates = exercises.filter(function(e){
+    return e.id !== exId && !exclus[e.id] && !isCardio(e) && !estVoyage(e) && exerciseAvailableAtGym(e, gymId)
+      && allMuscles(e).indexOf(principal) >= 0 && muscleWeight(e, principal) >= 0.75;
+  });
+  return bestCandidate(candidates, exerciseOrderTier(ex), allMuscles(ex));
+}
+/* Remplace une machine dans les séries de la séance EN COURS seulement. Les
+   séries déjà faites sur l'ancienne machine lui restent (c'est bien elle qui
+   a été faite) ; la nouvelle reçoit les séries restantes. `rec` : séries,
+   reps, repos choisis pour la nouvelle machine (voir swapRecommendation). */
+function remplacerDansSeance(entries, oldId, newId, rec, oldName) {
+  var old = (entries || []).filter(function(e){ return e.ex === oldId; })[0];
+  if (!old) return entries;
+  var faites = (old.sets || []).filter(function(st){ return st.weight != null || st.reps != null; });
+  var prevues = (rec && rec.sets) || (old.sets || []).length || 3;
+  var restantes = Math.max(1, prevues - faites.length);
+  var vide = function(){ return { weight: null, reps: null, rir: null, weakSide: null }; };
+  var adhoc = { sets: restantes, min: rec && rec.min, max: rec && rec.max, rest: rec && rec.rest };
+  var deja = entries.filter(function(e){ return e.ex === newId; })[0];
+  var out = [];
+  entries.forEach(function(e){
+    if (e.ex === oldId) {
+      /* Ancienne machine : on ne garde que ce qui a été fait. */
+      if (faites.length) out.push(Object.assign({}, e, { sets: faites }));
+      if (!deja) out.push({ ex: newId, sets: Array.from({ length: restantes }, vide), adhoc: adhoc, remplace: oldName || null });
+      return;
+    }
+    if (e.ex === newId) {
+      /* Déjà dans la séance : on lui ajoute les séries restantes. */
+      out.push(Object.assign({}, e, { sets: e.sets.concat(Array.from({ length: restantes }, vide)) }));
+      return;
+    }
+    out.push(e);
+  });
+  return out;
+}
+/* Remplacements prévus pour la PROCHAINE séance d'un jour (choisis avant de
+   la démarrer). `pending` = { dayKey, swaps: { ancienId: { ex, sets, min,
+   max, rest, oldName } } }. Appliqués aux lignes affichées et au démarrage,
+   puis oubliés : le programme n'est jamais modifié. */
+function appliquerRemplacementsPrevus(items, pending, dayKey) {
+  if (!pending || pending.dayKey !== dayKey || !pending.swaps) return items;
+  return items.map(function(it){
+    var sw = pending.swaps[it.ex];
+    if (!sw) return it;
+    return Object.assign({}, it, { ex: sw.ex, sets: sw.sets || it.sets, min: sw.min || it.min, max: sw.max || it.max, rest: sw.rest || it.rest,
+      remplacePonctuel: sw.oldName || null, gymSwappedFrom: undefined });
+  });
 }
 /* Ajouté le 5 sept. 2026 (demande : "adapter les séances selon quelle salle
    où je suis") — un jour de programme peut contenir une machine non
@@ -6317,7 +6391,7 @@ var PROGRAM_VERSION = 7;   /* 7 (23 sept. 2026) : exercices poids du corps du mo
    recommitée à la main — contrairement au lien Artifact qui se met à jour
    tout seul". Change cette date à chaque publication notable pour que la
    comparaison soit possible côté utilisateur. */
-var APP_BUILD = "2026-10-27d";
+var APP_BUILD = "2026-11-08a";
 
 function seedState() {
   return {
@@ -7046,6 +7120,168 @@ function describeProgramDiff(before, after, exercises) {
   });
   return { changed: out.length > 0, moves: out };
 }
+/* BOUTON « OPTIMISER MES SÉANCES » — 8 nov. 2026 (demande : "il faudrait un
+   bouton optimiser pour mieux optimiser les séances avec les machines qu'on
+   vient d'ajouter, ou règles qu'on vient de changer").
+
+   Les recalculs automatiques sont volontairement PRUDENTS : ils partent du
+   programme en place et ne le recomposent que s'il sort de la fourchette
+   (voir l'effet autoFix et reflowStable). Une machine qu'on vient d'ajouter
+   part en réserve (voir MachinesTab > handleAdd) et n'entre jamais d'elle-même
+   dans les séances ; une nouvelle règle de l'appli ne remet pas à plat un
+   programme qui reste « dans les clous ». Ce bouton fait la passe complète, à
+   la demande, et ne garde que le meilleur :
+
+   - A : le programme actuel, séries recalculées (rien ne bouge de jour) ;
+   - B : le programme actuel recomposé (machines déplacées, ajoutées, retirées) ;
+   - C : les machines en réserve choisies placées d'abord, puis recomposé ;
+   - D : le même découpage (Haut/Bas, PPL…) reconstruit DE ZÉRO avec tout le
+     matériel disponible et les règles actuelles.
+
+   L'arbitre est la note interne de l'appli (programBalancePenalty : écart de
+   chaque muscle à sa cible, fréquence, durée de séance…), la même qui pilote
+   toute la recomposition. À note égale, on garde le plus proche de l'existant
+   (ordre A, B, C, D) : optimiser ne doit jamais tout chambouler pour rien.
+
+   Le résultat est rendu STABLE : la recomposition automatique, relancée
+   dessus, n'y trouve plus rien à changer (sinon l'appli redéplacerait des
+   machines à la prochaine ouverture). Pure fonction. */
+function optimiserProgramme(program, exercises, profile, opts) {
+  var prof = profile || {};
+  var goal = prof.goal, avg = avgSessionsPerWeek(prof), mf = prof.muscleFocus || {}, gym = prof.currentGymId;
+  var inclure = (opts && opts.inclure) || [];
+  var exs = exercises.map(function(e){
+    if (!e || !e.horsProgramme || inclure.indexOf(e.id) < 0) return e;
+    var o = Object.assign({}, e); delete o.horsProgramme; return o;
+  });
+  var exMap = {}; exs.forEach(function(e){ exMap[e.id] = e; });
+  function finir(p){ return applyGoalToProgram(p, exs, goal, avg, mf, prof); }
+  function note(p){
+    try { return programBalancePenalty(p, exs, goal, avg, mf, prof, {corridor:true}); } catch (e) { return Infinity; }
+  }
+  function empreinte(p){ return JSON.stringify(p.map(function(d){ return (d.items||[]).map(function(i){ return i.ex; }); })); }
+  /* Rend un programme que la correction automatique laissera tranquille. */
+  function stabiliser(p){
+    for (var k = 0; k < 3; k++) {
+      if (!programHorsFourchette(p, exs, goal, avg, mf)) return p;
+      var r = reflowStable(p, exs, goal, avg, mf, gym, prof);
+      if (empreinte(r) === empreinte(p)) return p;
+      p = finir(r);
+    }
+    return p;
+  }
+  var candidats = [];
+  function ajouter(src, p){
+    if (!p || !p.length) return;
+    try { p = stabiliser(p); } catch (e) {}
+    candidats.push({ src: src, program: p, note: note(p) });
+  }
+  ajouter("actuel", finir(program));
+  try { ajouter("recompose", finir(reflowStable(program, exs, goal, avg, mf, gym, prof))); } catch (e) {}
+  /* C : machines en réserve choisies, placées comme le ferait « L'ajouter au
+     programme » (proposePlacement), puis recomposition. */
+  var aPlacer = inclure.filter(function(id){
+    var e = exMap[id];
+    return e && !isCardio(e) && !estVoyage(e) && exerciseAvailableAtGym(e, gym) &&
+      !program.some(function(d){ return (d.items||[]).some(function(it){ return it.ex === id; }); });
+  });
+  if (aPlacer.length) {
+    try {
+      var place = program;
+      aPlacer.forEach(function(id){
+        var ne = exMap[id];
+        var pl = proposePlacement(ne, exs.filter(function(e){ return e.id !== id; }), place, goal, avg);
+        if (pl && pl.targets && pl.targets.length) place = applyPlacement(ne, pl, exs, place);
+      });
+      ajouter("reserve", finir(reflowStable(place, exs, goal, avg, mf, gym, prof)));
+    } catch (e) {}
+  }
+  /* D : même découpage, reconstruit de zéro. Les clés et couleurs des jours
+     sont reprises de l'existant (même ordre, mêmes noms) : la rotation et
+     l'historique continuent de pointer vers les bons jours. */
+  var tpl = detectSplitKind(program);
+  if (tpl && trainingMode(prof) !== "cardio") {
+    try {
+      var exsD = exs.filter(function(e){ return !e.horsProgramme; });
+      var s = evaluer1Split(tpl, exsD, goal, avg, mf, gym, prof, true);
+      if (s && s.ok && s.programFinal) {
+        var anciens = musculationDays(program);
+        var nouveaux = musculationDays(s.programFinal);
+        var remap = {};
+        if (anciens.length === nouveaux.length) nouveaux.forEach(function(d, i){
+          if (String(d.label).toLowerCase() === String(anciens[i].label).toLowerCase()) remap[d.key] = anciens[i];
+        });
+        var reb = s.programFinal.map(function(d){
+          var a = remap[d.key];
+          return a ? Object.assign({}, d, { key: a.key, accent: a.accent }) : d;
+        });
+        ajouter("reconstruit", finir(reb));
+      }
+    } catch (e) {}
+  }
+  var best = candidats[0];
+  candidats.forEach(function(c){ if (c.note < best.note - 1e-6) best = c; });
+  /* Bilan affiché : déplacements, séries changées, score et durée avant/après,
+     machines en réserve utilisées ou laissées de côté (et pourquoi). */
+  var avant = program, apres = best.program;
+  var diff = describeProgramDiff(avant, apres, exs);
+  var series = 0;
+  var setsAvant = {};
+  avant.forEach(function(d){ (d.items||[]).forEach(function(it){ setsAvant[d.key+"|"+it.ex] = it.sets; }); });
+  apres.forEach(function(d){ (d.items||[]).forEach(function(it){
+    var k = d.key+"|"+it.ex;
+    if (setsAvant[k] != null && setsAvant[k] !== it.sets) series++;
+  }); });
+  function dansCible(p){
+    var base = goalPreset(goal).targetSets || VOL_MIN;
+    var vol = plannedVolume(p, exs, avg);
+    return { ok: vol.filter(function(v){
+      var c = base * focusMultiplier(mf, v.muscle);
+      return !(c > 0) || (v.sets >= c - 0.05 && v.sets <= c * 1.15 + 0.05);
+    }).length, total: vol.length };
+  }
+  function minutes(p){
+    var j = musculationDays(p); if (!j.length) return 0;
+    return Math.round(j.reduce(function(a, d){ return a + estimateDayMinutes(d, exMap); }, 0) / j.length);
+  }
+  var utilisees = {};
+  apres.forEach(function(d){ (d.items||[]).forEach(function(it){ utilisees[it.ex] = true; }); });
+  var placees = inclure.filter(function(id){ return utilisees[id]; });
+  var nonPlacees = inclure.filter(function(id){ return !utilisees[id] && exMap[id]; });
+  /* Le matériel rendu : les machines en réserve placées sortent de la réserve,
+     les autres y restent. */
+  var exercisesFinal = exercises.map(function(e){
+    if (!e || !e.horsProgramme || placees.indexOf(e.id) < 0) return e;
+    var o = Object.assign({}, e); delete o.horsProgramme; return o;
+  });
+  var scoreAvant = optimizationScore(finir(program), exs, goal, avg, mf).score;
+  var scoreApres = optimizationScore(apres, exs, goal, avg, mf).score;
+  return {
+    program: apres, exercises: exercisesFinal, source: best.src,
+    changed: diff.changed || series > 0 || JSON.stringify(apres) !== JSON.stringify(avant),
+    moves: diff.moves, seriesChangees: series,
+    scoreAvant: scoreAvant, scoreApres: scoreApres,
+    cibleAvant: dansCible(finir(program)), cibleApres: dansCible(apres),
+    minutesAvant: minutes(avant), minutesApres: minutes(apres),
+    placees: placees.map(function(id){ return exMap[id].name; }),
+    nonPlacees: nonPlacees.map(function(id){ return exMap[id].name; })
+  };
+}
+/* Machines en réserve qu'« Optimiser » peut proposer d'inclure : disponibles
+   dans la salle en cours, pas du cardio ni du mode voyage. Pré-cochées si
+   ajoutées depuis moins de 30 jours (l'id d'une machine ajoutée est
+   "u"+horodatage) : ce sont celles qu'on vient d'acheter du regard en salle,
+   pas les machines d'une ancienne salle gardées pour l'historique. */
+function machinesEnReserve(exercises, profile, maintenant) {
+  var gym = (profile || {}).currentGymId, now = maintenant || Date.now();
+  return (exercises || []).filter(function(e){
+    return e && e.horsProgramme && !isCardio(e) && !estVoyage(e) && exerciseAvailableAtGym(e, gym);
+  }).map(function(e){
+    var m = /^u(\d{12,})$/.exec(e.id || "");
+    var recente = !!m && (now - Number(m[1])) < 30 * 864e5;
+    return { id: e.id, name: e.name, brand: e.brand, recente: recente };
+  });
+}
 function unmappedExercises(exercises) {
   return (exercises||[]).filter(function(e){
     if (estVoyage(e)) return false;
@@ -7466,6 +7702,58 @@ function cleanSessionEntries(active, exMap) {
       return sansCharge ? Object.assign({}, s, {weight: 0}) : s;
     }) });
   }).filter(function(e){ return e.sets.length > 0; });
+}
+/* REVENIR DANS UNE SÉANCE ENREGISTRÉE PAR ERREUR (31 oct. 2026, demande :
+   "faut faire un moyen de rerentrer dans la séance quand on enregistre par
+   erreur").
+
+   Calcule le nouvel état à partir de l'ancien (pur, testable) :
+   - la séance quitte l'historique et redevient la séance EN COURS, avec ses
+     séries saisies ET ses lignes encore vides (photo prise au moment de
+     l'enregistrement si elle existe, sinon les séries prévues reconstruites
+     d'après `planned`) ;
+   - elle repart sous un NOUVEL identifiant, l'ancien étant noté comme
+     supprimé : sans ça, l'autre copie de l'état (cloud ou téléphone) ferait
+     revenir l'ancienne version à la prochaine fusion (voir pickFreshestState)
+     et la séance compterait deux fois ;
+   - ce que l'enregistrement avait changé de lui-même est défait : décharge
+     décomptée, et réajustement du programme fait en fin de séance — mais
+     seulement si le programme n'a pas été retouché depuis, pour ne jamais
+     écraser un changement fait à la main entre-temps ;
+   - seulement la DERNIÈRE séance enregistrée, et seulement s'il n'y a pas de
+     séance en cours. */
+function etatSeanceRouverte(prev, id, signature) {
+  if (!prev || prev.active) return prev;
+  var faites = (prev.sessions || []).filter(function(x){ return x && x.done; });
+  var derniere = faites.slice().sort(function(a, b){ return new Date(b.date) - new Date(a.date); })[0];
+  if (!derniere || derniere.id !== id) return prev;
+  var snap = prev.derniereSeance && prev.derniereSeance.seanceId === id ? prev.derniereSeance : null;
+  var nouvelId = "s" + Date.now();
+  var vide = function(){ return { weight: null, reps: null, rir: null, weakSide: null }; };
+  var active;
+  if (snap && snap.active) {
+    active = Object.assign({}, snap.active, { id: nouvelId, done: false });
+  } else {
+    active = Object.assign({}, derniere, { id: nouvelId, done: false,
+      entries: (derniere.entries || []).map(function(e){
+        var sets = (e.sets || []).slice();
+        var prevues = e.planned || sets.length;
+        while (sets.length < prevues) sets.push(vide());
+        var copie = Object.assign({}, e, { sets: sets }); delete copie.planned;
+        return copie;
+      }) });
+  }
+  delete active.voyage;
+  var sup = ((prev.meta && prev.meta.supprimees) || []).concat([id]).slice(-500);
+  var patch = { sessions: prev.sessions.filter(function(x){ return x.id !== id; }), active: active, gainXP: null, derniereSeance: null,
+    restTimer: null, meta: Object.assign({}, prev.meta, { supprimees: sup }) };
+  if (snap) {
+    patch.deloadRestantes = snap.deloadRestantes; patch.deloadForNextStart = snap.deloadForNextStart;
+    if (snap.programApres && signature && snap.programApres === signature(prev.program, prev.exercises) && Array.isArray(snap.program)) {
+      patch.program = snap.program; patch.autoFix = null;
+    }
+  }
+  return Object.assign({}, prev, patch);
 }
 /* Choisit entre la copie cloud (data/state.json) et la copie locale
    (localStorage) — ajouté le 12 sept. 2026.
@@ -9041,7 +9329,8 @@ function SeanceTab(props) {
       consommerDecharge=props.consommerDecharge||function(){ setDeloadForNextStart(false); }, deloadRestantes=props.deloadRestantes||0,
       updateExerciseOrder=props.updateExerciseOrder, updateExerciseInc=props.updateExerciseInc, persistConfig=props.persistConfig,
       goal=props.goal, profile=props.profile, setProfile=props.setProfile,
-      autoFix=props.autoFix, clearAutoFix=props.clearAutoFix;
+      autoFix=props.autoFix, clearAutoFix=props.clearAutoFix,
+      remplacementsPrevus=props.remplacementsPrevus || null, setRemplacementsPrevus=props.setRemplacementsPrevus || function(){};
   var _p = useState(false), pickerOpen=_p[0], setPickerOpen=_p[1];
   /* Jours dépliés dans la vue "tout le programme" — un objet {cleJour:true}
      plutôt qu'une seule clé : ouvrir l'encadré déroule TOUS les jours d'un
@@ -9201,12 +9490,44 @@ function SeanceTab(props) {
      programme" ailleurs dans l'app — pas juste pour cette séance) et, si
      une séance est en cours, met aussi à jour l'entrée déjà commencée pour
      qu'on puisse continuer à logger dessus tout de suite. */
+  /* 31 oct. 2026 : par défaut le remplacement ne vaut que pour la séance
+     (voir remplacerDansSeance). Le remplaçant est choisi parmi les machines
+     de même muscle principal qui ne sont pas déjà dans CETTE séance ; le
+     remplacement définitif n'est proposé que si ce remplaçant n'est nulle part
+     dans le programme (sinon il y créerait un doublon). */
   function requestSwap(ex){
     if (!ex) return;
-    var cand = suggestSwap(ex.id, exercises, program, currentGymId,
-      (active && active.entries) ? active.entries.map(function(e){ return e.ex; }) : []);
+    var dansSeance;
+    if (active && active.entries) dansSeance = active.entries.map(function(e){ return e.ex; });
+    else dansSeance = appliquerRemplacementsPrevus(adaptDayItems(day.items, exercises, exMap, currentGymId), remplacementsPrevus, day.key).map(function(it){ return it.ex; });
+    var cand = suggestSwapSeance(ex.id, exercises, currentGymId, dansSeance);
     var rec = cand ? swapRecommendation(ex, cand, program, goal) : null;
-    setSwapPending({ exId: ex.id, oldName: ex.name, muscles: allMuscles(ex).join(" + "), candidate: cand, rec: rec });
+    var dansProgramme = cand ? program.some(function(d){ return (d.items || []).some(function(it){ return it.ex === cand.id; }); }) : false;
+    setSwapPending({ exId: ex.id, oldName: ex.name, muscles: allMuscles(ex).join(" + "), candidate: cand, rec: rec, definitifPossible: !!cand && !dansProgramme });
+  }
+  function confirmSwapSeance(){
+    if (!swapPending || !swapPending.candidate) { setSwapPending(null); return; }
+    var oldId = swapPending.exId, newId = swapPending.candidate.id, rec = swapPending.rec || {};
+    if (active) {
+      setActive(Object.assign({}, active, { entries: remplacerDansSeance(active.entries, oldId, newId, rec, swapPending.oldName) }));
+    } else {
+      /* Séance pas encore démarrée : retenu pour la prochaine séance de CE jour. */
+      var base = (remplacementsPrevus && remplacementsPrevus.dayKey === day.key) ? remplacementsPrevus.swaps : {};
+      var swaps = Object.assign({}, base);
+      /* Remplacer un remplaçant : on repart de la machine du programme. */
+      var origine = oldId;
+      Object.keys(swaps).forEach(function(k){ if (swaps[k].ex === oldId) { origine = k; } });
+      swaps[origine] = { ex: newId, sets: rec.sets, min: rec.min, max: rec.max, rest: rec.rest,
+        oldName: (exMap[origine] && exMap[origine].name) || swapPending.oldName };
+      if (origine === newId) delete swaps[origine];
+      setRemplacementsPrevus({ dayKey: day.key, swaps: swaps });
+    }
+    setSwapPending(null);
+  }
+  function annulerRemplacementPrevu(ancienId){
+    if (!remplacementsPrevus || !remplacementsPrevus.swaps) return;
+    var swaps = Object.assign({}, remplacementsPrevus.swaps); delete swaps[ancienId];
+    setRemplacementsPrevus(Object.keys(swaps).length ? { dayKey: remplacementsPrevus.dayKey, swaps: swaps } : null);
   }
   function setSwapRec(patch){ setSwapPending(Object.assign({}, swapPending, {rec: Object.assign({}, swapPending.rec, patch)})); }
   function confirmSwap(){
@@ -9289,7 +9610,7 @@ function SeanceTab(props) {
     return h("div",{style:{marginBottom:16,borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+(swapPending.candidate?C.green:C.rust)}},
       swapPending.candidate ? h("div",null,
         h("div",{style:{fontSize:13.5,color:C.bone,lineHeight:1.5,marginBottom:10}},
-          "Remplacer "+swapPending.oldName+" par "+swapPending.candidate.name+" ? Ça change la machine dans toute la rotation à partir de maintenant"+(active && !active.freeform?" (et dans la séance en cours)":"")+"."),
+          "Remplacer "+swapPending.oldName+" par "+swapPending.candidate.name+(active ? " pour cette séance ?" : " pour ta prochaine séance ?")+" Ton programme ne change pas : la fois suivante, tu retrouves "+swapPending.oldName+"."),
         swapPending.rec ? h("div",{style:{marginBottom:10}},
           h("div",{style:{fontSize:11,color:C.taupe,marginBottom:6}}, "Séries/reps/repos recommandés pour cette machine — ajustables :"),
           h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}},
@@ -9308,8 +9629,13 @@ function SeanceTab(props) {
               h(Stepper,{value:swapPending.rec.max, step:1, min:swapPending.rec.min, onChange:function(v){setSwapRec({max:v});}})))
         ) : null,
         h("div",{style:{display:"flex",gap:8}},
-          h("button",{onClick:confirmSwap, style:{flex:1,padding:"8px 0",borderRadius:6,background:C.green,color:C.ink,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Remplacer"),
-          h("button",{onClick:cancelSwap, style:{flex:1,padding:"8px 0",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:14}}, "Annuler")))
+          h("button",{onClick:confirmSwapSeance, style:{flex:1,minHeight:44,padding:"8px 0",borderRadius:6,background:C.green,color:C.ink,fontFamily:sansCond,fontSize:14.5,fontWeight:700,border:"none"}}, active ? "Pour cette séance" : "Pour la prochaine séance"),
+          h("button",{onClick:cancelSwap, style:{flex:1,minHeight:44,padding:"8px 0",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:14}}, "Annuler")),
+        /* Remplacement DÉFINITIF : en second choix, et seulement si le
+           remplaçant n'est pas déjà ailleurs dans le programme. */
+        (swapPending.definitifPossible && !(active && active.freeform)) ? h("button",{onClick:confirmSwap,
+          style:{width:"100%",marginTop:8,minHeight:40,padding:"6px 0",borderRadius:6,color:C.taupe,border:"none",background:"transparent",fontFamily:sansCond,fontSize:13,textDecoration:"underline"}},
+          "Remplacer dans tout le programme (définitif)") : null)
       : h("div",null,
         h("div",{style:{fontSize:13.5,color:C.bone,lineHeight:1.5,marginBottom:10}}, "Aucune autre machine disponible pour "+swapPending.muscles+" pour remplacer "+swapPending.oldName+"."),
         h("button",{onClick:cancelSwap, style:{width:"100%",padding:"8px 0",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:14}}, "Compris")));
@@ -9448,10 +9774,17 @@ function SeanceTab(props) {
        active.entries pointe déjà vers le bon id de machine — sinon le rendu
        de la séance en cours (sessionItems) et ces entries désignent deux
        machines différentes et rien ne s'affiche pour cet exercice. */
-    var adaptedItems = adaptDayItems(d.items, exercises, exMap, currentGymId);
+    var adaptedItems = appliquerRemplacementsPrevus(adaptDayItems(d.items, exercises, exMap, currentGymId), remplacementsPrevus, dayKey);
     var entries = sortByExerciseOrder(adaptedItems, function(it){return it.ex;}, exMap).map(function(it){
       var p = prescribe(sessions, it, deload, exMap[it.ex]);
       var nSets = p.setsOverride || it.sets;
+      /* Remplacement prévu pour cette séance seulement (voir
+         appliquerRemplacementsPrevus) : porté par l'entrée elle-même, comme
+         une machine ajoutée à la volée — le programme n'en sait rien. */
+      if (it.remplacePonctuel) {
+        return { ex: it.ex, sets: Array.from({length:nSets}, function(){ return {weight:null, reps:null, rir:null, weakSide:null}; }),
+          adhoc: { sets: it.sets, min: it.min, max: it.max, rest: it.rest }, remplace: it.remplacePonctuel };
+      }
       /* One row per set, whether the exercise is unilateral or not — you do
          the weak side then match the strong side to it, so there's one
          weight/reps to log per set, not two. estimateDayMinutes still
@@ -9473,6 +9806,8 @@ function SeanceTab(props) {
     });
     setActive({ id:"s"+Date.now(), date:new Date().toISOString(), dayKey:dayKey, done:false, deload: !!deload,
       entries: entries, cardio: cardio.length ? cardio : null });
+    /* Consommés (ou caducs si on a démarré un autre jour) : oubliés. */
+    if (remplacementsPrevus) setRemplacementsPrevus(null);
     setPickerOpen(false);
   }
 
@@ -9481,9 +9816,16 @@ function SeanceTab(props) {
        salle actuelle, pas le programme brut — même adaptation que start()
        (voir adaptDayItems), recalculée à chaque rendu (rien n'est encore
        figé tant que la séance n'a pas démarré). */
-    var previewItems = sortByExerciseOrder(adaptDayItems(day.items, exercises, exMap, currentGymId), function(it){return it.ex;}, exMap);
+    var previewItems = sortByExerciseOrder(appliquerRemplacementsPrevus(adaptDayItems(day.items, exercises, exMap, currentGymId), remplacementsPrevus, day.key), function(it){return it.ex;}, exMap);
     return h("div", null,
       swapCardOrphan(previewItems),
+      /* Enregistrée par erreur ? Retour possible pendant 12 h depuis ici
+         (ensuite, depuis l'Historique, tant que c'est la dernière séance). */
+      (props.derniereSeance && props.rouvrirSeance && Date.now() - (props.derniereSeance.quand || 0) < 12 * 3600e3) ? h("div",{"data-rouvrir":"1", style:{marginBottom:12,borderRadius:10,padding:"10px 12px",background:C.shroudDeep,border:"1px solid "+C.line,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},
+        h("div",{style:{flex:"1 1 170px",fontSize:13.5,color:C.taupe,lineHeight:1.45}}, "Séance enregistrée. Tu l'as enregistrée par erreur ?"),
+        h("button",{onClick:function(){ props.rouvrirSeance(props.derniereSeance.seanceId); },
+          style:{minHeight:44,padding:"0 14px",borderRadius:6,background:"transparent",color:C.bone,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:14,fontWeight:700,display:"flex",alignItems:"center",gap:6}},
+          h(Icon,{name:"repeat",size:14}), "Rouvrir la séance")) : null,
       props.gainXP ? h(CarteGainXP,{gain:props.gainXP, onFermer:props.fermerGainXP}) : (props.xpInfo ? h(CarteNiveau,{niveau:props.xpInfo.niveau}) : null),
       autoFixCard(),
       modeVoyage(profile) ? h("div",{style:{marginBottom:16,borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.steel}},
@@ -9625,6 +9967,10 @@ function SeanceTab(props) {
                 h("div",{style:{display:"flex",alignItems:"center",gap:10,marginTop:8,paddingLeft:27,flexWrap:"wrap",rowGap:8}},
                   h(StackPlate,{weight:p.weight, repMin:it.min, repMax:it.max, sets:p.setsOverride||it.sets, state:p.state, unit:unitLabel(ex)==="s"?"s":"", block:true, assiste:estAssiste(ex)}))),
               it.gymSwappedFrom ? h("div",{style:{padding:"0 12px 10px",fontSize:12,color:C.steelText}}, "Remplace "+it.gymSwappedFrom+" — indisponible dans cette salle.") : null,
+              it.remplacePonctuel ? h("div",{style:{padding:"0 12px 10px",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}},
+                h("span",{style:{fontSize:12,color:C.steelText,flex:"1 1 180px"}}, "Remplace "+it.remplacePonctuel+" pour cette séance seulement."),
+                h("button",{onClick:function(){ var orig = null; Object.keys((remplacementsPrevus||{}).swaps||{}).forEach(function(k){ if (remplacementsPrevus.swaps[k].ex === it.ex) orig = k; }); if (orig) annulerRemplacementPrevu(orig); },
+                  style:{minHeight:36,padding:"0 10px",borderRadius:6,color:C.taupe,border:"1px solid "+C.line,background:"transparent",fontFamily:sansCond,fontSize:12.5}}, "Annuler")) : null,
               it.gymMergedFrom ? h("div",{style:{padding:"0 12px 10px",fontSize:12,color:C.steelText}}, mergedNote(it.gymMergedFrom)) : null,
               it.gymMissing ? h("div",{style:{padding:"0 12px 10px",fontSize:12,color:C.rustText}}, "Indisponible dans cette salle et aucune autre machine équivalente trouvée.") : null,
               /* La proposition de remplacement s'ouvre ICI, sous la machine sur
@@ -9923,7 +10269,7 @@ function SeanceTab(props) {
   var adaptedDayItems = adaptDayItems(dayActive.items, exercises, exMap, currentGymId);
   var dayItemIds = {}; adaptedDayItems.forEach(function(it){ dayItemIds[it.ex]=true; });
   var adhocItems = active.entries.filter(function(e){ return e.adhoc && !dayItemIds[e.ex]; })
-    .map(function(e){ return { ex:e.ex, sets:e.adhoc.sets, min:e.adhoc.min, max:e.adhoc.max, rest:e.adhoc.rest, adhoc:true }; });
+    .map(function(e){ return { ex:e.ex, sets:e.adhoc.sets, min:e.adhoc.min, max:e.adhoc.max, rest:e.adhoc.rest, adhoc:true, remplace: e.remplace || null }; });
   /* FILET DE SÉCURITÉ (7 sept. 2026) — une séance en cours ne doit JAMAIS
      perdre une machine en silence. Les lignes affichées venaient du programme
      adapté à la salle, et le rendu retrouvait les séries par
@@ -10034,7 +10380,7 @@ function SeanceTab(props) {
             h(OrderBadge,{order: ex?exerciseOrderTier(ex):null}),
             h("div",{style:{flex:1,minWidth:0}},
               h("div",{style:{fontSize:16.5,fontWeight:600,lineHeight:1.25}}, ex?ex.name:"Machine supprimée"),
-              h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,marginTop:1}}, brandLabel(ex)+" · repos "+it.rest+"s"+(isAdhoc?" · ajoutée pour cette séance":"")+(it.gymSwappedFrom?" · remplace "+it.gymSwappedFrom+" (indispo dans cette salle)":"")+(it.gymMergedFrom?" · "+mergedNoteShort(it.gymMergedFrom):"")+(it.gymMissing?" · indisponible dans cette salle":"")),
+              h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,marginTop:1}}, brandLabel(ex)+" · repos "+it.rest+"s"+(isAdhoc?(it.remplace?" · remplace "+it.remplace+" pour cette séance":" · ajoutée pour cette séance"):"")+(it.gymSwappedFrom?" · remplace "+it.gymSwappedFrom+" (indispo dans cette salle)":"")+(it.gymMergedFrom?" · "+mergedNoteShort(it.gymMergedFrom):"")+(it.gymMissing?" · indisponible dans cette salle":"")),
               /* Mode d'emploi sans matériel (exercices poids du corps, voir
                  SEED_EXERCISES > conseil) : comment le faire, et comment le
                  rendre plus facile ou plus dur. */
@@ -10196,6 +10542,84 @@ function Slider(props){
       onChange:function(e){props.onChange(parseFloat(e.target.value));},
       style:{width:"100%", accentColor:C.pin}}));
 }
+/* Carte « Optimiser mes séances » en tête de l'onglet Programme (8 nov.
+   2026, voir optimiserProgramme). Le calcul prend une à quelques secondes sur
+   téléphone : il est lancé juste après l'affichage de « Calcul… », pour que le
+   bouton réagisse tout de suite au doigt. */
+function OptimiserCarte(props){
+  var profile = props.profile || {}, exercises = props.exercises || [];
+  var o = props.optimisation, bilan = o && o.bilan;
+  var reserve = machinesEnReserve(exercises, profile);
+  var _c = useState(null), choix = _c[0], setChoix = _c[1];
+  var _k = useState(false), calcul = _k[0], setCalcul = _k[1];
+  var coches = choix || reserve.filter(function(m){ return m.recente; }).map(function(m){ return m.id; });
+  function basculer(id){
+    var n = coches.indexOf(id) >= 0 ? coches.filter(function(x){ return x !== id; }) : coches.concat([id]);
+    setChoix(n);
+  }
+  function lancer(){
+    if (calcul) return;
+    setCalcul(true);
+    setTimeout(function(){
+      try { props.optimiserSeances(coches.filter(function(id){ return reserve.some(function(m){ return m.id === id; }); })); }
+      finally { setCalcul(false); setChoix(null); }
+    }, 40);
+  }
+  if (modeVoyage(profile)) return null;
+  if (trainingMode(profile) === "cardio") return null;
+  var btn = {width:"100%",padding:"11px 0",borderRadius:8,border:"none",background:C.pin,color:C.ink,fontFamily:sansCond,fontSize:15.5,fontWeight:700};
+  var ligne = {fontSize:12.5,color:C.bone,lineHeight:1.45};
+  function nbMoves(){ return bilan.moves ? bilan.moves.length : 0; }
+  return h("div",{"data-optimiser":"1", style:{marginBottom:18,borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.pinDim}},
+    h("div",{style:{fontFamily:sansCond,fontSize:16,fontWeight:700,color:C.pinText,marginBottom:4}}, "Optimiser mes séances"),
+    h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.5,marginBottom:10}},
+      "Remet tes séances à plat avec tout ton matériel et les règles actuelles de l'appli (objectif, séances par semaine, temps, priorités). À faire après avoir ajouté des machines ou changé un réglage. Tu vois ce qui change, et tu peux annuler."),
+    reserve.length ? h("div",{style:{marginBottom:10}},
+      h("div",{style:{fontFamily:sansCond,fontSize:12,color:C.taupe,marginBottom:5}}, "Machines en réserve à essayer dans les séances"),
+      h("div",{style:{display:"flex",flexWrap:"wrap",gap:6}},
+        reserve.map(function(m){
+          var on = coches.indexOf(m.id) >= 0;
+          return h("button",{key:m.id, "data-reserve":m.id, "aria-pressed":on?"true":"false", onClick:function(){ basculer(m.id); },
+            style:{padding:"6px 10px",minHeight:34,borderRadius:16,fontFamily:sansCond,fontSize:12.5,fontWeight:600,
+              background:on?C.pin:"transparent",color:on?C.ink:C.taupe,border:"1px solid "+(on?"transparent":C.taupeDim)}},
+            (on?"✓ ":"")+m.name+(m.brand?" · "+m.brand:""));
+        })),
+      h("div",{style:{fontSize:11.5,color:C.taupe,marginTop:5,lineHeight:1.45}},
+        "Cochées : l'appli les place si elles améliorent tes séances. Celles qui n'apportent rien restent en réserve.")) : null,
+    props.seanceEnCours
+      ? h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.5}}, "Disponible une fois la séance en cours enregistrée.")
+      : h("button",{"data-optimiser-go":"1", onClick:lancer, disabled:calcul, style:Object.assign({}, btn, calcul?{opacity:0.7}:{})},
+          calcul ? "Calcul…" : "Optimiser mes séances"),
+    bilan ? h("div",{"data-optimiser-bilan":"1", style:{marginTop:12,paddingTop:10,borderTop:"1px solid "+C.line}},
+      h("div",{style:{fontFamily:sansCond,fontSize:15,fontWeight:700,marginBottom:6,color: bilan.annule ? C.taupe : bilan.changed ? C.greenText : C.bone}},
+        bilan.annule ? "Optimisation annulée : séances remises comme avant."
+        : bilan.changed ? "Séances optimisées" : "Déjà au mieux"),
+      bilan.annule ? null : !bilan.changed
+        ? h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.5}},
+            "Avec ton matériel et tes réglages actuels, l'appli ne trouve rien de mieux que tes séances actuelles."+
+            (bilan.nonPlacees && bilan.nonPlacees.length ? " "+bilan.nonPlacees.join(", ")+(bilan.nonPlacees.length>1?" restent":" reste")+" en réserve : tes muscles sont déjà à leur cible sans." : ""))
+        : h("div",{style:{display:"flex",flexDirection:"column",gap:4}},
+            bilan.cibleAvant && bilan.cibleApres && bilan.cibleApres.total ? h("div",{style:ligne},
+              "Muscles dans leur fourchette de séries : "+bilan.cibleAvant.ok+"/"+bilan.cibleAvant.total+" → "+bilan.cibleApres.ok+"/"+bilan.cibleApres.total) : null,
+            Math.abs((bilan.minutesApres||0)-(bilan.minutesAvant||0)) >= 3 ? h("div",{style:ligne},
+              "Durée moyenne d'une séance : ~"+bilan.minutesAvant+" → ~"+bilan.minutesApres+" min") : null,
+            (bilan.moves||[]).slice(0,8).map(function(m,i){
+              return h("div",{key:i, style:ligne},
+                m.kind==="add" ? ("+ "+m.ex+" ajoutée à "+m.days)
+                : m.kind==="remove" ? ("− "+m.ex+" retirée de "+m.days)
+                : ("↔ "+m.ex+" : "+(m.from||"—")+" → "+m.days));
+            }),
+            nbMoves() > 8 ? h("div",{style:Object.assign({},ligne,{color:C.taupe})}, "… et "+(nbMoves()-8)+" autre"+(nbMoves()-8>1?"s":"")+" changement"+(nbMoves()-8>1?"s":"")) : null,
+            bilan.seriesChangees ? h("div",{style:ligne}, "Séries ajustées sur "+bilan.seriesChangees+" machine"+(bilan.seriesChangees>1?"s":"")) : null,
+            bilan.nonPlacees && bilan.nonPlacees.length ? h("div",{style:Object.assign({},ligne,{color:C.taupe})},
+              bilan.nonPlacees.join(", ")+(bilan.nonPlacees.length>1?" restent":" reste")+" en réserve : elle"+(bilan.nonPlacees.length>1?"s n'amélioraient":" n'améliorait")+" pas tes séances.") : null,
+            h("div",{style:{fontSize:11.5,color:C.taupe,lineHeight:1.45,marginTop:2}}, "Ton historique et tes charges ne sont pas touchés.")),
+      h("div",{style:{display:"flex",gap:8,marginTop:10}},
+        (!bilan.annule && props.optimisationAnnulable) ? h("button",{"data-optimiser-annuler":"1", onClick:props.annulerOptimisation,
+          style:{flex:1,padding:"9px 0",borderRadius:6,background:"transparent",color:C.bone,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:13.5,fontWeight:600}}, "Annuler") : null,
+        h("button",{onClick:props.fermerOptimisation,
+          style:{flex:1,padding:"9px 0",borderRadius:6,background:C.steel,color:C.ink,border:"none",fontFamily:sansCond,fontSize:13.5,fontWeight:700}}, "OK"))) : null);
+}
 function ProgrammeTab(props){
   /* setProfile manquait ici : le bouton "Espacées / Plusieurs jours d'affilée"
      l'appelait alors qu'il n'était pas récupéré des props — ReferenceError à
@@ -10330,6 +10754,8 @@ function ProgrammeTab(props){
   return h("div", null,
     modeVoyage(profile) ? h("div",{style:{marginBottom:14,padding:"10px 12px",borderRadius:8,background:C.shroudDeep,borderLeft:"3px solid "+C.steel,fontSize:12.5,color:C.taupe,lineHeight:1.55}},
       "Mode voyage actif : les jours ci-dessous sont le programme poids du corps. Ton programme de salle est mis de côté, intact ; le choix du type de split est désactivé jusqu'au retour (Options > Mode voyage).") : null,
+    props.optimiserSeances ? h(OptimiserCarte,{ profile:profile, exercises:exercises, optimisation:props.optimisation, optimisationAnnulable:props.optimisationAnnulable,
+      optimiserSeances:props.optimiserSeances, annulerOptimisation:props.annulerOptimisation, fermerOptimisation:props.fermerOptimisation, seanceEnCours:props.seanceEnCours }) : null,
     modeVoyage(profile) ? null : h(Section, {title:"Type de split",
       right: h("button",{onClick:basculerSplit, disabled:preparation, "aria-expanded":splitOpen?"true":"false",
         style:{padding:"8px 12px",minHeight:40,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:12.5}},
@@ -11128,12 +11554,16 @@ function OptionsTab(props){
        L'action reste disponible en permanence ici — elle sert à repartir des
        repères calculés quand on a modifié des séries à la main et qu'on veut
        revenir au calcul de l'appli. */
-    MODE_SIMPLE ? null : h("div",{style:{marginTop:-6,marginBottom:14}},
-      h("button",{onClick:reapplyGoalToProgram,
-        style:{width:"100%",padding:"9px 0",borderRadius:6,color:C.bone,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:13.5,fontWeight:600}},
-        "Recalculer toutes mes séances maintenant"),
+    /* 8 nov. 2026 : remplacé par un lien vers « Optimiser mes séances »
+       (onglet Programme), qui montre ce qui change et permet d'annuler — et
+       visible aussi en mode simple : c'est justement là qu'on le cherche après
+       avoir changé un réglage. */
+    h("div",{style:{marginTop:-6,marginBottom:14}},
+      h("button",{"data-options-optimiser":"1", onClick:function(){ if (props.ouvrirOptimiser) props.ouvrirOptimiser(); else reapplyGoalToProgram(); },
+        style:{width:"100%",padding:"9px 0",borderRadius:6,color:C.pinText,border:"1px solid "+C.pinDim,background:"transparent",fontFamily:sansCond,fontSize:13.5,fontWeight:700}},
+        "Optimiser mes séances →"),
       h(InfoTip,{label:"Quand est-ce utile ?"},
-        "Remet tout à plat : la COMPOSITION des séances (quelle machine dans quel jour) puis les séries de chacune, pour ton objectif « "+((GOALS.find(function(g){return g.k===profile.goal;})||{}).label||"")+" » à "+fmt1(avgSessionsPerWeek(profile))+" séances/semaine (le milieu de ta fourchette). Deux cas où ça sert vraiment : tu as ajusté des séries à la main dans « Composer les séances » et tu veux revenir aux repères calculés ; ou un muscle est passé nettement au-dessus de sa cible parce que trop de machines le sollicitent — chacune impose son plancher de "+setsBoundsForGoal(profile.goal).min+" séries, donc le seul remède est d'en retirer une d'un jour, ce que ce bouton sait faire. Il n'enlève jamais la dernière machine qui travaille un muscle en principal, et ne vide jamais un jour. Tes retouches manuelles sont écrasées. Le reste du temps il est inutile : chaque réglage (objectif, priorité par muscle, séances, temps, ordre de priorité, type de split, ajout ou retrait d'une machine) recalcule déjà tout seul.")),
+        "Chaque réglage s'applique déjà tout seul, mais prudemment : l'appli ne déplace pas tes machines tant que tes séances restent dans les clous, et une machine que tu viens d'ajouter reste en réserve. « Optimiser » fait la remise à plat complète — composition des séances (quelle machine quel jour), machines en réserve que tu coches, puis séries, répétitions et repos pour ton objectif « "+((GOALS.find(function(g){return g.k===profile.goal;})||{}).label||"")+" » à "+fmt1(avgSessionsPerWeek(profile))+" séances/semaine. Il ne garde le résultat que s'il est meilleur, te montre ce qui change, et tu peux annuler. Tes retouches manuelles de séries sont écrasées.")),
 
     /* DER : quatre méthodes au choix + ajustement d'après les pesées
        (30 sept. 2026 — voir derDuProfil, ajustementDerDepuisPesees). Plus en
@@ -11351,6 +11781,7 @@ function HistoriqueTab(props){
      de bon — et avec elle sa part de la progression. */
   var _cd = useState(null), confirmDel=_cd[0], setConfirmDel=_cd[1];
   var done = sessions.filter(function(s){return s.done;}).slice().sort(function(a,b){ return new Date(b.date)-new Date(a.date); });
+  var idDerniere = done.length ? done[0].id : null;
   if (done.length===0) {
     return h("div",{style:{borderRadius:10,padding:24,textAlign:"center",background:C.shroudDeep,border:"1px dashed "+C.taupeDim}},
       h("div",{style:{fontFamily:sansCond,fontSize:17,fontWeight:600,marginBottom:6}}, "Rien d'enregistré"),
@@ -11415,6 +11846,12 @@ function HistoriqueTab(props){
               txt.forEach(function(t){ var g = groupes[groupes.length-1]; if (g && g.t === t) g.n++; else groupes.push({ t: t, n: 1 }); });
               return groupes.map(function(g){ return g.n > 1 ? g.t+" ×"+g.n : g.t; }).join("   ");
             })())); }),
+        /* Rouvrir (31 oct. 2026) : seulement la dernière séance, et pas
+           pendant qu'une autre est en cours (voir etatSeanceRouverte). */
+        (s.id === idDerniere && props.rouvrirSeance && !props.seanceEnCours) ? h("div",{style:{padding:"8px 12px",borderTop:"1px solid "+C.shroudDeep}},
+          h("button",{onClick:function(){ props.rouvrirSeance(s.id); },
+            style:{display:"flex",alignItems:"center",gap:6,minHeight:40,padding:"0 12px",borderRadius:6,color:C.bone,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:13.5,fontWeight:600}},
+            h(Icon,{name:"repeat",size:13}), "Rouvrir cette séance (pour la continuer ou la corriger)")) : null,
         h("div",{style:{padding:"8px 12px",borderTop:"1px solid "+C.shroudDeep}},
           confirmDel===s.id
             ? h("div",{style:{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}},
@@ -12010,7 +12447,18 @@ function MachinesTab(props){
         proposal.inProgram
           ? h("button",{onClick:undoPlacement, style:{flex:1,padding:"8px 0",borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:14}}, "Finalement non, la retirer du programme")
           : h("button",{onClick:addToProgram, style:{flex:1,padding:"8px 0",borderRadius:6,color:C.bone,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:14}}, "L'ajouter aussi au programme"),
-        h("button",{onClick:function(){setProposal(null);}, style:{flex:1,padding:"8px 0",borderRadius:6,background:C.green,color:C.ink,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Compris"))) : null,
+        h("button",{onClick:function(){setProposal(null);}, style:{flex:1,padding:"8px 0",borderRadius:6,background:C.green,color:C.ink,fontFamily:sansCond,fontSize:14,fontWeight:700,border:"none"}}, "Compris")),
+      /* 8 nov. 2026 : la remise à plat complète, avec cette machine cochée. */
+      (props.ouvrirOptimiser && !active && !modeVoyage(profile)) ? h("button",{"data-machines-optimiser":"1", onClick:function(){ setProposal(null); props.ouvrirOptimiser(); },
+        style:{width:"100%",marginTop:8,padding:"8px 0",borderRadius:6,color:C.pinText,border:"1px solid "+C.pinDim,background:"transparent",fontFamily:sansCond,fontSize:13.5,fontWeight:700}},
+        "Optimiser toutes mes séances avec →") : null) : null,
+    /* Rappel discret : des machines en réserve dans cette salle, pas encore
+       dans les séances (8 nov. 2026). */
+    (!proposal && props.ouvrirOptimiser && !active && !modeVoyage(profile) && machinesEnReserve(exercises, profile).filter(function(m){ return m.recente; }).length) ? h("div",{"data-reserve-rappel":"1", style:{marginBottom:14,padding:"10px 12px",borderRadius:8,background:C.shroudDeep,borderLeft:"3px solid "+C.pin}},
+      h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.5,marginBottom:6}},
+        (function(l){ var n=l.length; return n+" machine"+(n>1?"s":"")+" ajoutée"+(n>1?"s":"")+" récemment, pas encore dans tes séances : "+l.map(function(m){ return m.name; }).slice(0,4).join(", ")+(n>4?"…":"")+"."; })(machinesEnReserve(exercises, profile).filter(function(m){ return m.recente; }))),
+      h("button",{onClick:props.ouvrirOptimiser, style:{padding:"7px 12px",borderRadius:6,color:C.pinText,border:"1px solid "+C.pinDim,background:"transparent",fontFamily:sansCond,fontSize:13,fontWeight:700}},
+        "Optimiser mes séances →")) : null,
 
     h(Section, {title:"Ajouter du matériel"},
       h("button",{onClick:function(){setMode(mode==="manual"?null:"manual");},
@@ -13510,7 +13958,14 @@ function App(props){
       gainXP = { quand: Date.now(), seanceId: cleaned.id, detail: xpApres.detail[String(cleaned.id)] || { total: xpApres.total - xpAvant.total },
         avant: xpAvant.niveau, apres: xpApres.niveau };
     } catch (e) {}
-    function fermer(patch){ setState(Object.assign({ sessions: newSessions, active: null, gainXP: gainXP }, patchDecharge, patch || {})); }
+    /* Photo d'avant l'enregistrement, pour pouvoir y revenir (voir
+       etatSeanceRouverte). */
+    function fermer(patch){
+      var derniere = { seanceId: cleaned.id, active: active, program: state.program, quand: Date.now(),
+        deloadRestantes: state.deloadRestantes || 0, deloadForNextStart: !!state.deloadForNextStart,
+        programApres: programSignature((patch && patch.program) || state.program, state.exercises) };
+      setState(Object.assign({ sessions: newSessions, active: null, gainXP: gainXP, derniereSeance: derniere }, patchDecharge, patch || {}));
+    }
     if (modeVoyage(state.profile)) { fermer(); return; }
     /* Recalibrage automatique et silencieux des séries prescrites (pas de la
        liste des machines — voir recalibrateProgramFromHistory) après CHAQUE
@@ -13557,6 +14012,43 @@ function App(props){
   }
   /* L'id supprimé est retenu (meta.supprimees) : la fusion avec la copie cloud
      (voir pickFreshestState) ne doit pas ressusciter une séance effacée. */
+  function rouvrirSeance(id){
+    setState(function(prev){ return etatSeanceRouverte(prev, id, programSignature); });
+    goToTab("seance");
+  }
+  /* « Optimiser mes séances » (8 nov. 2026, voir optimiserProgramme). Le
+     programme d'avant est gardé pour « Annuler », valable tant que rien
+     d'autre n'a changé le programme entre-temps. autoFixSig : la correction
+     automatique ne repasse pas derrière (ni sur le résultat, ni sur un
+     programme restauré par « Annuler »). */
+  function optimiserSeances(inclure){
+    if (modeVoyage(state.profile) || state.active) return;
+    var r = optimiserProgramme(state.program, state.exercises, state.profile, { inclure: inclure || [] });
+    var bilan = { changed: r.changed, moves: r.moves, seriesChangees: r.seriesChangees,
+      cibleAvant: r.cibleAvant, cibleApres: r.cibleApres, minutesAvant: r.minutesAvant, minutesApres: r.minutesApres,
+      placees: r.placees, nonPlacees: r.nonPlacees, quand: Date.now() };
+    if (!r.changed && r.exercises.every(function(e, i){ return e === state.exercises[i]; })) {
+      setState({ optimisation: { bilan: bilan } });
+      return;
+    }
+    var apresSig = programSignature(r.program, r.exercises);
+    autoFixSig.current = apresSig;
+    setState({ program: r.program, exercises: r.exercises, programFige: null, autoFix: null,
+      optimisation: { bilan: bilan, apresSig: apresSig, avant: { program: state.program, exercises: state.exercises } } });
+  }
+  function annulerOptimisation(){
+    var o = state.optimisation;
+    if (!o || !o.avant || programSignature(state.program, state.exercises) !== o.apresSig) return;
+    autoFixSig.current = programSignature(o.avant.program, o.avant.exercises);
+    setState({ program: o.avant.program, exercises: o.avant.exercises, autoFix: null,
+      optimisation: { bilan: Object.assign({}, o.bilan, { annule: true }) } });
+  }
+  function fermerOptimisation(){ setState({ optimisation: null }); }
+  /* Depuis Machines ou Options : arrive EN HAUT de l'onglet Programme, là où
+     est la carte (et non à la position de défilement mémorisée). */
+  function ouvrirOptimiser(){ scrollMemo.current.programme = 0; goToTab("programme"); }
+  var optimisationAnnulable = !!(state.optimisation && state.optimisation.avant &&
+    programSignature(state.program, state.exercises) === state.optimisation.apresSig);
   function deleteSession(id){ setState(function(prev){
     var sup = ((prev.meta && prev.meta.supprimees) || []).concat([id]).slice(-500);
     return Object.assign({}, prev, { sessions: prev.sessions.filter(function(s){return s.id!==id;}), meta: Object.assign({}, prev.meta, { supprimees: sup }) });
@@ -13669,13 +14161,17 @@ function App(props){
         snoozeDeload:snoozeDeload, deloadSuggested: !state.active && deloadSuggested, deloadReason:deloadReason,
         autoFix: state.autoFix, clearAutoFix: function(){ setState({autoFix:null}); },
         updateExerciseOrder:updateExerciseOrder, updateExerciseInc:updateExerciseInc, persistConfig:persistConfig, goal:state.profile.goal,
-        profile:state.profile, setProfile:setProfile, basculerVoyage:basculerVoyage }) : null,
-      tab==="programme" ? h(ProgrammeTab,{ program:state.program, exercises:state.exercises, profile:state.profile, setProfile:setProfile, persistConfig:persistConfig, goal:state.profile.goal }) : null,
-      tab==="historique" ? h(HistoriqueTab,{ sessions:state.sessions, exMap:exMap, program:state.program, deleteSession:deleteSession }) : null,
+        profile:state.profile, setProfile:setProfile, basculerVoyage:basculerVoyage,
+        remplacementsPrevus: state.remplacementsPrevus || null, setRemplacementsPrevus: function(v){ setState({ remplacementsPrevus: v }); },
+        derniereSeance: (!state.active && state.derniereSeance && (state.sessions||[]).some(function(x){ return x.id === state.derniereSeance.seanceId; })) ? state.derniereSeance : null,
+        rouvrirSeance: rouvrirSeance }) : null,
+      tab==="programme" ? h(ProgrammeTab,{ program:state.program, exercises:state.exercises, profile:state.profile, setProfile:setProfile, persistConfig:persistConfig, goal:state.profile.goal,
+        optimiserSeances:optimiserSeances, annulerOptimisation:annulerOptimisation, fermerOptimisation:fermerOptimisation, optimisation:state.optimisation, optimisationAnnulable:optimisationAnnulable, seanceEnCours:!!state.active }) : null,
+      tab==="historique" ? h(HistoriqueTab,{ sessions:state.sessions, exMap:exMap, program:state.program, deleteSession:deleteSession, rouvrirSeance: rouvrirSeance, seanceEnCours: !!state.active }) : null,
       tab==="machines" ? h(MachinesTab,{ exercises:state.exercises, program:state.program, persistConfig:persistConfig, sessions:state.sessions, updateExerciseInc:updateExerciseInc, goal:state.profile.goal, profile:state.profile,
-        active:state.active, addToActiveSession:addExerciseToActiveSession }) : null,
+        active:state.active, addToActiveSession:addExerciseToActiveSession, ouvrirOptimiser:ouvrirOptimiser }) : null,
       tab==="analyse" ? h(AnalyseTab,{ xpInfo:xpInfo, seanceEnCours:!!state.active, sessions:state.sessions, exercises:state.exercises, exMap:exMap, program:state.program, persistConfig:persistConfig, bodyLog:state.bodyLog, addBodyEntry:addBodyEntry, removeBodyEntry:removeBodyEntry, goal:state.profile.goal, profile:state.profile }) : null,
-      tab==="options" ? h(OptionsTab,{ lancerAccueil:function(){ setState(function(prev){ return Object.assign({}, prev, { meta: Object.assign({}, prev.meta, { accueil: "reprise" }) }); }); window.scrollTo(0,0); }, profile:state.profile, setProfile:setProfile, program:state.program, exercises:state.exercises, bodyLog:state.bodyLog, persistConfig:persistConfig, sessions:state.sessions, basculerVoyage:basculerVoyage, seanceEnCours:!!state.active }) : null)),
+      tab==="options" ? h(OptionsTab,{ lancerAccueil:function(){ setState(function(prev){ return Object.assign({}, prev, { meta: Object.assign({}, prev.meta, { accueil: "reprise" }) }); }); window.scrollTo(0,0); }, profile:state.profile, setProfile:setProfile, program:state.program, exercises:state.exercises, bodyLog:state.bodyLog, persistConfig:persistConfig, sessions:state.sessions, basculerVoyage:basculerVoyage, seanceEnCours:!!state.active, ouvrirOptimiser:ouvrirOptimiser }) : null)),
     h("div",{ref:barreBasRef, "data-barre-bas":"1", style:{position:"fixed",bottom:0,left:0,right:0,zIndex:20}},
       restTimer ? h(RestTimerBar,{timer:restTimer, onAdjust:adjustRestTimer, onDismiss:stopRestTimer, volume: state.profile.alertVolume, ensuite: (state.active && !state.active.freeform && ensuiteSeance) ? ensuiteSeance : texteEnsuite()}) : null,
       /* paddingBottom = retrait de zone sûre : la barre reste collée en bas
@@ -13863,9 +14359,13 @@ OngletSecours.prototype.render = function(){
 </script>
 
 
+
+
 <script>
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", function(){ navigator.serviceWorker.register("service-worker.js").catch(function(){}); });
+  window.addEventListener("load", function () {
+    navigator.serviceWorker.register("service-worker.js").catch(function () {});
+  });
 }
 </script>
 </body>
