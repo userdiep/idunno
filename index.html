@@ -1680,7 +1680,7 @@ function etatDepuisAccueil(rep, ancien) {
   var etat = {
     v: STATE_VERSION, programVersion: PROGRAM_VERSION, exercises: exercises, program: prog,
     sessions: (ancien && Array.isArray(ancien.sessions)) ? ancien.sessions : [], active: null, deloadForNextStart: false,
-    meta: Object.assign({}, (ancien && ancien.meta) || {}, { deloadSnoozeUntil: 0, accueil: "fait", cardio275: true, repartition3: true, revue2610: true }),
+    meta: Object.assign({}, (ancien && ancien.meta) || {}, { deloadSnoozeUntil: 0, accueil: "fait", cardio275: true, repartition3: true, revue2610: true, doublons1: true }),
     bodyLog: rep.poids ? [{ id: "b" + Date.now(), date: todayISO(), weightKg: rep.poids, source: "manuel" }] : [],
     profile: profil, catalogueVu: SEED_EXERCISES.map(function(e){ return e.id; })
   };
@@ -2814,6 +2814,67 @@ var EFFORT_ADVICE = {
   loss_strength: "Sur les machines poly/lourdes visées par cet objectif : 1-3 reps en réserve suffisent, l'échec strict n'apporte rien de plus pour la force (voir \"Force\"). Sur les accessoires/isolation : repère \"Hypertrophie\" (0-2 reps en réserve), là où l'effort proche de l'échec fait vraiment la différence.",
   hyper_strength: "Même logique que \"Perte de gras + Force\" sans le déficit : 1-3 reps en réserve sur les mouvements poly/lourds (voir \"Force\"), 0-2 reps en réserve sur les accessoires/isolation (voir \"Hypertrophie\").",
 };
+/* Amplitude du mouvement par objectif — revue du 11 nov. 2026. Sources lues
+   ce jour-là :
+   - Wolf, Androulakis-Korakakis, Fisher, Schoenfeld & Steele 2023 (Int J
+     Strength Cond, méta-analyse) : amplitude complète contre partielle, écart
+     global 0,12 (IC 95 % −0,02 à 0,26) en faveur de la complète — "trivial à
+     petit" ; la force se gagne surtout dans l'amplitude travaillée ; les
+     partielles en position LONGUE font au moins aussi bien que la complète.
+   - Wolf et al. 2025 (PeerJ, 25 pratiquants entraînés, 8 semaines, un bras
+     par méthode) : partielles en position étirée = amplitude complète pour
+     l'épaisseur musculaire. Conclusion des auteurs : c'est la position
+     étirée qu'il faut travailler, d'une façon ou de l'autre.
+   Même affichage que TEMPO_ADVICE et EFFORT_ADVICE (Options). */
+var AMPLITUDE_MUSCLE = "Amplitude complète, en allant chercher l'étirement du muscle à chaque répétition : règle la machine pour le sentir en bas du mouvement, et ne coupe jamais cette partie quand la série devient dure. L'amplitude complète fait un peu mieux que les demi-répétitions (Wolf et al. 2023, méta-analyse : écart faible mais dans le même sens pour tous les résultats), et c'est la partie ÉTIRÉE qui compte : chez des pratiquants entraînés, des répétitions limitées à la position étirée font grossir autant que l'amplitude complète (Wolf et al. 2025). Si tu dois raccourcir une répétition en fin de série, raccourcis le haut, pas le bas.";
+var AMPLITUDE_FORCE = "Amplitude complète et toujours LA MÊME : la force se gagne surtout dans l'amplitude où l'on s'entraîne (Wolf et al. 2023, méta-analyse) — des demi-répétitions rendent fort sur une demi-amplitude. Garde les mêmes réglages de machine (siège, butées) d'une séance à l'autre, sinon tes charges ne sont pas comparables.";
+var COMPLEMENTS_TEXTE = "Créatine monohydrate, quelques grammes par jour, tous les jours (la dose indiquée sur le produit, en général 3 à 5 g) : c'est le complément le mieux documenté. Avec la musculation, elle ajoute un PETIT supplément de muscle — méta-analyse de Burke et al. 2023 (10 essais) : +0,10 à 0,16 cm d'épaisseur musculaire de plus qu'un placebo — et elle est jugée sûre chez les personnes en bonne santé (position de l'ISSN, Kreider et al. 2017). Une partie du gain mesuré peut venir de l'eau retenue dans le muscle. BCAA et acides aminés pendant la séance : aucun bénéfice démontré pour le muscle ou la force quand ton total de protéines du jour est atteint (Plotkin et al. 2021, revue). La whey n'a rien de spécial : c'est une façon pratique d'atteindre ce total. Aucun complément ne remplace les protéines, le déficit ou le surplus réglés ci-dessus.";
+var SUPERSET_TEXTE = "Enchaîner deux machines sans repos entre les deux, puis se reposer, raccourcit la séance d'environ 37 % à volume égal ; sur la durée, la force et le muscle gagnés sont similaires (Zhang, Weakley et al. 2025, Sports Medicine, méta-analyse de 19 études — dont seulement 3 sur le long terme). Deux conditions : associer des muscles OPPOSÉS ou sans rapport (pectoraux puis dos, biceps puis triceps, quadriceps puis ischios) — deux machines du même muscle à la suite font baisser le volume ; et accepter un effort ressenti plus élevé. L'appli ne les programme pas : tu peux le faire toi-même en validant les séries des deux machines tour à tour (ignore le chrono de repos entre les deux, respecte-le après la seconde).";
+var AMPLITUDE_ADVICE = {
+  loss: AMPLITUDE_MUSCLE + " En déficit, même règle : c'est ce stimulus qui dit au corps de garder le muscle.",
+  hyper: AMPLITUDE_MUSCLE,
+  strength: AMPLITUDE_FORCE,
+  loss_hyper: AMPLITUDE_MUSCLE,
+  loss_strength: AMPLITUDE_FORCE + " Sur les accessoires/isolation, va en plus chercher l'étirement du muscle en bas du mouvement (voir « Hypertrophie »).",
+  hyper_strength: AMPLITUDE_FORCE + " Sur les accessoires/isolation, va en plus chercher l'étirement du muscle en bas du mouvement : c'est la partie qui fait le plus grossir (Wolf et al. 2023, 2025).",
+};
+/* REVUE DU 11 NOV. 2026 (demande : "regarde si tu peux pas optimiser plus mon
+   appli en tenant compte de toutes les bonnes études pour chaque objectif").
+   Même règle que le 27 oct. : ne changer que ce qu'appuient des méta-analyses
+   ou des revues ; le reste est proposé comme un CHOIX, jamais imposé.
+
+   AJOUTÉ
+   - Amplitude (ci-dessus) : il n'y avait aucun repère, alors que c'est une
+     variable d'exécution au même titre que le tempo et l'effort.
+   - Position étirée (voir positionEtiree) : leg curl assis plutôt
+     qu'allongé/debout, mollets jambe tendue plutôt qu'assis — preuve
+     MODÉRÉE (un essai par muscle), donc un choix dans « Règles de ton
+     programme », appliqué par « Optimiser » seulement quand ça ne coûte rien.
+   - Compléments (Options > nutrition) : créatine — petit gain de muscle en
+     plus avec la musculation (Burke et al. 2023, Nutrients, méta-analyse,
+     10 essais : +0,10 à 0,16 cm d'épaisseur ; effet global 0,11, intervalle
+     −0,02 à 0,25), sûre chez les personnes en bonne santé (position de
+     l'ISSN, Kreider et al. 2017) ; BCAA inutiles quand les protéines du jour
+     sont atteintes (Plotkin et al. 2021, IJSNEM, revue).
+   - Supersets, comme piste quand les séances dépassent le temps réglé (Zhang,
+     Weakley et al. 2025, Sports Medicine, méta-analyse de 19 études) : séance
+     ~37 % plus courte, même volume, force et muscle similaires à long terme
+     (3 études seulement), effort perçu plus élevé ; muscles OPPOSÉS de
+     préférence, pas deux machines du même muscle. L'appli ne les programme
+     pas : c'est un conseil.
+
+   VÉRIFIÉ, INCHANGÉ
+   - Pelland et al. est désormais PUBLIÉ (Sports Medicine 56(2):481-505) :
+     67 études, 2 058 participants ; mêmes conclusions que le préprint (volume :
+     rendements décroissants ; fréquence : négligeable pour le muscle, utile
+     pour la force ; comptage fractionnaire). Cibles de l'appli inchangées.
+   - Remmert et al. (plafond par séance) : toujours un préprint.
+   - Ordre des exercices (Nunes et al. 2020) : sans effet sur le muscle ; pour
+     la force, ce qui est fait en premier progresse le plus — l'appli met déjà
+     les gros mouvements en tête. Pas de tri par « priorité par muscle » :
+     gain incertain, et ça changerait l'ordre de toutes les séances.
+   - Cardio (Schumann et al. 2022), repos, effort, reps, décharge, protéines,
+     déficits : revus le 27 oct., rien de nouveau trouvé. */
 /* REVUE_2026 — revue de la littérature du 27 oct. 2026 (demande : "revois
    toutes les bonnes études et optimise mon app" ; règle choisie : ne changer
    que ce qu'appuient des méta-analyses ou des revues récentes). Sources lues
@@ -4375,13 +4436,19 @@ function buildProgramFromSplit(tplKey, exercises, goal, gymId){
      ce muscle précis (pour ne pas concentrer un muscle sur un seul jour) ;
      puis l'ordre des jours, pour rester déterministe. */
   var perDayMuscle = days.map(function(){ return {}; });
+  var exMapB = {}; exercises.forEach(function(e){ exMapB[e.id] = e; });
   pool.forEach(function(e){
     var mu = allMuscles(e)[0];
     if (!mu) return;
     var best = null, bestIdx = -1;
+    var sgE = signatureMouvement(e);
+    function aDeja(d){ return d.items.some(function(it){ return signatureMouvement(exMapB[it.ex]) === sgE; }) ? 1 : 0; }
     days.forEach(function(d, i){
       if (!dayAcceptsMuscle(d.def, mu)) return;
       if (best === null) { best = d; bestIdx = i; return; }
+      /* D'abord un jour qui n'a pas déjà ce mouvement (8 nov. 2026). */
+      var a0 = aDeja(d), b0 = aDeja(best);
+      if (a0 !== b0) { if (a0 < b0) { best = d; bestIdx = i; } return; }
       var a1 = d.items.length, b1 = best.items.length;
       if (a1 !== b1) { if (a1 < b1) { best = d; bestIdx = i; } return; }
       var a2 = perDayMuscle[i][mu] || 0, b2 = perDayMuscle[bestIdx][mu] || 0;
@@ -5395,6 +5462,8 @@ function repartirEntreJoursJumeaux(program, exercises, goal, ctx) {
     var retenu = null;
     for (var k = 0; k < cands.length && k < 15 && !retenu; k++) {
       var c = cands[k].c, brut = jouer(prog, c), ap2 = appliquer(brut);
+      if (compterDefauts(brut, exMap) > compterDefauts(prog, exMap)) continue;   /* voir separerDoublons */
+      if (ctx && nbInterdits(brut, ctx.profile) > nbInterdits(prog, ctx.profile)) continue;   /* voir jourInterdit */
       var b2 = bilan(ap2);
       if (bAvant.cout - b2.cout <= 0.5) continue;
       if (Math.max(minutes(ap2, c.s), minutes(ap2, c.t)) > Math.max(plusLongueAvant, minutes(ap, c.s), minutes(ap, c.t))) continue;
@@ -5534,6 +5603,7 @@ function reflowProgramForCatalogue(program, exercises, goal, avgSessions, muscle
       prog.forEach(function(d, di){
         if (regions[di] !== r) return;
         if (d.items.some(function(x){ return x.ex === it.ex; })) return;
+        if (jourInterdit(profile, d.key, it.ex)) return;
         if (cible < 0 || d.items.length < prog[cible].items.length) cible = di;
       });
       if (cible < 0) return;
@@ -5627,8 +5697,14 @@ function reflowProgramForCatalogue(program, exercises, goal, avgSessions, muscle
         .reduce(function(a, o){ return a + (o.sets - o.cap); }, 0);
     }
     var excesAvant = excesParSeance(applyGoalCache(prog, exercises, goal, avgSessions, muscleFocus, profile));
+    var doublonsAvant = compterDefauts(prog, exMap), interditsAvant = nbInterdits(prog, profile);
     function evalMove(cand, ajout){
       if (!cand || cand === prog) return;
+      /* Jamais un coup qui crée un doublon de mouvement dans une séance
+         (8 nov. 2026, voir separerDoublons). */
+      if (compterDefauts(cand, exMap) > doublonsAvant) return;
+      /* Ni un coup qui remet une machine dans un jour d'où tu l'as retirée. */
+      if (nbInterdits(cand, profile) > interditsAvant) return;
       var applied = applyGoalCache(cand, exercises, goal, avgSessions, muscleFocus, profile);
       /* Volume calculé UNE fois par candidat (il l'était trois fois). */
       var volApplied = plannedVolume(applied, exercises, avgSessions);
@@ -5858,8 +5934,331 @@ function reflowProgramForCatalogue(program, exercises, goal, avgSessions, muscle
    MEILLEUR état du cycle (au sens de la note de l'appli), qui est alors stable
    au sens où il n'y a plus rien de mieux à en tirer. Coût : quelques passages
    de plus, uniquement quand le programme change vraiment. */
+/* DOUBLONS DE MOUVEMENT DANS UNE MÊME SÉANCE — 8 nov. 2026 (question :
+   "j'ai Deltoïde Arrière et Reverse Fly dans la même séance, c'est normal ?",
+   puis "oui" à la proposition de l'éviter).
+
+   Deux machines au MÊME mouvement le même jour (deux écartés pour l'arrière
+   d'épaule, deux développés pectoraux, deux leg curls…) n'apportent aucun angle
+   nouveau : c'est le même stimulus, découpé sur deux postes, avec un
+   changement de machine en plus. Le volume par muscle, lui, ne change pas —
+   autant mettre la seconde machine un autre jour, ou garder une seule machine
+   avec ses séries.
+
+   « Même mouvement » = même palier (poly / semi / isolation), même muscle
+   principal ET exactement les mêmes muscles sollicités. C'est une approximation : l'appli ne connaît pas
+   la trajectoire des machines, seulement ce qu'elles travaillent. Elle sépare
+   donc bien Upper Back (rowing : dos + arrière d'épaule) du Tirage vertical
+   (dos, sans arrière d'épaule), mais range ensemble deux machines de
+   développé pectoral de marques différentes — ce qui est le but.
+
+   Règle souple, jamais au prix du volume : un doublon n'est défait (machine
+   déplacée vers l'autre séance du même type, échangée, ou retirée de ce jour)
+   que si aucun muscle ne passe sous sa cible de la semaine, qu'aucune séance
+   ne s'allonge au-delà de la plus longue, et que le repère par séance (Remmert
+   et al. 2025) n'est pas plus dépassé. Quand le matériel ne laisse pas le
+   choix (une seule machine de ce mouvement par jour ne suffit pas pour la
+   cible), le doublon reste. */
+/* TES CHOIX SONT DES CONTRAINTES — 11 nov. 2026.
+
+   Trouvé en testant les choix de « Règles de ton programme » jusqu'au bout :
+   après « Retirer telle machine de tel jour », la recomposition automatique
+   (à l'ouverture de l'appli, ou en fin de séance) pouvait la REMETTRE au même
+   endroit pour remonter le volume — mesuré : 1 choix sur 31 défait, et 11 sur
+   31 suivis d'un autre réajustement non annoncé. Un choix qu'on te demande de
+   faire ne doit pas être repris derrière ton dos.
+
+   profile.joursInterdits = { "cléDuJour|idMachine": true } : la machine que tu
+   as retirée, déplacée ou remplacée ne revient PAS dans ce jour, quel que soit
+   le moteur qui recompose (recomposition, doublons, répartition entre jumeaux,
+   Optimiser). Ça ne bloque que les AJOUTS automatiques : si tu la remets
+   toi-même (Machines > « Composer les séances »), l'interdit est levé. */
+function jourInterdit(profile, dayKey, exId) {
+  var m = profile && profile.joursInterdits;
+  return !!(m && m[dayKey + "|" + exId]);
+}
+/* Une machine que TU remets dans un jour (Machines > « Composer les séances »,
+   « L'ajouter au programme ») n'y est plus interdite. Rend le profil corrigé,
+   ou null s'il n'y a rien à lever. `programme` : celui que l'écran vient de
+   composer, AVANT toute recomposition. */
+function leverInterdits(profile, programme) {
+  var m = profile && profile.joursInterdits;
+  if (!m) return null;
+  var reste = {}, change = false, present = {};
+  (programme || []).forEach(function(d){ (d.items || []).forEach(function(it){ present[d.key + "|" + it.ex] = true; }); });
+  Object.keys(m).forEach(function(k){ if (present[k]) change = true; else reste[k] = true; });
+  return change ? Object.assign({}, profile, { joursInterdits: reste }) : null;
+}
+function nbInterdits(program, profile) {
+  var m = profile && profile.joursInterdits;
+  if (!m) return 0;
+  var n = 0;
+  (program || []).forEach(function(d){ (d.items || []).forEach(function(it){ if (m[d.key + "|" + it.ex]) n++; }); });
+  return n;
+}
+/* Rend un programme que la correction automatique laissera tranquille : tant
+   qu'un muscle est hors fourchette et que la recomposition trouve mieux, on
+   prend ce mieux (au plus 3 fois). Même calcul que l'effet autoFix. */
+function stabiliserProgramme(program, exercises, profile) {
+  var prof = profile || {}, goal = prof.goal, avg = avgSessionsPerWeek(prof), mf = prof.muscleFocus || {};
+  function empreinte(p){ return JSON.stringify(p.map(function(d){ return (d.items||[]).map(function(i){ return i.ex; }); })); }
+  var p = program;
+  for (var k = 0; k < 3; k++) {
+    if (!programHorsFourchette(p, exercises, goal, avg, mf)) return p;
+    var r = reflowStable(p, exercises, goal, avg, mf, prof.currentGymId, prof);
+    if (empreinte(r) === empreinte(p)) return p;
+    p = applyGoalToProgram(r, exercises, goal, avg, mf, prof);
+  }
+  return p;
+}
+function programmeStable(program, exercises, profile) {
+  var prof = profile || {}, goal = prof.goal, avg = avgSessionsPerWeek(prof), mf = prof.muscleFocus || {};
+  if (!programHorsFourchette(program, exercises, goal, avg, mf)) return true;
+  var r = reflowStable(program, exercises, goal, avg, mf, prof.currentGymId, prof);
+  return JSON.stringify(r.map(function(d){ return (d.items||[]).map(function(i){ return i.ex; }); })) ===
+         JSON.stringify(program.map(function(d){ return (d.items||[]).map(function(i){ return i.ex; }); }));
+}
+/* POSITION ÉTIRÉE — revue du 11 nov. 2026 (demande : "optimiser plus mon
+   appli en tenant compte de toutes les bonnes études").
+
+   À muscles identiques, deux machines ne se valent pas toujours : celle qui
+   fait travailler le muscle ÉTIRÉ fait davantage grossir.
+   - Ischio-jambiers : leg curl ASSIS (hanche fléchie, ischios étirés) contre
+     allongé — +14,1 % de volume musculaire contre +9,3 % en 12 semaines
+     (Maeo et al. 2021, Med Sci Sports Exerc, IRM, 20 débutants, une jambe
+     par machine).
+   - Mollets : DEBOUT / jambe tendue contre assis genou plié — jumeaux
+     +12,4 % et +9,2 % contre +1,7 % et +0,6 % ; soléaire identique
+     (Kinoshita et al. 2023, Frontiers in Physiology, IRM, 14 débutants).
+   Niveau de preuve : MODÉRÉ — un essai par muscle, chez des débutants, même
+   laboratoire ; cohérent avec la méta-analyse de Wolf et al. 2023 (amplitude
+   complète / position longue légèrement meilleure). D'où une règle douce :
+   quand tu as les DEUX machines, l'appli préfère celle qui étire ; elle ne
+   retire jamais de volume pour ça, et tu peux garder l'autre (un choix, voir
+   verifierRegles > « etirement »). Seulement pour les objectifs qui visent le
+   muscle : pour la force pure, ces essais ne disent rien.
+
+   Reconnu au NOM de la machine, faute de mieux : +1 étire, −1 raccourcit,
+   0 inconnu (aucune préférence — c'est le cas de la plupart des machines). */
+function positionEtiree(ex) {
+  if (!ex || isCardio(ex) || estVoyage(ex)) return 0;
+  var mu = allMuscles(ex)[0], n = stripAccents(ex.name || "");
+  if (mu === "Ischio-jambiers") {
+    if (/assis|seated/.test(n)) return 1;
+    if (/allong|couch|prone|lying|debout|standing|kneeling|genou/.test(n)) return -1;
+  }
+  if (mu === "Mollets") {
+    if (/assis|seated/.test(n)) return -1;
+    if (/debout|standing|presse|press\b/.test(n)) return 1;
+  }
+  return 0;
+}
+/* La machine « qui étire » disponible pour remplacer `ex` (position
+   raccourcie) dans la salle en cours — null s'il n'y en a pas. Les machines
+   en réserve ne sont pas proposées (elles n'entrent au programme que par
+   « Optimiser », cochées). */
+function remplacanteEtiree(ex, exercises, gymId) {
+  if (positionEtiree(ex) !== -1) return null;
+  var mu = allMuscles(ex)[0], out = null;
+  (exercises || []).forEach(function(x){
+    if (out || x.id === ex.id || x.horsProgramme || positionEtiree(x) !== 1 || allMuscles(x)[0] !== mu) return;
+    if (!exerciseAvailableAtGym(x, gymId)) return;
+    out = x;
+  });
+  return out;
+}
+function signatureMouvement(e) {
+  if (!e || isCardio(e)) return null;
+  /* Muscle PRINCIPAL en tête, puis les autres triés : un crunch (abdos
+     d'abord) et une rotation du tronc (obliques d'abord) travaillent les
+     mêmes muscles mais ne sont pas le même mouvement. */
+  var mus = allMuscles(e);
+  if (!mus.length) return null;
+  return exerciseOrderTier(e) + "|" + mus[0] + "|" + mus.slice(1).sort().join(",");
+}
+function compterDoublons(program, exMap) {
+  var n = 0;
+  (program || []).forEach(function(d){
+    var vus = {};
+    (d.items || []).forEach(function(it){
+      var sg = signatureMouvement(exMap[it.ex]);
+      if (!sg) return;
+      if (vus[sg]) n++;
+      vus[sg] = true;
+    });
+  });
+  return n;
+}
+/* CONCENTRATION SUR UNE SEULE DES SÉANCES JUMELLES — 8 nov. 2026 (capture :
+   trois exercices de pectoraux en Haut B, aucun en Haut A ; "pourquoi
+   pectoraux en retrait alors que pas du tout ?").
+
+   Un muscle qui a au moins deux machines en principal dans une séance, et
+   AUCUNE dans sa séance jumelle (Haut A / Haut B…), n'est travaillé qu'une
+   fois par tour de rotation : fréquence divisée par deux, et toutes ses
+   séries entassées le même jour — au point que le repère par séance (11) était
+   relevé pour lui (voir plafondsSeance) au lieu d'être respecté. La
+   répartition entre jumeaux (repartirEntreJoursJumeaux) ne le corrigeait pas :
+   ses garde-fous refusaient tout coup qui ne gagnait pas assez sur sa note.
+   Compté comme un défaut, au même titre qu'un doublon de mouvement, et défait
+   par la même passe (separerDoublons) : une des machines passe dans la séance
+   jumelle. */
+function compterConcentrations(program, exMap) {
+  var n = 0;
+  groupesJumeaux(program, exMap).forEach(function(g){
+    if (g.length < 2) return;
+    var parJour = g.map(function(i){
+      var c = {};
+      program[i].items.forEach(function(it){
+        var e = exMap[it.ex]; if (!e || isCardio(e)) return;
+        var mu = allMuscles(e)[0]; if (mu) c[mu] = (c[mu] || 0) + 1;
+      });
+      return c;
+    });
+    var mus = {}; parJour.forEach(function(c){ Object.keys(c).forEach(function(mu){ mus[mu] = 1; }); });
+    Object.keys(mus).forEach(function(mu){
+      var xs = parJour.map(function(c){ return c[mu] || 0; });
+      if (Math.max.apply(null, xs) >= 2 && Math.min.apply(null, xs) === 0) n++;
+    });
+  });
+  return n;
+}
+function compterDefauts(program, exMap) {
+  return compterDoublons(program, exMap) + compterConcentrations(program, exMap);
+}
+function separerDoublons(program, exercises, goal, avgSessions, muscleFocus, gymId, profile) {
+  var exMap = {}; (exercises || []).forEach(function(e){ exMap[e.id] = e; });
+  if (!compterDefauts(program, exMap)) return program;
+  var mf = muscleFocus || {};
+  var base = goalPreset(goal).targetSets || VOL_MIN;
+  var sansMachine = musclesSansMachineDediee(exercises);
+  var maxMin = (profile && profile.sessionMinutesMax != null) ? profile.sessionMinutesMax : 0;
+  function appliquer(p){ return applyGoalCache(p, exercises, goal, avgSessions, mf, profile); }
+  function mesure(p){
+    var ap = appliquer(p), manque = 0, trop = 0;
+    plannedVolume(ap, exercises, avgSessions).forEach(function(v){
+      var f = focusMultiplier(mf, v.muscle);
+      if (!sansMachine[v.muscle]) manque += Math.max(0, base * f - v.sets);
+      trop += Math.max(0, v.sets - Math.max(base * f, VOL_MAX * f));
+    });
+    var exces = sessionVolumeOvershoot(ap, exercises, goal, avgSessions).reduce(function(a, o){ return a + (o.sets - o.cap); }, 0);
+    var longue = ap.reduce(function(a, d){ return Math.max(a, estimateDayMinutes(d, exMap)); }, 0);
+    var pen = programBalancePenalty(ap, exercises, goal, avgSessions, mf, profile, {corridor:true});
+    return { manque: manque, trop: trop, exces: exces, longue: longue, pen: pen, doublons: compterDefauts(p, exMap) };
+  }
+  function avec(p, ch){ return p.map(function(d, k){ return ch[k] ? Object.assign({}, d, { items: ch[k] }) : d; }); }
+  function aSig(d, sg, sauf){ return d.items.some(function(x, k){ return k !== sauf && signatureMouvement(exMap[x.ex]) === sg; }); }
+  var prog = program;
+  for (var tour = 0; tour < 12; tour++) {
+    var m0 = mesure(prog);
+    if (!m0.doublons) break;
+    var cands = [];
+    prog.forEach(function(d, s){
+      var vus = {};
+      d.items.forEach(function(it, i){
+        var e = exMap[it.ex], sg = signatureMouvement(e);
+        if (!sg) return;
+        if (!vus[sg]) { vus[sg] = []; }
+        vus[sg].push(i);
+      });
+      Object.keys(vus).forEach(function(sg){
+        if (vus[sg].length < 2) return;
+        vus[sg].forEach(function(i){
+          var it = d.items[i], e = exMap[it.ex];
+          prog.forEach(function(t, ti){
+            if (ti === s || !(t.items || []).length) return;
+            if (t.items.some(function(x){ return x.ex === it.ex; })) return;
+            if (!machineFitsDay(e, t, exMap)) return;
+            /* déplacer vers un jour qui n'a pas déjà ce mouvement */
+            if (!aSig(t, sg, -1)) {
+              var ch = {}; ch[s] = d.items.filter(function(_, k){ return k !== i; }); ch[ti] = t.items.concat([it]);
+              cands.push({ rang: 0, p: avec(prog, ch), et: positionEtiree(e) });
+            }
+            /* échanger avec une machine de l'autre jour */
+            t.items.forEach(function(b, j){
+              var eb = exMap[b.ex], sb = signatureMouvement(eb);
+              if (!eb || isCardio(eb) || sb === sg) return;
+              if (d.items.some(function(x){ return x.ex === b.ex; })) return;
+              if (aSig(t, sg, j) || aSig(d, sb, i)) return;
+              if (!machineFitsDay(eb, d, exMap)) return;
+              var ch2 = {}; ch2[s] = d.items.slice(); ch2[s][i] = b; ch2[ti] = t.items.slice(); ch2[ti][j] = it;
+              cands.push({ rang: 1, p: avec(prog, ch2) });
+            });
+          });
+          /* retirer de ce jour (un autre poste du même mouvement y reste) */
+          if (d.items.length > 1) {
+            var ch3 = {}; ch3[s] = d.items.filter(function(_, k){ return k !== i; });
+            cands.push({ rang: 2, p: avec(prog, ch3), et: positionEtiree(e) });
+          }
+        });
+      });
+    });
+    /* Concentrations : une machine du muscle passe dans la séance jumelle
+       qui n'en a aucune (déplacée, ou échangée avec une de ses machines). */
+    groupesJumeaux(prog, exMap).forEach(function(g){
+      if (g.length < 2) return;
+      function compte(i, mu){ return prog[i].items.filter(function(it){ var e = exMap[it.ex]; return e && !isCardio(e) && allMuscles(e)[0] === mu; }).length; }
+      g.forEach(function(si){
+        var d = prog[si];
+        d.items.forEach(function(it, i){
+          var e = exMap[it.ex]; if (!e || isCardio(e)) return;
+          var mu = allMuscles(e)[0]; if (!mu || compte(si, mu) < 2) return;
+          g.forEach(function(ti){
+            if (ti === si || compte(ti, mu) !== 0) return;
+            var t = prog[ti];
+            if (t.items.some(function(x){ return x.ex === it.ex; })) return;
+            if (!machineFitsDay(e, t, exMap)) return;
+            var ch = {}; ch[si] = d.items.filter(function(_, k){ return k !== i; }); ch[ti] = t.items.concat([it]);
+            cands.push({ rang: 0, p: avec(prog, ch) });
+            t.items.forEach(function(b, j){
+              var eb = exMap[b.ex]; if (!eb || isCardio(eb)) return;
+              if (d.items.some(function(x){ return x.ex === b.ex; })) return;
+              if (!machineFitsDay(eb, d, exMap)) return;
+              var ch2 = {}; ch2[si] = d.items.slice(); ch2[si][i] = b; ch2[ti] = t.items.slice(); ch2[ti][j] = it;
+              cands.push({ rang: 1, p: avec(prog, ch2) });
+            });
+          });
+        });
+      });
+    });
+    var meilleur = null, mBest = null;
+    cands.forEach(function(c){
+      var m = mesure(c.p);
+      if (m.doublons >= m0.doublons) return;
+      if (nbInterdits(c.p, profile) > nbInterdits(prog, profile)) return;   /* voir jourInterdit */
+      if (m.manque > m0.manque + 0.05 || m.trop > m0.trop + 0.05) return;
+      if (m.exces > m0.exces + 1e-6) return;
+      /* Quelques minutes de tolérance sur la séance la plus longue : sortir
+         un doublon ou rendre sa deuxième séance à un muscle vaut bien ça
+         (mesuré : passer un développé de Haut B à Haut A allonge Haut A de
+         ~5 min et raccourcit Haut B d'autant). */
+      if (m.longue > Math.max(m0.longue, maxMin) + 6) return;
+      if (!meilleur || m.doublons < mBest.doublons || (m.doublons === mBest.doublons &&
+          (m.pen < mBest.pen - 1e-9 || (Math.abs(m.pen - mBest.pen) <= 1e-9 && (c.rang < meilleur.rang ||
+            /* à égalité parfaite, c'est la machine en position raccourcie qui
+               sort ou bouge — celle qui étire reste (voir positionEtiree) */
+            (c.rang === meilleur.rang && (c.et || 0) < (meilleur.et || 0))))))) { meilleur = c; mBest = m; }
+    });
+    if (!meilleur) break;
+    prog = meilleur.p;
+  }
+  if (prog === program) return program;
+  return prog.map(function(d){ return Object.assign({}, d, { items: sortByExerciseOrder(d.items, function(it){ return it.ex; }, exMap) }); });
+}
 function reflowStable(program, exercises, goal, avgSessions, muscleFocus, gymId, profile) {
   var r = reflowStableBrut(program, exercises, goal, avgSessions, muscleFocus, gymId, profile);
+  /* Doublons de mouvement (8 nov. 2026, voir separerDoublons) — gardé
+     seulement si la recomposition, relancée dessus, n'y change plus rien. */
+  try {
+    var empD = function(p){ return JSON.stringify(p.map(function(d){ return (d.items||[]).map(function(i){ return i.ex; }); })); };
+    for (var kd = 0; kd < 3; kd++) {
+      var sd = separerDoublons(r, exercises, goal, avgSessions, muscleFocus, gymId, profile);
+      if (sd === r) break;
+      var rd = reflowStableBrut(sd, exercises, goal, avgSessions, muscleFocus, gymId, profile);
+      r = rd;
+      if (empD(rd) === empD(sd)) break;
+    }
+  } catch (e) {}
   /* Répartition entre séances jumelles, une fois la composition stabilisée
      (26 oct. 2026) — elle ne change ni le volume hebdomadaire recalculé, ni
      la séance la plus longue (voir repartirEntreJoursJumeaux).
@@ -6391,7 +6790,7 @@ var PROGRAM_VERSION = 7;   /* 7 (23 sept. 2026) : exercices poids du corps du mo
    recommitée à la main — contrairement au lien Artifact qui se met à jour
    tout seul". Change cette date à chaque publication notable pour que la
    comparaison soit possible côté utilisateur. */
-var APP_BUILD = "2026-11-08a";
+var APP_BUILD = "2026-11-11a";
 
 function seedState() {
   return {
@@ -7156,24 +7555,49 @@ function optimiserProgramme(program, exercises, profile, opts) {
   });
   var exMap = {}; exs.forEach(function(e){ exMap[e.id] = e; });
   function finir(p){ return applyGoalToProgram(p, exs, goal, avg, mf, prof); }
+  /* Un doublon de mouvement dans une séance pèse dans le choix (voir
+     separerDoublons) : à volume équivalent, le programme sans doublon gagne. */
   function note(p){
-    try { return programBalancePenalty(p, exs, goal, avg, mf, prof, {corridor:true}); } catch (e) { return Infinity; }
+    try { return programBalancePenalty(p, exs, goal, avg, mf, prof, {corridor:true}) + 0.5 * compterDefauts(p, exMap); } catch (e) { return Infinity; }
   }
   function empreinte(p){ return JSON.stringify(p.map(function(d){ return (d.items||[]).map(function(i){ return i.ex; }); })); }
   /* Rend un programme que la correction automatique laissera tranquille. */
-  function stabiliser(p){
-    for (var k = 0; k < 3; k++) {
-      if (!programHorsFourchette(p, exs, goal, avg, mf)) return p;
-      var r = reflowStable(p, exs, goal, avg, mf, gym, prof);
-      if (empreinte(r) === empreinte(p)) return p;
-      p = finir(r);
+  function stabiliser(p){ return stabiliserProgramme(p, exs, prof); }
+  var candidats = [];
+  /* Position étirée (voir positionEtiree) : quand la machine qui étire le
+     muscle est disponible, elle prend la place de celle qui le raccourcit —
+     seulement si ça ne coûte RIEN (aucune règle de plus non tenue, note pas
+     moins bonne), et jamais contre un choix « garder » déjà fait. */
+  function etirer(p, verifierStabilite){
+    var refuses = {};
+    for (var k = 0; k < 12; k++) {
+      var v = verifierRegles(p, exs, prof), avant = {}, c = null;
+      v.forEach(function(x){ x.conflits.forEach(function(y){ avant[y.cle] = true; }); });
+      (v.filter(function(x){ return x.id === "etirement"; })[0] || { ouverts: [] }).ouverts.forEach(function(y){ if (!c && !refuses[y.cle]) c = y; });
+      if (!c) break;
+      var r = appliquerChoixRegle({ program: p, exercises: exs, profile: prof }, "etirement", c, { k: "remplacer", ex: c.ex, par: c.par, dayKey: c.dayKey });
+      var pire = note(r.program) > note(p) + 1e-9;
+      verifierRegles(r.program, exs, prof).forEach(function(x){ x.conflits.forEach(function(y){ if (!avant[y.cle]) pire = true; }); });
+      if (!pire && verifierStabilite && !programmeStable(r.program, exs, prof)) pire = true;
+      if (pire) refuses[c.cle] = true; else p = r.program;
     }
     return p;
   }
-  var candidats = [];
   function ajouter(src, p){
     if (!p || !p.length) return;
     try { p = stabiliser(p); } catch (e) {}
+    /* Le remplacement doit laisser un programme STABLE (trouvé par les tests
+       combinatoires : la même machine sur trois jours n'est pas traitée
+       comme trois machines différentes, et la recomposition revenait en
+       arrière). Vérifié une fois sur l'ensemble ; si ça ne tient pas, chaque
+       remplacement est revérifié un par un. */
+    try {
+      var pe = etirer(p, false);
+      if (pe !== p && !programmeStable(pe, exs, prof)) pe = etirer(p, true);
+      p = pe;
+    } catch (e) {}
+    /* Un candidat qui remet une machine là où tu l'as retirée est écarté. */
+    if (src !== "actuel" && nbInterdits(p, prof) > nbInterdits(program, prof)) return;
     candidats.push({ src: src, program: p, note: note(p) });
   }
   ajouter("actuel", finir(program));
@@ -7272,6 +7696,393 @@ function optimiserProgramme(program, exercises, profile, opts) {
    ajoutées depuis moins de 30 jours (l'id d'une machine ajoutée est
    "u"+horodatage) : ce sont celles qu'on vient d'acheter du regard en salle,
    pas les machines d'une ancienne salle gardées pour l'historique. */
+/* RÈGLES DU PROGRAMME, VÉRIFIÉES UNE PAR UNE — 8 nov. 2026 (demande : "fais
+   en sorte qu'ils soient pas intriqués entre les règles pour pas faire de bug,
+   ou demande-moi de faire des choix si ça coince").
+
+   Le moteur (applyGoalToProgram, recomposition, répartition…) doit forcément
+   PESER les règles ensemble : elles se disputent les mêmes séries et les mêmes
+   minutes. C'est là que naissaient les bugs — une règle pliée en silence pour
+   en satisfaire une autre (plafond par séance relevé pour atteindre la cible
+   de la semaine, quelques minutes de tolérance sur la durée…), sans que rien
+   ne le montre.
+
+   Ce vérificateur, lui, ne calcule rien et ne corrige rien : il regarde le
+   programme FINAL et contrôle chaque règle séparément, avec sa définition
+   stricte, sans aucune exception. Toute règle non tenue devient un « choix à
+   faire » affiché dans l'onglet Programme, avec les options possibles. Tant que
+   tu n'as pas choisi, rien n'est caché ; une fois choisi, ton choix est gardé
+   (profile.reglesAcceptees, ou un réglage existant : priorité par muscle,
+   ordre de priorité). Il sert aussi de juge aux tests combinatoires : chaque
+   règle y est vérifiée sur des centaines de combinaisons de réglages. */
+var REGLES = [
+  { id: "volume",      nom: "Séries par semaine dans la fourchette de chaque muscle" },
+  { id: "plafond",     nom: "Pas trop de séries d'un muscle dans une même séance" },
+  { id: "repartition", nom: "Chaque muscle réparti sur ses deux séances jumelles" },
+  { id: "doublon",     nom: "Pas deux machines au même mouvement dans une séance" },
+  { id: "duree",       nom: "Séances dans ton temps maximum" },
+  { id: "etirement",   nom: "La machine qui étire le muscle, quand tu as le choix" },
+];
+function verifierRegles(program, exercises, profile) {
+  var prof = profile || {}, goal = prof.goal, avg = avgSessionsPerWeek(prof), mf = prof.muscleFocus || {};
+  var exMap = {}; (exercises || []).forEach(function(e){ exMap[e.id] = e; });
+  var jours = musculationDays(program || []);
+  var sansMachine = musclesSansMachineDediee(exercises);
+  var base = goalPreset(goal).targetSets || VOL_MIN;
+  var out = {}; REGLES.forEach(function(r){ out[r.id] = []; });
+  function nomEx(id){ return (exMap[id] || {}).name || id; }
+  /* 1. Volume par semaine — EXACTEMENT la zone verte affichée dans Machines
+     (95 à 115 % de la cible) : en dessous ou au-dessus, la règle n'est pas
+     tenue. */
+  plannedVolume(jours, exercises, avg).forEach(function(v){
+    if (sansMachine[v.muscle]) return;      /* aucun levier : diagnostic à part (Machines) */
+    var c = base * focusMultiplier(mf, v.muscle);
+    if (!(c > 0)) return;
+    var sets = Math.round(v.sets * 10) / 10;
+    if (v.sets < c * 0.95 - 0.05) out.volume.push({ cle: "volume-bas:" + v.muscle, muscle: v.muscle, sens: "bas", valeur: sets, cible: Math.round(c * 10) / 10,
+      texte: v.muscle + " : " + fmt1(sets) + " séries par semaine pour une cible de " + fmt1(c) + "." });
+    else if (v.sets > c * 1.15 + 0.05) out.volume.push({ cle: "volume-haut:" + v.muscle, muscle: v.muscle, sens: "haut", valeur: sets, cible: Math.round(c * 10) / 10,
+      texte: v.muscle + " : " + fmt1(sets) + " séries par semaine, au-dessus de la fourchette (" + fmt1(c) + " à " + fmt1(c * 1.15) + ")." });
+  });
+  /* 2. Plafond par séance — le repère STRICT de l'objectif (Remmert et al.
+     2025), sans le relèvement automatique de plafondsSeance. */
+  var cap = SESSION_VOLUME_CAP[goal];
+  if (cap) {
+    var pire = {};
+    jours.forEach(function(d){
+      var by = {};
+      (d.items || []).forEach(function(it){ var e = exMap[it.ex]; if (!e || isCardio(e)) return;
+        allMuscles(e).forEach(function(mu){ var w = poidsSeance(e, mu, goal); if (w > 0) by[mu] = (by[mu] || 0) + it.sets * w; }); });
+      Object.keys(by).forEach(function(mu){
+        if (by[mu] > cap + 1e-9 && (!pire[mu] || by[mu] > pire[mu].sets)) {
+          /* Plancher : ce que les machines de ce jour imposent au minimum
+             (setsMin chacune). S'il dépasse déjà le repère, baisser la cible
+             n'y peut rien — il faut retirer une machine de ce jour. */
+          var smin = goalPreset(goal).setsMin || MIN_SETS_PER_EXERCISE, plancher = 0, ms = [];
+          d.items.forEach(function(it){ var e = exMap[it.ex]; if (!e || isCardio(e)) return; var w = poidsSeance(e, mu, goal);
+            if (w > 0) { plancher += smin * w; ms.push(it.ex); } });
+          pire[mu] = { sets: Math.round(by[mu] * 10) / 10, jour: d.label, dayKey: d.key, plancher: plancher, machines: ms };
+        }
+      });
+    });
+    /* Une seule machine en cause : c'est le relèvement du repère pour un
+       muscle qui revient trop rarement dans la semaine (voir plafondsSeance).
+       Ces muscles-là ont une cause commune — la fréquence — et donc un seul
+       choix à faire : ils sont regroupés. */
+    var groupe = [];
+    Object.keys(pire).forEach(function(mu){
+      if ((pire[mu].machines || []).length < 2) { groupe.push(mu); return; }
+      var n = 0; jours.forEach(function(d){ if ((d.items || []).some(function(it){ var e = exMap[it.ex]; return e && poidsSeance(e, mu, goal) > 0; })) n++; });
+      var parTour = avg / Math.max(1, jours.length);
+      /* Priorité qui ramènerait ce muscle au repère : cible hebdomadaire que
+         n séances par tour permettent sans dépasser `cap`. */
+      var focusMax = Math.floor((cap * n * parTour / base) * 10) / 10;
+      out.plafond.push({ cle: "plafond:" + mu, muscle: mu, valeur: pire[mu].sets, cap: cap, jour: pire[mu].jour, dayKey: pire[mu].dayKey,
+        machines: pire[mu].machines, plancher: pire[mu].plancher, focusMax: focusMax,
+        texte: mu + " : " + fmt1(pire[mu].sets) + " séries en " + pire[mu].jour + " (repère " + fmt1(cap) + (comptageForce(goal) ? " séries directes" : "") + " par séance)." });
+    });
+    if (groupe.length) {
+      groupe.sort();
+      out.plafond.push({ cle: "plafond-frequence:" + groupe.join(","), groupe: groupe, cap: cap,
+        texte: "Trop peu de séances par semaine pour " + groupe.length + " muscle" + (groupe.length > 1 ? "s" : "") + " (" +
+          groupe.map(function(mu){ return mu + " " + fmt1(pire[mu].sets) + " en " + pire[mu].jour; }).join(", ") +
+          ") : pour atteindre leur cible de la semaine, chaque séance dépasse le repère de " + fmt1(cap) + (comptageForce(goal) ? " séries directes" : " séries") + "." });
+    }
+  }
+  /* 3. Répartition entre séances jumelles. */
+  groupesJumeaux(jours, exMap).forEach(function(g){
+    if (g.length < 2) return;
+    var parJour = g.map(function(i){ var c = {}; jours[i].items.forEach(function(it){ var e = exMap[it.ex]; if (!e || isCardio(e)) return; var mu = allMuscles(e)[0]; if (mu) c[mu] = (c[mu] || 0) + 1; }); return c; });
+    var mus = {}; parJour.forEach(function(c){ Object.keys(c).forEach(function(mu){ mus[mu] = 1; }); });
+    Object.keys(mus).forEach(function(mu){
+      var xs = parJour.map(function(c){ return c[mu] || 0; });
+      if (Math.max.apply(null, xs) >= 2 && Math.min.apply(null, xs) === 0) {
+        var plein = jours[g[xs.indexOf(Math.max.apply(null, xs))]].label, vide = jours[g[xs.indexOf(0)]].label;
+        var iPlein = g[xs.indexOf(Math.max.apply(null, xs))], iVide = g[xs.indexOf(0)];
+        var dps = jours[iPlein].items.filter(function(it){ var e = exMap[it.ex]; return e && allMuscles(e)[0] === mu && machineFitsDay(e, jours[iVide], exMap) && !jourInterdit(prof, jours[iVide].key, it.ex); })
+          .map(function(it){ return { ex: it.ex, de: jours[iPlein].key, vers: jours[iVide].key, versLabel: jours[iVide].label }; });
+        out.repartition.push({ cle: "repartition:" + mu, muscle: mu, deplacements: dps,
+          texte: mu + " : " + Math.max.apply(null, xs) + " machines en " + plein + ", aucune en " + vide + " — une seule séance par tour." });
+      }
+    });
+  });
+  /* 4. Doublons de mouvement. */
+  jours.forEach(function(d){
+    var vus = {};
+    (d.items || []).forEach(function(it){ var sg = signatureMouvement(exMap[it.ex]); if (!sg) return; (vus[sg] = vus[sg] || []).push(it.ex); });
+    Object.keys(vus).forEach(function(sg){
+      if (vus[sg].length < 2) return;
+      /* Clé par MOUVEMENT (11 nov. 2026), plus par machines : remplacer une
+         des deux machines par une équivalente ne crée pas un « nouveau »
+         doublon, et un compromis accepté le reste. `alias` : l'ancienne clé,
+         pour les compromis acceptés avant ce changement. */
+      out.doublon.push({ cle: "doublon:" + d.key + ":" + sg, alias: "doublon:" + d.key + ":" + vus[sg].slice().sort().join("+"), jour: d.label, dayKey: d.key, machines: vus[sg],
+        texte: d.label + " : " + vus[sg].map(nomEx).join(" et ") + " font le même mouvement." });
+    });
+  });
+  /* 6. Position étirée (voir positionEtiree) — objectifs qui visent le
+     muscle seulement. Si la machine qui étire est déjà dans ce jour, c'est un
+     doublon : traité par la règle 4, pas ici. */
+  if (!comptageForce(goal)) jours.forEach(function(d){
+    (d.items || []).forEach(function(it){
+      var e = exMap[it.ex], L = e ? remplacanteEtiree(e, exercises, prof.currentGymId) : null;
+      if (!L || d.items.some(function(q){ return q.ex === L.id; }) || jourInterdit(prof, d.key, L.id)) return;
+      out.etirement.push({ cle: "etirement:" + d.key + ":" + e.id, jour: d.label, dayKey: d.key, ex: e.id, par: L.id,
+        texte: d.label + " : " + e.name + " travaille les " + allMuscles(e)[0].toLowerCase() + " en position raccourcie. Tu as " + L.name + ", qui les étire : plus de muscle gagné dans un essai (" +
+          (allMuscles(e)[0] === "Mollets" ? "Kinoshita et al. 2023" : "Maeo et al. 2021, +14 % contre +9 %") + " — preuve modérée, débutants)." });
+    });
+  });
+  /* 5. Durée. */
+  var maxMin = prof.sessionMinutesMax;
+  if (maxMin > 0) {
+    var longues = jours.map(function(d){ return { label: d.label, min: Math.round(estimateDayMinutes(d, exMap)) }; })
+      .filter(function(x){ return x.min > maxMin + 0.5; });
+    if (longues.length) out.duree.push({ cle: "duree", max: maxMin, jours: longues,
+      texte: longues.map(function(x){ return x.label + " ~" + x.min + " min"; }).join(", ") + " pour un maximum de " + maxMin + " min." });
+  }
+  var acc = prof.reglesAcceptees || {};
+  return REGLES.map(function(r){
+    var cs = out[r.id];
+    return { id: r.id, nom: r.nom, conflits: cs,
+      ouverts: cs.filter(function(c){ return !(acc[c.cle] || (c.alias && acc[c.alias])); }),
+      acceptes: cs.filter(function(c){ return !!(acc[c.cle] || (c.alias && acc[c.alias])); }) };
+  });
+}
+/* Les choix proposés pour une règle non tenue, et leur effet — purs, pour
+   que l'écran et les tests combinatoires passent par le même code.
+
+   Chaque choix est SIMULÉ avant d'être proposé : on n'affiche que ce qui règle
+   réellement le problème (ou, pour la durée, on dit franchement jusqu'où il
+   va). Pas de bouton qui ne fait rien. Les choix passent par des réglages qui
+   existent déjà et se voient dans Options (priorité par muscle, ordre de
+   priorité), par une modification visible du programme (retirer ou déplacer
+   une machine), ou par « accepter ». « Optimiser » n'est pas proposé ici : il
+   se lance avant (carte du dessus) et règle déjà tout ce qui peut l'être sans
+   compromis — ce qui reste après lui, ce sont de vrais choix. */
+var CACHE_CHOIX = { cle: null, par: {} };
+function choixPourConflit(regleId, c, etat) {
+  var profile = etat.profile || {}, exercises = etat.exercises || [];
+  var cleEtat = JSON.stringify([(etat.program || []).map(function(d){ return [d.key, d.items.map(function(it){ return it.ex + "x" + it.sets; })]; }),
+    exercises.length, profile.goal, profile.sessionsMin, profile.sessionsMax, profile.sessionMinutesMax, profile.muscleFocus || {}, priorityOrderOf(profile),
+    Object.keys(profile.joursInterdits || {}).sort(), Object.keys(profile.reglesAcceptees || {}).length]);
+  if (CACHE_CHOIX.cle !== cleEtat) CACHE_CHOIX = { cle: cleEtat, par: {}, avant: null };
+  if (CACHE_CHOIX.par[c.cle]) return CACHE_CHOIX.par[c.cle];
+  var noms = {}; exercises.forEach(function(e){ noms[e.id] = e.name; });
+  var accepter = { k: "accepter", label: "C'est OK, garder comme ça" };
+  if (!CACHE_CHOIX.avant) {
+    CACHE_CHOIX.avant = {};
+    verifierRegles(etat.program, exercises, profile).forEach(function(x){ x.conflits.forEach(function(y){ CACHE_CHOIX.avant[y.cle] = true; }); });
+  }
+  /* Simule le choix ; `ok` = le conflit visé disparaît. Les conflits qu'il
+     CRÉERAIT ailleurs sont annoncés dans le bouton (« Ensuite : … ») : un
+     choix ne déplace jamais un problème en silence. */
+  function regle(ch){
+    try {
+      var r = appliquerChoixRegle(etat, regleId, c, ch);
+      if (!r.program) return null;
+      var v = verifierRegles(r.program, r.exercises, r.profile);
+      var rg = v.filter(function(x){ return x.id === regleId; })[0];
+      var nouveaux = [], cles = [], memeMuscle = false;
+      v.forEach(function(x){ x.conflits.forEach(function(y){
+        if (CACHE_CHOIX.avant[y.cle]) return;
+        nouveaux.push(y.texte); cles.push(y.cle);
+        /* Un choix qui règle un muscle en le cassant sur une AUTRE règle n'est
+           pas un choix : c'est le ping-pong trouvé par les tests combinatoires
+           (moins de séries par séance -> trop par semaine -> plus par semaine
+           -> trop par séance…). Il n'est pas proposé. */
+        if (c.muscle && (y.muscle === c.muscle || (y.groupe && y.groupe.indexOf(c.muscle) >= 0))) memeMuscle = true;
+        if (c.groupe && y.muscle && c.groupe.indexOf(y.muscle) >= 0) memeMuscle = true;
+      }); });
+      return { ok: !memeMuscle && !rg.ouverts.some(function(x){ return x.cle === c.cle; }), r: r, nouveaux: nouveaux, cles: cles,
+        reste: rg.conflits.filter(function(x){ return x.cle === c.cle; })[0] || null };
+    } catch (e) { return null; }
+  }
+  function annoncer(ch, t){
+    if (!t || ch.k === "accepter") return ch;
+    var suite = t.nouveaux.length ? "Ensuite : " + t.nouveaux.slice(0, 2).join(" ; ") + (t.nouveaux.length > 2 ? " (+" + (t.nouveaux.length - 2) + ")" : "")
+                                  : "Aucune autre règle n'en souffre.";
+    ch.detail = (ch.detail ? ch.detail + " " : "") + suite;
+    ch.nouveaux = t.nouveaux.length; ch.nouveauxCles = t.cles;
+    return ch;
+  }
+  /* Priorité par muscle qui règle le conflit SANS en créer un autre sur ce
+     même muscle (trouvé par les tests combinatoires : à 4,2 séries, ×0,3
+     faisait passer le muscle « au-dessus », ×0,4 « en dessous », et l'appli
+     proposait l'un puis l'autre indéfiniment). On vise d'abord la valeur qui
+     met le muscle pile à sa cible, au centième, puis on s'en écarte peu à peu. */
+  function chercherFocus(sens){
+    var f0 = focusMultiplier(profile.muscleFocus, c.muscle);
+    var fv = c.valeur != null ? (c.valeur / base) : null;
+    var essais = [];
+    if (fv != null) [1, 1.02, 0.98, 1.05, 0.95, 1.08, 0.92].forEach(function(k){ essais.push(Math.round(fv * k * 100) / 100); });
+    for (var k = 1; k <= 25; k++) essais.push(Math.round((f0 + sens * 0.1 * k) * 10) / 10);
+    for (var i = 0; i < essais.length; i++) {
+      var f = essais[i];
+      if (!(f >= 0.2 && f <= 3) || Math.abs(f - f0) < 1e-9) continue;
+      var t = regle({ k: "focus", val: f });
+      if (t && t.ok && !t.cles.some(function(k2){ return k2.indexOf(regleId) === 0 && k2.split(":")[1] === c.muscle; })) { derniereSimu = t; return f; }
+    }
+    return null;
+  }
+  function fmtF(f){ return Math.round(f * 10) === Math.round(f * 100) / 10 ? fmt1(f) : String(f).replace(".", ","); }
+  var base = goalPreset(profile.goal).targetSets || VOL_MIN;
+  var out = [], derniereSimu = null;
+  if (regleId === "volume") {
+    if (c.sens === "bas") out.push({ k: "machines", label: "Ajouter une machine pour " + c.muscle, detail: "Le seul moyen de monter sans entasser les séries." });
+    var f = chercherFocus(c.sens === "bas" ? -1 : 1);
+    if (f != null) out.push(annoncer({ k: "focus", val: f, label: "Viser ~" + fmt1(base * f) + " séries par semaine pour " + c.muscle,
+      detail: "Options > Priorité par muscle : ×" + fmtF(f) + "." }, derniereSimu));
+    out.push(accepter);
+  } else if (regleId === "plafond" && c.groupe) {
+    for (var plus = 1; plus <= 3; plus++) {
+      if ((profile.sessionsMax || 0) + plus > 7) break;
+      var chs = { k: "seances", plus: plus, label: "Passer à " + ((profile.sessionsMin || 0) + plus) + "–" + ((profile.sessionsMax || 0) + plus) + " séances par semaine",
+        detail: "Chaque muscle revient plus souvent : moins de séries à caser par séance." };
+      var ts = regle(chs);
+      if (ts && ts.ok) { out.push(annoncer(chs, ts)); break; }
+    }
+    out.push({ k: "split", label: "Choisir un autre type de split", detail: "Onglet Programme > Type de split : la simulation montre la fréquence de chaque découpage." });
+    out.push({ k: "accepter", label: "Garder plus de séries par séance", detail: "La cible de la semaine passe avant le repère par séance." });
+  } else if (regleId === "plafond") {
+    (c.machines || []).forEach(function(id){
+      var ch = { k: "retirer", ex: id, dayKey: c.dayKey, label: "Retirer " + (noms[id] || id) + " de " + c.jour };
+      var t = regle(ch); if (t && t.ok) out.push(annoncer(ch, t));
+    });
+    var fp = chercherFocus(-1);
+    if (fp != null) out.push(annoncer({ k: "focus", val: fp, label: "Moins de séries de " + c.muscle + " par semaine (~" + fmt1(base * fp) + ")",
+      detail: "Pour tenir dans " + fmt1(c.cap) + " séries par séance. Options > Priorité par muscle : ×" + fmtF(fp) + "." }, derniereSimu));
+    out.push({ k: "accepter", label: "Garder plus de séries ce jour-là", detail: "La cible de la semaine passe avant le repère par séance." });
+  } else if (regleId === "repartition") {
+    (c.deplacements || []).forEach(function(dp){
+      var ch = { k: "deplacer", ex: dp.ex, de: dp.de, vers: dp.vers, label: "Passer " + (noms[dp.ex] || dp.ex) + " en " + dp.versLabel };
+      var t = regle(ch); if (t && t.ok) out.push(annoncer(ch, t));
+    });
+    out.push(accepter);
+  } else if (regleId === "etirement") {
+    var chr = { k: "remplacer", ex: c.ex, par: c.par, dayKey: c.dayKey, label: "Remplacer par " + (noms[c.par] || c.par) + " en " + c.jour, detail: "Mêmes séries, mêmes répétitions." };
+    var tr = regle(chr); if (tr && tr.ok) out.push(annoncer(chr, tr));
+    out.push({ k: "accepter", label: "Garder " + (noms[c.ex] || c.ex) });
+  } else if (regleId === "doublon") {
+    /* La machine en position raccourcie est proposée en premier au retrait. */
+    var exParId = {}; exercises.forEach(function(e){ exParId[e.id] = e; });
+    var aUneEtiree = c.machines.some(function(m){ return positionEtiree(exParId[m]) === 1; });
+    c.machines.slice().sort(function(a, b){ return positionEtiree(exParId[a]) - positionEtiree(exParId[b]); }).forEach(function(id){
+      var ch = { k: "retirer", ex: id, dayKey: c.dayKey, label: "Retirer " + (noms[id] || id) + " de " + c.jour };
+      if (aUneEtiree && positionEtiree(exParId[id]) === -1) ch.detail = "Des deux, c'est celle qui travaille le muscle en position raccourcie.";
+      var t = regle(ch);
+      /* Trois machines au même mouvement : en retirer une ne suffit pas,
+         mais c'est un pas — proposé, et dit comme tel. */
+      if (t && !t.ok && t.reste && t.reste.machines && t.reste.machines.length < c.machines.length) {
+        ch.partiel = true; ch.detail = (ch.detail ? ch.detail + " " : "") + "Il en restera " + t.reste.machines.length + " au même mouvement.";
+        out.push(ch); return;
+      }
+      if (t && t.ok) out.push(annoncer(ch, t));
+    });
+    out.push(accepter);
+  } else if (regleId === "duree") {
+    var cht = { k: "temps", label: "Faire tenir mes séances dans " + c.max + " min", detail: "Le temps passe en premier dans l'ordre de priorité : moins de séries si besoin." };
+    var tt = regle(cht);
+    if (tt && !tt.ok) {
+      var reste = verifierRegles(tt.r.program, tt.r.exercises, tt.r.profile).filter(function(x){ return x.id === "duree"; })[0].conflits[0];
+      cht.partiel = true;
+      cht.detail = "Ne suffit pas seul : il resterait " + (reste ? reste.jours.map(function(x){ return x.label + " ~" + x.min + " min"; }).join(", ") : "trop") + ". Il faudra aussi retirer une machine.";
+    }
+    if (tt) out.push(tt.ok ? annoncer(cht, tt) : cht);
+    out.push({ k: "accepter", label: "Garder des séances plus longues" });
+  } else out.push(accepter);
+  /* Les choix sans effet de bord d'abord (tri stable), « accepter » toujours en dernier. */
+  out = out.map(function(ch, i){ return { ch: ch, i: i }; }).sort(function(a, b){
+    var ra = a.ch.k === "accepter" ? 2 : (a.ch.nouveaux ? 1 : 0), rb = b.ch.k === "accepter" ? 2 : (b.ch.nouveaux ? 1 : 0);
+    return ra - rb || a.i - b.i; }).map(function(x){ return x.ch; });
+  CACHE_CHOIX.par[c.cle] = out;
+  return out;
+}
+/* Applique un choix. Rend { program, exercises, profile } (ou `optimiser:true`
+   / `machines:true` quand l'action se fait ailleurs). */
+function appliquerChoixRegle(etat, regleId, c, ch) {
+  var prof = Object.assign({}, etat.profile || {});
+  var program = etat.program, exercises = etat.exercises;
+  /* Voir jourInterdit : la machine sortie d'un jour par ton choix n'y revient pas. */
+  function interdire(dayKey, exId){ prof.joursInterdits = Object.assign({}, prof.joursInterdits || {}); prof.joursInterdits[dayKey + "|" + exId] = true; }
+  function recalcul(){ return applyGoalToProgram(program, exercises, prof.goal, avgSessionsPerWeek(prof), prof.muscleFocus || {}, prof); }
+  if (ch.k === "accepter") {
+    prof.reglesAcceptees = Object.assign({}, prof.reglesAcceptees || {}); prof.reglesAcceptees[c.cle] = true;
+    return { program: program, exercises: exercises, profile: prof };
+  }
+  if (ch.k === "optimiser") return { optimiser: true };
+  if (ch.k === "machines") return { machines: true };
+  if (ch.k === "focus") {
+    prof.muscleFocus = Object.assign({}, prof.muscleFocus || {}); prof.muscleFocus[c.muscle] = ch.val;
+    return { program: recalcul(), exercises: exercises, profile: prof };
+  }
+  if (ch.k === "temps") {
+    prof.priorityOrder = ["time"].concat(priorityOrderOf(prof).filter(function(k){ return k !== "time"; }));
+    return { program: recalcul(), exercises: exercises, profile: prof };
+  }
+  if (ch.k === "seances") {
+    prof.sessionsMin = (prof.sessionsMin || 0) + ch.plus; prof.sessionsMax = (prof.sessionsMax || 0) + ch.plus;
+    return { program: recalcul(), exercises: exercises, profile: prof };
+  }
+  if (ch.k === "split") return { split: true };
+  if (ch.k === "deplacer") {
+    interdire(ch.de, ch.ex);
+    var item = null;
+    program = program.map(function(d){
+      if (d.key !== ch.de) return d;
+      return Object.assign({}, d, { items: d.items.filter(function(it){ if (it.ex === ch.ex && !item) { item = it; return false; } return true; }) });
+    });
+    if (item) program = program.map(function(d){ return d.key !== ch.vers ? d : Object.assign({}, d, { items: d.items.concat([item]) }); });
+    return { program: recalcul(), exercises: exercises, profile: prof };
+  }
+  if (ch.k === "remplacer") {
+    interdire(ch.dayKey, ch.ex);
+    program = program.map(function(d){
+      if (d.key !== ch.dayKey || d.items.some(function(it){ return it.ex === ch.par; })) return d;
+      return Object.assign({}, d, { items: d.items.map(function(it){ return it.ex === ch.ex ? Object.assign({}, it, { ex: ch.par }) : it; }) });
+    });
+    return { program: recalcul(), exercises: exercises, profile: prof };
+  }
+  if (ch.k === "retirer") {
+    interdire(ch.dayKey, ch.ex);
+    program = program.map(function(d){ return d.key !== ch.dayKey ? d : Object.assign({}, d, { items: d.items.filter(function(it){ return it.ex !== ch.ex; }) }); });
+    return { program: recalcul(), exercises: exercises, profile: prof };
+  }
+  return { program: program, exercises: exercises, profile: prof };
+}
+/* Le choix, PUIS la même remise en ordre que ferait l'appli à sa prochaine
+   ouverture — tout de suite, pour qu'il n'y ait pas de surprise plus tard
+   (voir jourInterdit). `ajuste` : ce que cette remise en ordre a bougé en
+   plus du choix lui-même, à afficher (jamais silencieux). Les choix qui ne
+   touchent pas au programme (« c'est OK ») ne déclenchent rien. */
+function appliquerChoixEtStabiliser(etat, regleId, c, ch) {
+  var r = appliquerChoixRegle(etat, regleId, c, ch);
+  if (!r || !r.program || ch.k === "accepter") return r;
+  var apresChoix = r.program;
+  function stab(x){ try { return stabiliserProgramme(x.program, x.exercises, x.profile); } catch (e) { return x.program; } }
+  function ouvert(prog, prof){
+    return verifierRegles(prog, r.exercises, prof).filter(function(x){ return x.id === regleId; })[0].ouverts.filter(function(x){ return x.cle === c.cle; })[0] || null;
+  }
+  var cur = { program: stab(r), exercises: r.exercises, profile: r.profile };
+  /* La remise en ordre peut déplacer des machines et faire RESSORTIR le
+     problème qu'on venait de régler (mesuré : ~2 % des choix, surtout « viser
+     N séries » — le volume du muscle change quand les machines bougent). On
+     refait alors le même type de choix sur le nouvel état, deux fois au plus.
+     S'il ressort encore, il reste simplement affiché, avec ses chiffres à
+     jour : rien n'est caché. */
+  for (var essai = 0; essai < 2 && !ch.partiel; essai++) {
+    var encore = null;
+    try { encore = ouvert(cur.program, cur.profile); } catch (e) {}
+    if (!encore) break;
+    var suite = null;
+    try { suite = choixPourConflit(regleId, encore, cur).filter(function(x){ return x.k === ch.k && !x.partiel; })[0] || null; } catch (e) {}
+    if (!suite) break;
+    var r2 = appliquerChoixRegle(cur, regleId, encore, suite);
+    if (!r2 || !r2.program) break;
+    cur = { program: stab(r2), exercises: r2.exercises, profile: r2.profile };
+  }
+  var diff = cur.program !== apresChoix ? describeProgramDiff(apresChoix, cur.program, r.exercises) : { changed: false, moves: [] };
+  return { program: cur.program, exercises: cur.exercises, profile: cur.profile, ajuste: diff.changed ? diff : null };
+}
 function machinesEnReserve(exercises, profile, maintenant) {
   var gym = (profile || {}).currentGymId, now = maintenant || Date.now();
   return (exercises || []).filter(function(e){
@@ -9576,7 +10387,11 @@ function SeanceTab(props) {
     return h("div",{style:{marginBottom:16,borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.steel}},
       h("div",{style:{fontFamily:sansCond,fontSize:15,fontWeight:600,marginBottom:6,color:C.steelText}}, "Programme réajusté tout seul"),
       h("div",{style:{fontSize:13,color:C.taupe,lineHeight:1.5,marginBottom:8}},
-        autoFix.raison === "repartition"
+        autoFix.raison === "choix"
+          ? "Après ton choix dans « Règles de ton programme », l'appli a remis le reste en ordre tout de suite (plutôt qu'à la prochaine ouverture) : voici ce qui a bougé en plus. Elle ne remettra pas la machine là où tu l'as retirée."
+          : autoFix.raison === "doublons"
+          ? "Deux machines faisaient le même mouvement dans une même séance (par exemple deux écartés pour l'arrière d'épaule) : même stimulus, aucun angle en plus. L'appli en a déplacé ou retiré une de ce jour, sans baisser ton volume par muscle sur la semaine. Ton historique n'est pas touché."
+          : autoFix.raison === "repartition"
           ? "Certains muscles travaillaient beaucoup plus sur une séance que sur sa jumelle. L'appli a déplacé ces machines pour mieux répartir chaque muscle entre tes séances — même volume par semaine, séances plus régulières. Ton historique n'est pas touché."
           : "Un ou plusieurs muscles étaient hors de leur fourchette de séries par semaine (trop ou pas assez). L'appli a réorganisé la composition des séances pour y revenir, en répartissant chaque muscle entre tes séances — tes séries enregistrées ne sont pas touchées."),
       h("div",{style:{display:"flex",flexDirection:"column",gap:4,marginBottom:10}},
@@ -10614,11 +11429,92 @@ function OptimiserCarte(props){
             bilan.nonPlacees && bilan.nonPlacees.length ? h("div",{style:Object.assign({},ligne,{color:C.taupe})},
               bilan.nonPlacees.join(", ")+(bilan.nonPlacees.length>1?" restent":" reste")+" en réserve : elle"+(bilan.nonPlacees.length>1?"s n'amélioraient":" n'améliorait")+" pas tes séances.") : null,
             h("div",{style:{fontSize:11.5,color:C.taupe,lineHeight:1.45,marginTop:2}}, "Ton historique et tes charges ne sont pas touchés.")),
+      bilan.annule ? null : (function(){
+        var n = 0; try { verifierRegles(props.program || [], exercises, profile).forEach(function(r){ n += r.ouverts.length; }); } catch (e) {}
+        return n ? h("div",{style:{fontSize:12.5,color:C.rustText,lineHeight:1.45,marginTop:8}},
+          "Il reste "+n+" choix à faire juste en dessous : des règles qui ne peuvent pas toutes être tenues avec ton matériel et tes réglages.") : null;
+      })(),
       h("div",{style:{display:"flex",gap:8,marginTop:10}},
         (!bilan.annule && props.optimisationAnnulable) ? h("button",{"data-optimiser-annuler":"1", onClick:props.annulerOptimisation,
           style:{flex:1,padding:"9px 0",borderRadius:6,background:"transparent",color:C.bone,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:13.5,fontWeight:600}}, "Annuler") : null,
         h("button",{onClick:props.fermerOptimisation,
           style:{flex:1,padding:"9px 0",borderRadius:6,background:C.steel,color:C.ink,border:"none",fontFamily:sansCond,fontSize:13.5,fontWeight:700}}, "OK"))) : null);
+}
+/* « Règles de ton programme » (8 nov. 2026, voir verifierRegles) : chaque
+   règle vérifiée séparément sur le programme final ; quand l'une n'est pas
+   tenue, c'est à toi de choisir — l'appli ne la plie plus en silence. */
+function ReglesCarte(props){
+  var profile = props.profile || {}, program = props.program || [], exercises = props.exercises || [];
+  var _v = useState(false), voirAcceptes = _v[0], setVoirAcceptes = _v[1];
+  var _b = useState(null), occupe = _b[0], setOccupe = _b[1];
+  /* Un choix peut déclencher une remise en ordre (une à quelques secondes sur
+     téléphone) : le bouton dit « Calcul… » avant de lancer le calcul. */
+  function choisir(regleId, c, ch, cleBouton){
+    if (occupe) return;
+    if (ch.k === "accepter" || ch.k === "machines" || ch.k === "split") { props.choisirRegle(regleId, c, ch); return; }
+    setOccupe(cleBouton);
+    setTimeout(function(){ try { props.choisirRegle(regleId, c, ch); } finally { setOccupe(null); } }, 40);
+  }
+  if (modeVoyage(profile) || trainingMode(profile) === "cardio") return null;
+  var nbInt = Object.keys(profile.joursInterdits || {}).length;
+  var ajust = props.dernierAjustChoix;
+  var regles = verifierRegles(program, exercises, profile);
+  var ouverts = 0, acceptes = 0;
+  regles.forEach(function(r){ ouverts += r.ouverts.length; acceptes += r.acceptes.length; });
+  var btn = {padding:"8px 10px",minHeight:38,borderRadius:6,fontFamily:sansCond,fontSize:13,fontWeight:600,textAlign:"left",lineHeight:1.3};
+  return h("div",{"data-regles":"1", style:{marginBottom:18,borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+(ouverts?C.rust:C.taupeDim)}},
+    h("div",{style:{fontFamily:sansCond,fontSize:16,fontWeight:700,color:C.bone,marginBottom:2}}, "Règles de ton programme"),
+    h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.5,marginBottom:8}},
+      ouverts ? (ouverts+" choix à faire : avec ton matériel et tes réglages, ces règles ne peuvent pas toutes être tenues en même temps. Lance d'abord « Optimiser » au-dessus : ce qui reste ensuite, c'est à toi de trancher.")
+              : "Toutes les règles sont tenues"+(acceptes?", ou tu as choisi de faire autrement.":".")),
+    (props.seanceEnCours && ouverts) ? h("div",{style:{fontSize:12,color:C.taupe,lineHeight:1.45,marginBottom:8}},
+      "Séance en cours : les choix qui modifient le programme seront disponibles une fois la séance enregistrée.") : null,
+    h("div",{style:{display:"flex",flexDirection:"column",gap:3,marginBottom:ouverts?10:0}},
+      regles.map(function(r){
+        var ok = !r.ouverts.length;
+        return h("div",{key:r.id, style:{display:"flex",gap:8,fontSize:12.5,lineHeight:1.4,color:ok?C.bone:C.rustText}},
+          h("span",{style:{width:16,flexShrink:0,fontWeight:700,color:ok?C.greenText:C.rustText}}, ok ? "✓" : "!"),
+          h("span",{style:{flex:1,minWidth:0}}, r.nom + (r.acceptes.length && ok ? " (compromis accepté)" : "")));
+      })),
+    regles.map(function(r){
+      return r.ouverts.map(function(c){
+        var choix = choixPourConflit(r.id, c, { program: program, exercises: exercises, profile: profile });
+        return h("div",{key:c.cle, "data-conflit":c.cle, style:{marginTop:8,padding:10,borderRadius:8,background:C.panel,border:"1px solid "+C.line}},
+          h("div",{style:{fontSize:13,color:C.bone,lineHeight:1.45,marginBottom:8}}, c.texte),
+          h("div",{style:{display:"flex",flexDirection:"column",gap:6}},
+            choix.map(function(ch, i){
+              var principal = i === 0;
+              var cleB = c.cle + "#" + i;
+              return h("button",{key:i, "data-choix":ch.k, disabled:!!occupe || (!!props.seanceEnCours && ch.k !== "accepter"), onClick:function(){ choisir(r.id, c, ch, cleB); },
+                style:Object.assign({}, btn, (occupe && occupe !== cleB) || (props.seanceEnCours && ch.k !== "accepter") ? {opacity:0.5} : {}, principal
+                  ? {background:C.pin,color:C.ink,border:"none"}
+                  : {background:"transparent",color:C.bone,border:"1px solid "+C.taupeDim})},
+                occupe === cleB ? "Calcul…" : ch.label, ch.detail ? h("div",{style:{fontSize:11.5,fontWeight:500,opacity:0.8,marginTop:2,fontFamily:sansBody}}, ch.detail) : null);
+            })),
+          r.id === "duree" ? h("div",{"data-superset":"1", style:{marginTop:8}}, h(InfoTip,{label:"Gagner du temps sans rien enlever : les supersets"}, SUPERSET_TEXTE)) : null);
+      });
+    }),
+    (ajust && ajust.moves && ajust.moves.length) ? h("div",{"data-ajust-choix":"1", style:{marginTop:10,padding:"9px 10px",borderRadius:8,background:C.panel,borderLeft:"3px solid "+C.steel}},
+      h("div",{style:{fontSize:12.5,color:C.steelText,fontWeight:600,marginBottom:4,fontFamily:sansCond}}, "Après ton dernier choix, l'appli a aussi remis en ordre :"),
+      ajust.moves.slice(0,6).map(function(m,i){
+        return h("div",{key:i, style:{fontSize:12.5,color:C.bone,lineHeight:1.45}},
+          m.kind==="add" ? ("+ "+m.ex+" ajoutée à "+m.days) : m.kind==="remove" ? ("− "+m.ex+" retirée de "+m.days) : ("↔ "+m.ex+" : "+(m.from||"—")+" → "+m.days));
+      })) : null,
+    nbInt ? h("div",{"data-interdits":"1", style:{marginTop:10,display:"flex",gap:8,alignItems:"center",fontSize:12.5,color:C.taupe,lineHeight:1.4}},
+      h("span",{style:{flex:1,minWidth:0}}, nbInt+" machine"+(nbInt>1?"s":"")+" que tu as sortie"+(nbInt>1?"s":"")+" d'un jour : l'appli ne "+(nbInt>1?"les":"l'")+(nbInt>1?" ":"")+"y remet pas toute seule."),
+      h("button",{onClick:props.oublierInterdits,
+        style:{flexShrink:0,padding:"5px 9px",borderRadius:6,border:"1px solid "+C.taupeDim,background:"transparent",color:C.bone,fontFamily:sansCond,fontSize:12}}, "Oublier")) : null,
+    acceptes ? h("div",{style:{marginTop:10}},
+      h("button",{onClick:function(){ setVoirAcceptes(!voirAcceptes); },
+        style:{background:"transparent",border:"none",padding:0,color:C.taupe,fontFamily:sansCond,fontSize:12.5,textDecoration:"underline"}},
+        (voirAcceptes?"Masquer":"Voir")+" mes "+acceptes+" compromis accepté"+(acceptes>1?"s":"")),
+      voirAcceptes ? h("div",{style:{display:"flex",flexDirection:"column",gap:6,marginTop:6}},
+        regles.map(function(r){ return r.acceptes.map(function(c){
+          return h("div",{key:c.cle, style:{display:"flex",gap:8,alignItems:"center",fontSize:12.5,color:C.taupe,lineHeight:1.4}},
+            h("span",{style:{flex:1,minWidth:0}}, c.texte),
+            h("button",{"data-revoir":c.cle, onClick:function(){ props.revoirRegle(c.cle, c.alias); },
+              style:{flexShrink:0,padding:"5px 9px",borderRadius:6,border:"1px solid "+C.taupeDim,background:"transparent",color:C.bone,fontFamily:sansCond,fontSize:12}}, "Revoir"));
+        }); })) : null) : null);
 }
 function ProgrammeTab(props){
   /* setProfile manquait ici : le bouton "Espacées / Plusieurs jours d'affilée"
@@ -10754,8 +11650,11 @@ function ProgrammeTab(props){
   return h("div", null,
     modeVoyage(profile) ? h("div",{style:{marginBottom:14,padding:"10px 12px",borderRadius:8,background:C.shroudDeep,borderLeft:"3px solid "+C.steel,fontSize:12.5,color:C.taupe,lineHeight:1.55}},
       "Mode voyage actif : les jours ci-dessous sont le programme poids du corps. Ton programme de salle est mis de côté, intact ; le choix du type de split est désactivé jusqu'au retour (Options > Mode voyage).") : null,
-    props.optimiserSeances ? h(OptimiserCarte,{ profile:profile, exercises:exercises, optimisation:props.optimisation, optimisationAnnulable:props.optimisationAnnulable,
+    props.optimiserSeances ? h(OptimiserCarte,{ profile:profile, exercises:exercises, program:program, optimisation:props.optimisation, optimisationAnnulable:props.optimisationAnnulable,
       optimiserSeances:props.optimiserSeances, annulerOptimisation:props.annulerOptimisation, fermerOptimisation:props.fermerOptimisation, seanceEnCours:props.seanceEnCours }) : null,
+    props.choisirRegle ? h(ReglesCarte,{ profile:profile, program:program, exercises:exercises, choisirRegle:props.choisirRegle, revoirRegle:props.revoirRegle,
+      oublierInterdits:props.oublierInterdits, dernierAjustChoix:props.dernierAjustChoix, seanceEnCours:props.seanceEnCours }) : null,
+    modeVoyage(profile) ? null : h("div",{"data-section-split":"1", style:{scrollMarginTop:16}}),
     modeVoyage(profile) ? null : h(Section, {title:"Type de split",
       right: h("button",{onClick:basculerSplit, disabled:preparation, "aria-expanded":splitOpen?"true":"false",
         style:{padding:"8px 12px",minHeight:40,borderRadius:6,color:C.taupe,border:"1px solid "+C.taupeDim,background:"transparent",fontFamily:sansCond,fontSize:12.5}},
@@ -11289,11 +12188,16 @@ function OptionsTab(props){
         GOALS.map(function(g){ var on = (profile.goal||"loss_hyper")===g.k; return h("button",{key:g.k, onClick:function(){applyGoal(g.k);},
           style:{padding:"9px 8px",borderRadius:6,background:on?C.pin:C.shroud,color:on?C.ink:C.taupe,border:"1px solid "+C.taupeDim,fontFamily:sansCond,fontSize:12.5,fontWeight:600}}, g.label); })),
       MODE_SIMPLE ? h(InfoTip,{label:"Comment faire les répétitions et à quel effort ?"},
-        (TEMPO_ADVICE[profile.goal||"loss_hyper"] || TEMPO_ADVICE.loss_hyper)+" "+(EFFORT_ADVICE[profile.goal||"loss_hyper"] || EFFORT_ADVICE.loss_hyper)) : null,
+        (TEMPO_ADVICE[profile.goal||"loss_hyper"] || TEMPO_ADVICE.loss_hyper)+" "+(AMPLITUDE_ADVICE[profile.goal||"loss_hyper"] || AMPLITUDE_ADVICE.loss_hyper)+" "+(EFFORT_ADVICE[profile.goal||"loss_hyper"] || EFFORT_ADVICE.loss_hyper)) : null,
       MODE_SIMPLE ? null : h("div",{style:{borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.taupeDim,marginBottom:10}},
         h("div",{style:{fontFamily:sansCond,fontSize:12,fontWeight:700,color:C.pinText,marginBottom:6}},
           "Comment exécuter les répétitions — "+((GOALS.find(function(g){return g.k===(profile.goal||"loss_hyper");})||{}).label||"")),
         h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.55}}, TEMPO_ADVICE[profile.goal||"loss_hyper"] || TEMPO_ADVICE.loss_hyper)
+      ),
+      MODE_SIMPLE ? null : h("div",{"data-amplitude":"1", style:{borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.taupeDim,marginBottom:10}},
+        h("div",{style:{fontFamily:sansCond,fontSize:12,fontWeight:700,color:C.pinText,marginBottom:6}},
+          "Quelle amplitude — "+((GOALS.find(function(g){return g.k===(profile.goal||"loss_hyper");})||{}).label||"")),
+        h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.55}}, AMPLITUDE_ADVICE[profile.goal||"loss_hyper"] || AMPLITUDE_ADVICE.loss_hyper)
       ),
       MODE_SIMPLE ? null : h("div",{style:{borderRadius:10,padding:12,background:C.shroudDeep,border:"1px solid "+C.taupeDim}},
         h("div",{style:{fontFamily:sansCond,fontSize:12,fontWeight:700,color:C.pinText,marginBottom:6}},
@@ -11706,6 +12610,7 @@ function OptionsTab(props){
           h(Slider,{label:"Protéines cible", min:1.6, max:2.7, step:0.1, value:profile.proteinPerKg, display:fmt1(profile.proteinPerKg)+" g/kg",
             onChange:function(v){set({proteinPerKg:v});}})),
 
+      h("div",{"data-complements":"1", style:{marginTop:8}}, h(InfoTip,{label:"Compléments : ce qui a des preuves"}, COMPLEMENTS_TEXTE)),
       nut ? h("div",{style:{display:"flex",flexWrap:"wrap",gap:8,marginTop:10}},
         h(StatCard,{label:"DER", value:nut.bmr!=null?nut.bmr+" kcal":"—"}),
         h(StatCard,{label:"Maintenance (TDEE)", value:nut.tdee!=null?nut.tdee+" kcal":"—"}),
@@ -12477,7 +13382,16 @@ function MachinesTab(props){
           h("span",{style:{fontFamily:sansBody,fontSize:20,fontWeight:700,fontVariantNumeric:"tabular-nums",width:56,textAlign:"right",
             color: opt.score<60?C.rustText:opt.score<85?C.steelText:C.greenText}}, opt.score+"%")),
         opt.perMuscle.filter(function(p){return p.score<85;}).length>0 ? h("div",{style:{fontSize:12.5,color:C.taupe,lineHeight:1.5,marginBottom:4}},
-          "En retrait : "+opt.perMuscle.filter(function(p){return p.score<85;}).slice(0,3).map(function(p){return p.muscle+" ("+p.score+"%"+(p.deprioritized?" — priorité baissée volontairement":"")+")";}).join(", ")+"."
+          "En retrait : "+opt.perMuscle.filter(function(p){return p.score<85;}).slice(0,3).map(function(p){
+            /* La RAISON, pas seulement le chiffre (8 nov. 2026 : "pourquoi il dit
+               que pectoraux est en retrait alors que pas du tout" — 12,3/12 séries,
+               mais une seule séance par semaine). Le score mêle volume et
+               fréquence : on dit lequel des deux manque. */
+            var pourquoi = p.deprioritized ? " — priorité baissée volontairement"
+              : (p.freqScore < 85 && p.volScore >= 85) ? " — séries OK, mais travaillé "+fmt1(p.freq)+"×/sem au lieu de "+p.minFreq+"×"
+              : (p.volScore < 85 && p.freqScore >= 85) ? " — pas assez de séries"
+              : "";
+            return p.muscle+" ("+p.score+"%"+pourquoi+")";}).join(", ")+"."
         ) : (function(){
           /* Le message de réussite ne s'affiche que si AUCUN muscle n'est sous
              sa cible de volume (25 sept. 2026, audit) : le score moyenne volume
@@ -13734,7 +14648,7 @@ function App(props){
          réajusté" sur l'onglet Séance) et les séries restent les mêmes. */
       var dejaReparti = !!(state.meta && state.meta.repartition3);
       var marquer = function(patch){ setState(function(prev){
-        return Object.assign({}, prev, patch || {}, { meta: Object.assign({}, prev.meta, { repartition3: true }) }); }); };
+        return Object.assign({}, prev, patch || {}, { meta: Object.assign({}, prev.meta, { repartition3: true }, (patch && patch.program) ? { doublons1: true } : {}) }); }); };
       if (programHorsFourchette(state.program, state.exercises, g, avg, mf)) {
         var reflowed = reflowStable(state.program, state.exercises, g, avg, mf, state.profile.currentGymId, state.profile);
         var diff = describeProgramDiff(state.program, reflowed, state.exercises);
@@ -13744,6 +14658,22 @@ function App(props){
           marquer({ program: next, autoFix: diff });
           return;
         }
+      }
+      /* Doublons de mouvement (8 nov. 2026, voir separerDoublons) : passe
+         UNE fois sur les programmes déjà enregistrés. Ensuite, la recomposition
+         ne peut plus en créer. */
+      if (!(state.meta && state.meta.doublons1)) {
+        var sansDoublon = separerDoublons(state.program, state.exercises, g, avg, mf, state.profile.currentGymId, state.profile);
+        var dDbl = sansDoublon !== state.program ? describeProgramDiff(state.program, sansDoublon, state.exercises) : { changed: false };
+        var marquerD = function(patch){ setState(function(prev){
+          return Object.assign({}, prev, patch || {}, { meta: Object.assign({}, prev.meta, { doublons1: true }) }); }); };
+        if (dDbl.changed) {
+          var nextD = applyGoalToProgram(sansDoublon, state.exercises, g, avg, mf, state.profile);
+          autoFixSig.current = programSignature(nextD, state.exercises);
+          marquerD({ program: nextD, autoFix: Object.assign({ raison: "doublons" }, dDbl) });
+          return;
+        }
+        marquerD();
       }
       if (dejaReparti) return;
       var reparti = repartirEntreJoursJumeaux(state.program, state.exercises, g, { avgSessions: avg, muscleFocus: mf, profile: state.profile });
@@ -13895,7 +14825,9 @@ function App(props){
        n'a pas changé (voir programFige dans l'effet plus bas). */
     if (opts && opts.figer) { setState({exercises:exercises, program:program, programFige: programSignature(program, exercises), autoFix: null}); return; }
     /* Mode voyage : aucune réoptimisation ni recomposition — voir modeVoyage. */
-    if ((opts && opts.reoptimize === false) || modeVoyage(state.profile)) { setState({exercises:exercises, program:program}); return; }
+    if ((opts && opts.reoptimize === false) || modeVoyage(state.profile)) {
+      var leve0 = modeVoyage(state.profile) ? null : leverInterdits(state.profile, program);
+      setState(leve0 ? {exercises:exercises, program:program, profile:leve0} : {exercises:exercises, program:program}); return; }
     var prof = state.profile || {};
     var mf = prof.muscleFocus || {};
     var prog = program;
@@ -13903,7 +14835,8 @@ function App(props){
       prog = reflowStable(prog, exercises, prof.goal, avgSessionsPerWeek(prof), mf, prof.currentGymId, prof);
     }
     var next = applyGoalToProgram(prog, exercises, prof.goal, avgSessionsPerWeek(prof), mf, prof);
-    setState({exercises:exercises, program:next});
+    var leve = leverInterdits(prof, program);
+    setState(leve ? {exercises:exercises, program:next, profile:leve} : {exercises:exercises, program:next});
   }
   function persistSessions(sessions){ setState({sessions:sessions}); }
   function setActive(active){ if (!active) { setRestTimer(null); releaseWakeLock(); silentTrackOff(); } setState({active:active}); }
@@ -14044,6 +14977,29 @@ function App(props){
       optimisation: { bilan: Object.assign({}, o.bilan, { annule: true }) } });
   }
   function fermerOptimisation(){ setState({ optimisation: null }); }
+  /* Choix fait sur une règle non tenue (voir ReglesCarte, appliquerChoixRegle). */
+  function choisirRegle(regleId, c, ch){
+    if (ch.k === "optimiser") { optimiserSeances([]); try { window.scrollTo({top:0, behavior:"smooth"}); } catch(e){} return; }
+    if (ch.k === "machines") { goToTab("machines"); return; }
+    if (ch.k === "split") { try { var el = document.querySelector("[data-section-split]"); if (el) el.scrollIntoView({behavior:"smooth", block:"start"}); } catch(e){} return; }
+    /* Pas de modification du programme pendant une séance en cours (comme « Optimiser »). */
+    if (state.active && ch.k !== "accepter") return;
+    var r = appliquerChoixEtStabiliser({ program: state.program, exercises: state.exercises, profile: state.profile }, regleId, c, ch);
+    if (!r || !r.program) return;
+    autoFixSig.current = programSignature(r.program, r.exercises);
+    /* `ajuste` : ce que la remise en ordre a bougé EN PLUS du choix — montré
+       dans la carte « Programme réajusté » (onglet Séance) et sous les règles. */
+    setState({ program: r.program, exercises: r.exercises, profile: r.profile, programFige: null,
+      autoFix: r.ajuste ? Object.assign({ raison: "choix" }, r.ajuste) : state.autoFix,
+      dernierAjustChoix: r.ajuste ? { moves: r.ajuste.moves, quand: Date.now() } : null });
+  }
+  function oublierInterdits(){
+    setState({ profile: Object.assign({}, state.profile, { joursInterdits: {} }) });
+  }
+  function revoirRegle(cle, alias){
+    var acc = Object.assign({}, state.profile.reglesAcceptees || {}); delete acc[cle]; if (alias) delete acc[alias];
+    setState({ profile: Object.assign({}, state.profile, { reglesAcceptees: acc }) });
+  }
   /* Depuis Machines ou Options : arrive EN HAUT de l'onglet Programme, là où
      est la carte (et non à la position de défilement mémorisée). */
   function ouvrirOptimiser(){ scrollMemo.current.programme = 0; goToTab("programme"); }
@@ -14166,7 +15122,7 @@ function App(props){
         derniereSeance: (!state.active && state.derniereSeance && (state.sessions||[]).some(function(x){ return x.id === state.derniereSeance.seanceId; })) ? state.derniereSeance : null,
         rouvrirSeance: rouvrirSeance }) : null,
       tab==="programme" ? h(ProgrammeTab,{ program:state.program, exercises:state.exercises, profile:state.profile, setProfile:setProfile, persistConfig:persistConfig, goal:state.profile.goal,
-        optimiserSeances:optimiserSeances, annulerOptimisation:annulerOptimisation, fermerOptimisation:fermerOptimisation, optimisation:state.optimisation, optimisationAnnulable:optimisationAnnulable, seanceEnCours:!!state.active }) : null,
+        optimiserSeances:optimiserSeances, annulerOptimisation:annulerOptimisation, fermerOptimisation:fermerOptimisation, optimisation:state.optimisation, optimisationAnnulable:optimisationAnnulable, seanceEnCours:!!state.active, choisirRegle:choisirRegle, revoirRegle:revoirRegle, oublierInterdits:oublierInterdits, dernierAjustChoix:state.dernierAjustChoix }) : null,
       tab==="historique" ? h(HistoriqueTab,{ sessions:state.sessions, exMap:exMap, program:state.program, deleteSession:deleteSession, rouvrirSeance: rouvrirSeance, seanceEnCours: !!state.active }) : null,
       tab==="machines" ? h(MachinesTab,{ exercises:state.exercises, program:state.program, persistConfig:persistConfig, sessions:state.sessions, updateExerciseInc:updateExerciseInc, goal:state.profile.goal, profile:state.profile,
         active:state.active, addToActiveSession:addExerciseToActiveSession, ouvrirOptimiser:ouvrirOptimiser }) : null,
